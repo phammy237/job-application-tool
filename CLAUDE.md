@@ -34,7 +34,7 @@ convenience or speed in every case listed below.
   committed file. `packages/ai` and `packages/email` are server-only by construction — do not
   import them from a `"use client"` module or from anything under `apps/extension`.
 - Gmail refresh tokens are stored encrypted at rest (`email_connections.
-  encrypted_refresh_token`) — never plaintext, never returned in an API response.
+encrypted_refresh_token`) — never plaintext, never returned in an API response.
 
 ## AI grounding — the single most important rule in this repo
 

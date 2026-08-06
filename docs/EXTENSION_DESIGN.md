@@ -14,8 +14,8 @@ Manifest V3, requesting the minimum permissions that make the click-triggered wo
 }
 ```
 
-- **`activeTab`** — grants temporary access to the current tab *only after the user invokes
-  the extension* (clicking the toolbar icon or a popup button counts). This is the core
+- **`activeTab`** — grants temporary access to the current tab _only after the user invokes
+  the extension_ (clicking the toolbar icon or a popup button counts). This is the core
   control that makes "the extension may inspect the DOM only after an explicit action" a
   browser-enforced fact, not a self-imposed rule the code could quietly violate.
 - **`scripting`** — lets the background worker inject the content script into the active tab
@@ -125,21 +125,21 @@ COMPENSATION, FREE_RESPONSE, FILE_UPLOAD, DEMOGRAPHIC, LEGAL, AUTHENTICATION, UN
 
 ### Autofill eligibility by classification
 
-| Classification | Suggestion behavior |
-|---|---|
-| `BASIC_PROFILE` (name, email, phone, LinkedIn, portfolio) | Auto-suggested, pre-checked |
-| `EDUCATION` (school, degree, graduation date) | Auto-suggested, pre-checked |
-| `EXPERIENCE` | Suggested but **requires explicit approval** — never pre-checked |
-| `SKILLS` | Suggested but requires explicit approval |
-| `WORK_AUTHORIZATION` | Suggested but requires explicit approval |
-| `RELOCATION` | Suggested but requires explicit approval |
-| `COMPENSATION` | Suggested but requires explicit approval |
-| `FREE_RESPONSE` (incl. "why this company") | Suggested but requires explicit approval |
-| `FILE_UPLOAD` | Never auto-attached; user selects the file (e.g. résumé) manually — extension may highlight which résumé version is recommended |
-| `DEMOGRAPHIC` | **Never suggested.** Race/ethnicity, gender, disability, veteran status, medical questions are detected only to be *skipped*, never filled |
-| `LEGAL` | **Never suggested.** Criminal history, legal attestations, digital signatures |
-| `AUTHENTICATION` | **Never touched.** Password/login fields are excluded from extraction entirely |
-| `UNKNOWN` | Shown to the user as unclassified; never auto-filled |
+| Classification                                            | Suggestion behavior                                                                                                                        |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `BASIC_PROFILE` (name, email, phone, LinkedIn, portfolio) | Auto-suggested, pre-checked                                                                                                                |
+| `EDUCATION` (school, degree, graduation date)             | Auto-suggested, pre-checked                                                                                                                |
+| `EXPERIENCE`                                              | Suggested but **requires explicit approval** — never pre-checked                                                                           |
+| `SKILLS`                                                  | Suggested but requires explicit approval                                                                                                   |
+| `WORK_AUTHORIZATION`                                      | Suggested but requires explicit approval                                                                                                   |
+| `RELOCATION`                                              | Suggested but requires explicit approval                                                                                                   |
+| `COMPENSATION`                                            | Suggested but requires explicit approval                                                                                                   |
+| `FREE_RESPONSE` (incl. "why this company")                | Suggested but requires explicit approval                                                                                                   |
+| `FILE_UPLOAD`                                             | Never auto-attached; user selects the file (e.g. résumé) manually — extension may highlight which résumé version is recommended            |
+| `DEMOGRAPHIC`                                             | **Never suggested.** Race/ethnicity, gender, disability, veteran status, medical questions are detected only to be _skipped_, never filled |
+| `LEGAL`                                                   | **Never suggested.** Criminal history, legal attestations, digital signatures                                                              |
+| `AUTHENTICATION`                                          | **Never touched.** Password/login fields are excluded from extraction entirely                                                             |
+| `UNKNOWN`                                                 | Shown to the user as unclassified; never auto-filled                                                                                       |
 
 This table is the enforcement point referenced throughout `docs/PRODUCT_SPEC.md` and
 `docs/USER_FLOWS.md`: "requires explicit approval" and "never suggested" are implemented as

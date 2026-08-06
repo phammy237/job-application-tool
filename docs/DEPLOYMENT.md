@@ -2,11 +2,11 @@
 
 ## 1. Domain structure
 
-| Domain | Purpose | Owner/repo |
-|---|---|---|
-| `mypham.space` | Existing public portfolio | Separate repository, unaffected by this project |
-| `apply.mypham.space` | Career OS — public landing + authenticated app | This repository (`apps/web`) |
-| `apply.mypham.space/dashboard`, `/profile`, `/applications`, `/resumes`, `/settings` | Authenticated routes within the same Next.js app | `apps/web` |
+| Domain                                                                               | Purpose                                          | Owner/repo                                      |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------ | ----------------------------------------------- |
+| `mypham.space`                                                                       | Existing public portfolio                        | Separate repository, unaffected by this project |
+| `apply.mypham.space`                                                                 | Career OS — public landing + authenticated app   | This repository (`apps/web`)                    |
+| `apply.mypham.space/dashboard`, `/profile`, `/applications`, `/resumes`, `/settings` | Authenticated routes within the same Next.js app | `apps/web`                                      |
 
 `apply.mypham.space` is a subdomain pointed at a separate deployment target from
 `mypham.space`'s root domain. DNS delegation is the only infrastructure the two products

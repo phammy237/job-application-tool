@@ -1,0 +1,36 @@
+import { readFileSync, readdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { describe, expect, it } from 'vitest';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * CLAUDE.md: "RLS is the backstop, not the only check" — every query function scoped to the
+ * caller's own rows must independently filter by user_id, not rely on RLS alone. This is a
+ * structural regression guard: it fails if a future edit to a queries/*.ts file removes the
+ * `.eq('user_id', ...)` filter, even though RLS would still (in a real database) prevent
+ * cross-user access. It complements, and does not replace, the pgTAP RLS isolation tests in
+ * supabase/tests/database/ which verify the actual database-enforced boundary.
+ *
+ * feature_flags is exempt — it is not a user-owned table (docs/DATA_MODEL.md).
+ */
+const EXEMPT_FILES = new Set(['feature-flags.ts', 'user-id-filtering.test.ts']);
+
+describe('every user-scoped query filters by user_id explicitly', () => {
+  const queriesDir = __dirname;
+  const files = readdirSync(queriesDir).filter(
+    (f) => f.endsWith('.ts') && !EXEMPT_FILES.has(f),
+  );
+
+  it('found the expected set of query modules', () => {
+    expect(files.length).toBeGreaterThanOrEqual(10);
+  });
+
+  for (const file of files) {
+    it(`${file} contains at least one .eq('user_id', ...) filter`, () => {
+      const source = readFileSync(join(queriesDir, file), 'utf-8');
+      expect(source).toMatch(/\.eq\('user_id',/);
+    });
+  }
+});

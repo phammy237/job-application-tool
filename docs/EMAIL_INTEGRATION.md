@@ -17,7 +17,7 @@ push notifications, no cron job reading anyone's mailbox without a click.
    for classification (headers + snippet), not full raw MIME bodies by default.
 4. **Deterministic classification first.** Keyword and sentence-context rules run against
    subject/sender/snippet to classify into `APPLICATION_RECEIVED, ASSESSMENT, INTERVIEW,
-   ACTION_REQUIRED, OFFER, REJECTED, OTHER`. This handles the large majority of
+ACTION_REQUIRED, OFFER, REJECTED, OTHER`. This handles the large majority of
    recognizable ATS-generated emails (predictable phrasing, known sender domains) without
    any model call.
 5. **Claude fallback for ambiguous cases only.** Only messages the deterministic rules can't
@@ -33,7 +33,7 @@ push notifications, no cron job reading anyone's mailbox without a click.
    shown to the user as a pending timeline update, not silently written); anything below 0.85
    requires explicit user confirmation before it touches `application_events`.
 9. **Dedup.** `email_signals` has a unique constraint on `(email_connection_id,
-   provider_message_id)` (see `docs/DATA_MODEL.md`), so re-running sync never reprocesses or
+provider_message_id)` (see `docs/DATA_MODEL.md`), so re-running sync never reprocesses or
    duplicates a message already seen.
 10. **Disconnect + delete.** User can disconnect Gmail and delete all stored signals at any
     time; disconnecting revokes the OAuth grant server-side (not just deletes the local row)
@@ -111,4 +111,4 @@ is used by more than a handful of test users. Concretely:
 - **Practical sequencing implication:** keep Gmail integration scoped to test users
   (`docs/IMPLEMENTATION_PLAN.md` Phase 5–6) until verification is either complete or
   consciously deferred; do not flip `public_signups_enabled` on while `gmail_integration_
-  enabled` would expose the unverified-app screen to strangers.
+enabled` would expose the unverified-app screen to strangers.

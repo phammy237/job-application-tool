@@ -6,11 +6,7 @@
     "sourceType": "module"
   },
   "plugins": ["@typescript-eslint"],
-  "extends": [
-    "eslint:recommended",
-    "plugin:@typescript-eslint/recommended",
-    "prettier"
-  ],
+  "extends": ["eslint:recommended", "plugin:@typescript-eslint/recommended", "prettier"],
   "env": {
     "es2022": true,
     "node": true
@@ -23,10 +19,5 @@
     "@typescript-eslint/no-explicit-any": "warn",
     "no-console": ["warn", { "allow": ["warn", "error"] }]
   },
-  "ignorePatterns": [
-    "**/node_modules/**",
-    "**/dist/**",
-    "**/.next/**",
-    "**/build/**"
-  ]
+  "ignorePatterns": ["**/node_modules/**", "**/dist/**", "**/.next/**", "**/build/**"]
 }

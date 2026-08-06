@@ -30,7 +30,7 @@ also `approvedForApplications`).
 2. A `resumes` row is created; a server job parses the file and calls Claude to propose
    structured `candidate_facts` rows referencing `sourceResumeId` and `sourceText`.
 3. Every proposed fact is created with `userApproved = false`, `approvedForApplications =
-   false`, `visibleOnPublicProfile = false`. Nothing extracted is usable until step 4.
+false`, `visibleOnPublicProfile = false`. Nothing extracted is usable until step 4.
 4. User reviews proposed facts on `/profile`: edit `normalizedValue`, approve, reject, or
    adjust `tags` and `visibleOnPublicProfile`. Rejected facts are kept (soft) for audit but
    never surfaced to AI or autofill.
@@ -49,7 +49,7 @@ also `approvedForApplications`).
    authenticated Career OS API, which creates/updates a `jobs` row and an `applications` row
    in `SAVED` or `IN_PROGRESS` status.
 4. Backend retrieval (`docs/AI_GROUNDING.md`) ranks the user's approved, `
-   approvedForApplications = true` experiences/projects against the job, and Claude drafts
+approvedForApplications = true` experiences/projects against the job, and Claude drafts
    suggestions — one per relevant field/question — each with `sourceFactIds`,
    `reasoningSummary`, `confidence`, and `unsupportedClaims`.
 5. Popup displays: detected company/role, job-match summary, suggested experiences, and

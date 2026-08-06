@@ -4,15 +4,15 @@
 
 What Career OS protects, and against what:
 
-| Asset | Primary threat | Primary control |
-|---|---|---|
-| Résumés, candidate facts, applications | Cross-user data leakage (one user seeing another's data) | RLS on every table + server-side re-check, `docs/DATA_MODEL.md` |
-| Claude API key, Supabase service-role key, Google OAuth client secret | Client-side exposure | Server-only packages (`packages/ai`, `packages/email`, `packages/database`), never imported client-side |
-| Gmail refresh tokens | Theft from the database, or from logs | Encryption at rest, never logged, revoked on disconnect |
-| Extension session tokens | Theft from a compromised device | Hashed at rest, short-lived, individually revocable |
-| Generated answers | Fabricated claims presented as factual | Deterministic retrieval + Zod contract + rejection gate, `docs/AI_GROUNDING.md` |
-| User's browsing / page content | Over-broad extension surveillance | `activeTab`-only permission model, click-triggered analysis, `docs/EXTENSION_DESIGN.md` |
-| Sensitive form categories (demographic, legal) | Accidental auto-completion | Structural exclusion — no suggestion is ever generated for these classifications |
+| Asset                                                                 | Primary threat                                           | Primary control                                                                                         |
+| --------------------------------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| Résumés, candidate facts, applications                                | Cross-user data leakage (one user seeing another's data) | RLS on every table + server-side re-check, `docs/DATA_MODEL.md`                                         |
+| Claude API key, Supabase service-role key, Google OAuth client secret | Client-side exposure                                     | Server-only packages (`packages/ai`, `packages/email`, `packages/database`), never imported client-side |
+| Gmail refresh tokens                                                  | Theft from the database, or from logs                    | Encryption at rest, never logged, revoked on disconnect                                                 |
+| Extension session tokens                                              | Theft from a compromised device                          | Hashed at rest, short-lived, individually revocable                                                     |
+| Generated answers                                                     | Fabricated claims presented as factual                   | Deterministic retrieval + Zod contract + rejection gate, `docs/AI_GROUNDING.md`                         |
+| User's browsing / page content                                        | Over-broad extension surveillance                        | `activeTab`-only permission model, click-triggered analysis, `docs/EXTENSION_DESIGN.md`                 |
+| Sensitive form categories (demographic, legal)                        | Accidental auto-completion                               | Structural exclusion — no suggestion is ever generated for these classifications                        |
 
 ## 2. Multi-user isolation
 

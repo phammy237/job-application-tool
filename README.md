@@ -18,19 +18,19 @@ code yet. See `docs/IMPLEMENTATION_PLAN.md` for the phased build plan, starting 
 
 ## Documentation
 
-| Doc | Covers |
-|---|---|
-| [`docs/PRODUCT_SPEC.md`](docs/PRODUCT_SPEC.md) | What Career OS is and isn't, public/private surface |
-| [`docs/USER_FLOWS.md`](docs/USER_FLOWS.md) | Step-by-step flows: onboarding, résumé review, extension use, Gmail sync, deletion |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Monorepo layout, system diagram, multi-user architecture, mypham.space separation |
-| [`docs/DATA_MODEL.md`](docs/DATA_MODEL.md) | Full Supabase schema: tables, indexes, RLS policies |
-| [`docs/EXTENSION_DESIGN.md`](docs/EXTENSION_DESIGN.md) | Manifest V3 permissions, adapter architecture, field classification, popup UI |
-| [`docs/AI_GROUNDING.md`](docs/AI_GROUNDING.md) | Retrieval pipeline, Claude response contract, fabrication-rejection gate |
-| [`docs/EMAIL_INTEGRATION.md`](docs/EMAIL_INTEGRATION.md) | Gmail OAuth, manual sync, classification, data minimization |
-| [`docs/SECURITY_AND_PRIVACY.md`](docs/SECURITY_AND_PRIVACY.md) | Threat model, RLS strategy, secrets, deletion flows |
-| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Domains, environments, hosting, CI/CD shape |
-| [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md) | Phase-by-phase build plan |
-| [`CLAUDE.md`](CLAUDE.md) | Permanent engineering rules for AI-assisted work in this repo |
+| Doc                                                            | Covers                                                                             |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| [`docs/PRODUCT_SPEC.md`](docs/PRODUCT_SPEC.md)                 | What Career OS is and isn't, public/private surface                                |
+| [`docs/USER_FLOWS.md`](docs/USER_FLOWS.md)                     | Step-by-step flows: onboarding, résumé review, extension use, Gmail sync, deletion |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)                 | Monorepo layout, system diagram, multi-user architecture, mypham.space separation  |
+| [`docs/DATA_MODEL.md`](docs/DATA_MODEL.md)                     | Full Supabase schema: tables, indexes, RLS policies                                |
+| [`docs/EXTENSION_DESIGN.md`](docs/EXTENSION_DESIGN.md)         | Manifest V3 permissions, adapter architecture, field classification, popup UI      |
+| [`docs/AI_GROUNDING.md`](docs/AI_GROUNDING.md)                 | Retrieval pipeline, Claude response contract, fabrication-rejection gate           |
+| [`docs/EMAIL_INTEGRATION.md`](docs/EMAIL_INTEGRATION.md)       | Gmail OAuth, manual sync, classification, data minimization                        |
+| [`docs/SECURITY_AND_PRIVACY.md`](docs/SECURITY_AND_PRIVACY.md) | Threat model, RLS strategy, secrets, deletion flows                                |
+| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)                     | Domains, environments, hosting, CI/CD shape                                        |
+| [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md)   | Phase-by-phase build plan                                                          |
+| [`CLAUDE.md`](CLAUDE.md)                                       | Permanent engineering rules for AI-assisted work in this repo                      |
 
 ## Repository structure
 
