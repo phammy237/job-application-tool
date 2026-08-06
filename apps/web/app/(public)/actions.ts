@@ -59,11 +59,18 @@ export async function signUp(
     };
   }
 
-  const { error } = await supabase.auth.signUp({ email, password });
+  const { data, error } = await supabase.auth.signUp({ email, password });
   if (error) {
     return { error: error.message };
   }
 
+  // If email confirmation is disabled on the Supabase project, signUp already returns a
+  // live session (cookies are set by the server client above) — take the user straight in
+  // rather than telling them to check an email that was never required. If confirmation is
+  // required, there is no session yet and the confirmEmail message is accurate.
+  if (data.session) {
+    redirect('/dashboard');
+  }
   redirect('/login?confirmEmail=1');
 }
 

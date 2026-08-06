@@ -1,6 +1,6 @@
 import { getOwnApplication, listApplicationEvents } from '@career-os/database';
 import { APPLICATION_STATUSES } from '@career-os/shared';
-import { Button, Select, StatusBadge, Textarea } from '@career-os/ui';
+import { Button, Label, Select, StatusBadge, Textarea } from '@career-os/ui';
 import { notFound } from 'next/navigation';
 import { requireUser } from '../../../../lib/auth';
 import { createClient } from '../../../../lib/supabase/server';
@@ -39,7 +39,15 @@ export default async function ApplicationDetailPage({
           action={changeApplicationStatus.bind(null, application.id)}
           className="flex items-center gap-3"
         >
-          <Select name="status" defaultValue={application.status} className="max-w-xs">
+          <Label htmlFor="status-select" className="sr-only">
+            Status
+          </Label>
+          <Select
+            id="status-select"
+            name="status"
+            defaultValue={application.status}
+            className="max-w-xs"
+          >
             {APPLICATION_STATUSES.map((status) => (
               <option key={status} value={status}>
                 {status}

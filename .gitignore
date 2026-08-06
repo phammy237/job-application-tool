@@ -22,6 +22,10 @@ supabase/.temp
 
 # testing / coverage
 coverage/
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
 
 # logs
 npm-debug.log*
