@@ -1,0 +1,9 @@
+-- Career OS demo/seed data.
+--
+-- Rules:
+--   1. No real personal information: no real employers, contacts, résumés, or emails.
+--   2. Seed rows must belong to a clearly-marked demo user, never to a real auth.users row
+--      created via normal signup.
+--   3. Nothing here is loaded against production. See docs/SECURITY_AND_PRIVACY.md.
+--
+-- Populated starting in Phase 1.
