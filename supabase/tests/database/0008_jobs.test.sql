@@ -31,6 +31,10 @@ select is(
 );
 
 update public.jobs set company = 'Hijacked' where user_id = 'a0000000-0000-4000-8000-000000000001';
+
+-- Verify as user A: user B's own select of A's row is blocked either way, so re-checking as B
+-- would prove nothing about whether the write itself was blocked.
+set local request.jwt.claims to '{"sub":"a0000000-0000-4000-8000-000000000001","role":"authenticated"}';
 select is(
   (select count(*)::int from public.jobs
     where user_id = 'a0000000-0000-4000-8000-000000000001' and company = 'Hijacked'),
@@ -38,13 +42,17 @@ select is(
   'user B''s update of user A''s job row affects zero rows'
 );
 
+set local request.jwt.claims to '{"sub":"a0000000-0000-4000-8000-000000000002","role":"authenticated"}';
 delete from public.jobs where user_id = 'a0000000-0000-4000-8000-000000000001';
+
+set local request.jwt.claims to '{"sub":"a0000000-0000-4000-8000-000000000001","role":"authenticated"}';
 select is(
   (select count(*)::int from public.jobs where user_id = 'a0000000-0000-4000-8000-000000000001'),
   1,
   'user B''s delete of user A''s job row affects zero rows'
 );
 
+set local request.jwt.claims to '{"sub":"a0000000-0000-4000-8000-000000000002","role":"authenticated"}';
 insert into public.jobs (user_id, company, title)
 values ('a0000000-0000-4000-8000-000000000002', 'Acme', 'Backend Engineer');
 select is(

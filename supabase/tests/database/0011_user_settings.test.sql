@@ -38,12 +38,17 @@ select is(
 
 update public.user_settings set ai_request_limit = 1
   where user_id = 'a0000000-0000-4000-8000-000000000001';
+
+-- Verify as user A: user B's own select of A's row is blocked either way, so re-checking as B
+-- would prove nothing about whether the write itself was blocked.
+set local request.jwt.claims to '{"sub":"a0000000-0000-4000-8000-000000000001","role":"authenticated"}';
 select is(
   (select ai_request_limit from public.user_settings where user_id = 'a0000000-0000-4000-8000-000000000001'),
   999,
   'user B cannot lower user A''s ai_request_limit — update affects zero rows'
 );
 
+set local request.jwt.claims to '{"sub":"a0000000-0000-4000-8000-000000000002","role":"authenticated"}';
 select is(
   (select count(*)::int from public.user_settings where user_id = 'a0000000-0000-4000-8000-000000000002'),
   1,

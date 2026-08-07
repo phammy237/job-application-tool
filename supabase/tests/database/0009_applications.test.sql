@@ -31,6 +31,10 @@ select is(
 );
 
 update public.applications set status = 'OFFER' where user_id = 'a0000000-0000-4000-8000-000000000001';
+
+-- Verify as user A: user B's own select of A's row is blocked either way, so re-checking as B
+-- would prove nothing about whether the write itself was blocked.
+set local request.jwt.claims to '{"sub":"a0000000-0000-4000-8000-000000000001","role":"authenticated"}';
 select is(
   (select count(*)::int from public.applications
     where user_id = 'a0000000-0000-4000-8000-000000000001' and status = 'OFFER'),
@@ -38,13 +42,17 @@ select is(
   'user B cannot change the status of user A''s application — affects zero rows'
 );
 
+set local request.jwt.claims to '{"sub":"a0000000-0000-4000-8000-000000000002","role":"authenticated"}';
 delete from public.applications where user_id = 'a0000000-0000-4000-8000-000000000001';
+
+set local request.jwt.claims to '{"sub":"a0000000-0000-4000-8000-000000000001","role":"authenticated"}';
 select is(
   (select count(*)::int from public.applications where user_id = 'a0000000-0000-4000-8000-000000000001'),
   1,
   'user B''s delete of user A''s application affects zero rows'
 );
 
+set local request.jwt.claims to '{"sub":"a0000000-0000-4000-8000-000000000002","role":"authenticated"}';
 insert into public.applications (user_id, company, title)
 values ('a0000000-0000-4000-8000-000000000002', 'Globex', 'Frontend Engineer');
 select is(

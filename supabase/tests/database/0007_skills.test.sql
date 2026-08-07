@@ -31,6 +31,10 @@ select is(
 );
 
 update public.skills set name = 'Hijacked' where user_id = 'a0000000-0000-4000-8000-000000000001';
+
+-- Verify as user A: user B's own select of A's row is blocked either way, so re-checking as B
+-- would prove nothing about whether the write itself was blocked.
+set local request.jwt.claims to '{"sub":"a0000000-0000-4000-8000-000000000001","role":"authenticated"}';
 select is(
   (select count(*)::int from public.skills
     where user_id = 'a0000000-0000-4000-8000-000000000001' and name = 'Hijacked'),
@@ -38,7 +42,10 @@ select is(
   'user B''s update of user A''s skill affects zero rows'
 );
 
+set local request.jwt.claims to '{"sub":"a0000000-0000-4000-8000-000000000002","role":"authenticated"}';
 delete from public.skills where user_id = 'a0000000-0000-4000-8000-000000000001';
+
+set local request.jwt.claims to '{"sub":"a0000000-0000-4000-8000-000000000001","role":"authenticated"}';
 select is(
   (select count(*)::int from public.skills where user_id = 'a0000000-0000-4000-8000-000000000001'),
   1,
@@ -47,6 +54,7 @@ select is(
 
 -- Also proves the (user_id, lower(name)) unique constraint doesn't leak into a cross-user
 -- conflict — user B can use the same skill name user A already has.
+set local request.jwt.claims to '{"sub":"a0000000-0000-4000-8000-000000000002","role":"authenticated"}';
 insert into public.skills (user_id, name)
 values ('a0000000-0000-4000-8000-000000000002', 'TypeScript');
 select is(

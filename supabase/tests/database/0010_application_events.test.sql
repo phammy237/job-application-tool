@@ -39,6 +39,10 @@ select is(
 
 update public.application_events set reverted_at = now()
   where user_id = 'a0000000-0000-4000-8000-000000000001';
+
+-- Verify as user A: user B's own select of A's row is blocked either way, so re-checking as B
+-- would prove nothing about whether the write itself was blocked.
+set local request.jwt.claims to '{"sub":"a0000000-0000-4000-8000-000000000001","role":"authenticated"}';
 select is(
   (select count(*)::int from public.application_events
     where user_id = 'a0000000-0000-4000-8000-000000000001' and reverted_at is not null),
@@ -46,7 +50,10 @@ select is(
   'user B cannot mark user A''s event reverted — affects zero rows'
 );
 
+set local request.jwt.claims to '{"sub":"a0000000-0000-4000-8000-000000000002","role":"authenticated"}';
 delete from public.application_events where user_id = 'a0000000-0000-4000-8000-000000000001';
+
+set local request.jwt.claims to '{"sub":"a0000000-0000-4000-8000-000000000001","role":"authenticated"}';
 select is(
   (select count(*)::int from public.application_events where user_id = 'a0000000-0000-4000-8000-000000000001'),
   1,
@@ -57,6 +64,7 @@ select is(
 -- application row itself is invisible to them under RLS and application_events has no FK
 -- ownership cross-check beyond user_id — this asserts user B stays confined to their own data
 -- by never being able to construct a valid application_id to attach to in the first place.
+set local request.jwt.claims to '{"sub":"a0000000-0000-4000-8000-000000000002","role":"authenticated"}';
 select is(
   (select count(*)::int from public.applications where id = 'b0000000-0000-4000-8000-000000000001'),
   0,
