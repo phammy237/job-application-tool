@@ -26,9 +26,12 @@ export default defineConfig({
   webServer: process.env.E2E_BASE_URL
     ? undefined
     : {
-        command: 'npm run dev',
+        // CI builds once (see .github/workflows/ci.yml) and starts the production server here
+        // rather than `next dev`, whose dev-mode overlay is prone to intercepting Playwright
+        // clicks. Locally, `npm run dev` with reuseExistingServer keeps the fast dev loop.
+        command: process.env.CI ? 'npm run start' : 'npm run dev',
         url: 'http://localhost:3000',
-        reuseExistingServer: true,
+        reuseExistingServer: !process.env.CI,
         timeout: 60_000,
       },
 });

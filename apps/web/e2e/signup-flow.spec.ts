@@ -17,15 +17,21 @@ import { expect, test } from '@playwright/test';
  * app's own signup unit coverage, not by this spec.
  *
  * Before running (`npm run test:e2e` from apps/web, or the repo root):
- *   apps/web/.env.local must point at a Supabase project with supabase/migrations/0001_init.sql
- *   applied. SUPABASE_SERVICE_ROLE_KEY from that file is used here only to seed the test
- *   account — never sent to the browser.
+ *   NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must point at a Supabase project
+ *   with supabase/migrations/0001_init.sql applied — locally via apps/web/.env.local, in CI via
+ *   injected secrets (see .github/workflows/ci.yml). The service-role key is used here only to
+ *   seed the test account server-side — never sent to the browser.
  *
  * Each run creates a new real account (unique email per run) — expected for a personal/dev
  * project; not meant to run against a project with real user data.
  */
 
-function readEnvLocal(): Record<string, string> {
+function readEnv(): Record<string, string | undefined> {
+  // CI injects these as real process.env vars (see .github/workflows/ci.yml); local dev keeps
+  // them in apps/web/.env.local, which process.env won't have picked up since this file runs
+  // outside Next.js's own env loading.
+  if (process.env.SUPABASE_SERVICE_ROLE_KEY) return process.env;
+
   const envPath = path.join(__dirname, '..', '.env.local');
   const content = fs.readFileSync(envPath, 'utf8');
   const vars: Record<string, string> = {};
@@ -44,7 +50,7 @@ test('login → edit profile → create application → logout', async ({ page }
   const password = 'TestPassword123!';
 
   // ---- Seed a pre-confirmed account via the Admin API (never exposed to the browser) ------
-  const env = readEnvLocal();
+  const env = readEnv();
   const supabaseUrl = env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY;
   if (!supabaseUrl || !serviceRoleKey) {
