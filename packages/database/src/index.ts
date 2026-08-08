@@ -17,3 +17,5 @@ export * from './queries/applications';
 export * from './queries/application-events';
 export * from './queries/user-settings';
 export * from './queries/feature-flags';
+export * from './queries/extension-sessions';
+export * from './crypto/extension-token';

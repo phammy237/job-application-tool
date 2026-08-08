@@ -1,6 +1,8 @@
 'use server';
 
+import { revokeOwnExtensionSession } from '@career-os/database';
 import { redirect } from 'next/navigation';
+import { revalidatePath } from 'next/cache';
 import { requireUser } from '../../../lib/auth';
 import { createAdminClient } from '../../../lib/supabase/admin';
 import { createClient } from '../../../lib/supabase/server';
@@ -29,4 +31,14 @@ export async function deleteAccount() {
   await supabase.auth.signOut();
 
   redirect('/');
+}
+
+/** Revokes one of the caller's own extension sessions (docs/EXTENSION_DESIGN.md §4 — tokens
+ * must be individually revocable from /settings). Uses the RLS-scoped client: a real session
+ * exists here, so there's no need for the service-role client. */
+export async function revokeExtensionSession(id: string) {
+  const user = await requireUser();
+  const supabase = await createClient();
+  await revokeOwnExtensionSession(supabase, user.id, id);
+  revalidatePath('/settings');
 }

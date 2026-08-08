@@ -11,3 +11,6 @@ export * from './schemas/application';
 export * from './schemas/application-event';
 export * from './schemas/user-settings';
 export * from './schemas/feature-flag';
+export * from './schemas/extension-session';
+export * from './schemas/detected-field';
+export * from './schemas/job-extraction';

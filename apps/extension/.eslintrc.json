@@ -1,0 +1,31 @@
+{
+  "root": true,
+  "extends": ["../../.eslintrc.json", "plugin:react-hooks/recommended"],
+  "plugins": ["react-refresh"],
+  "env": {
+    "browser": true,
+    "webextensions": true
+  },
+  "rules": {
+    "react-refresh/only-export-components": ["warn", { "allowConstantExport": true }],
+    "no-restricted-imports": [
+      "error",
+      {
+        "paths": [
+          {
+            "name": "@career-os/database",
+            "message": "The extension must never hold Supabase/service-role credentials — call the Career OS API instead (see lib/api-client.ts)."
+          },
+          {
+            "name": "@career-os/ai",
+            "message": "The extension must never hold the Claude API key — call the Career OS API instead."
+          },
+          {
+            "name": "@career-os/email",
+            "message": "The extension must never hold Gmail credentials — call the Career OS API instead."
+          }
+        ]
+      }
+    ]
+  }
+}

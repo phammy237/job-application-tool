@@ -1,4 +1,8 @@
-import { createSupabaseServerClient } from '@career-os/database';
+// Imported from the specific file, not the package barrel (@career-os/database) — middleware
+// runs on the Edge runtime, which can't bundle node:crypto (pulled in transitively via the
+// barrel by packages/database/src/crypto/extension-token.ts). This file alone has no such
+// dependency.
+import { createSupabaseServerClient } from '@career-os/database/src/client/server';
 import { NextResponse, type NextRequest } from 'next/server';
 
 /**
@@ -16,6 +20,7 @@ const PROTECTED_PREFIXES = [
   '/applications',
   '/resumes',
   '/settings',
+  '/extension-connect',
 ];
 
 export async function middleware(request: NextRequest) {

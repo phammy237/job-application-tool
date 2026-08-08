@@ -1,6 +1,6 @@
 import { jobSchema, type Job, type JobInput } from '@career-os/shared';
 import { assertNoError, unwrapRow } from '../errors';
-import type { Database } from '../types/database.types';
+import type { Database, Json } from '../types/database.types';
 import type { CareerOsSupabaseClient } from '../types/client';
 
 type Row = Database['public']['Tables']['jobs']['Row'];
@@ -62,4 +62,82 @@ export async function getOwnJob(
     .maybeSingle();
   assertNoError(error, 'getOwnJob');
   return data ? rowToJob(data) : null;
+}
+
+export async function getOwnJobBySourceUrl(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+  sourceUrl: string,
+): Promise<Job | null> {
+  const { data, error } = await supabase
+    .from('jobs')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('source_url', sourceUrl)
+    .maybeSingle();
+  assertNoError(error, 'getOwnJobBySourceUrl');
+  return data ? rowToJob(data) : null;
+}
+
+/**
+ * Full extraction insert — used by POST /api/jobs/analyze (Phase 2 onward). Kept distinct from
+ * createOwnJob (whose narrower Pick<...> signature backs Phase 1's manual-entry flow) rather
+ * than widening that function's signature, so the manual-entry call site's type contract is
+ * unaffected by the extension's full extraction shape.
+ */
+export async function createOwnJobFromExtraction(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+  input: JobInput,
+): Promise<Job> {
+  const { data, error } = await supabase
+    .from('jobs')
+    .insert({
+      user_id: userId,
+      company: input.company,
+      title: input.title,
+      location: input.location,
+      employment_type: input.employmentType,
+      description: input.description,
+      responsibilities: input.responsibilities,
+      qualifications: input.qualifications,
+      preferred_qualifications: input.preferredQualifications,
+      skills: input.skills,
+      source_url: input.sourceUrl,
+      platform_type: input.platformType,
+      raw_extraction: input.rawExtraction as Json | null,
+    })
+    .select('*')
+    .single();
+  return rowToJob(unwrapRow(data, error, 'createOwnJobFromExtraction'));
+}
+
+/** Re-analysis of an already-seen URL — overwrites the extraction with the freshest DOM read. */
+export async function updateOwnJobFromExtraction(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+  id: string,
+  input: JobInput,
+): Promise<Job> {
+  const { data, error } = await supabase
+    .from('jobs')
+    .update({
+      company: input.company,
+      title: input.title,
+      location: input.location,
+      employment_type: input.employmentType,
+      description: input.description,
+      responsibilities: input.responsibilities,
+      qualifications: input.qualifications,
+      preferred_qualifications: input.preferredQualifications,
+      skills: input.skills,
+      source_url: input.sourceUrl,
+      platform_type: input.platformType,
+      raw_extraction: input.rawExtraction as Json | null,
+    })
+    .eq('id', id)
+    .eq('user_id', userId)
+    .select('*')
+    .single();
+  return rowToJob(unwrapRow(data, error, 'updateOwnJobFromExtraction'));
 }

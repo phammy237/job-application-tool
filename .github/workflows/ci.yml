@@ -38,6 +38,9 @@ jobs:
       - name: Build web app
         run: npm run build --workspace=@career-os/web
 
+      - name: Build extension
+        run: npm run build --workspace=@career-os/extension
+
       - name: Install Playwright browsers
         working-directory: apps/web
         run: npx playwright install --with-deps chromium

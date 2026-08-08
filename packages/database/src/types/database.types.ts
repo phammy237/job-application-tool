@@ -12,8 +12,7 @@
  * relationship descriptors here if/when a query needs to embed a related table.
  *
  * Tables intentionally NOT included yet (added in their respective phases):
- * generated_answers (Phase 3), extension_sessions (Phase 2), email_connections /
- * email_signals (Phase 5).
+ * generated_answers (Phase 3), email_connections / email_signals (Phase 5).
  */
 
 export type Json = string | number | boolean | null | { [key: string]: Json } | Json[];
@@ -214,6 +213,25 @@ export interface Database {
           user_id: string;
         };
         Update: Partial<Database['public']['Tables']['jobs']['Row']>;
+        Relationships: [];
+      };
+      extension_sessions: {
+        Row: {
+          id: string;
+          user_id: string;
+          token_hash: string;
+          device_label: string | null;
+          last_used_at: string | null;
+          expires_at: string;
+          revoked_at: string | null;
+          created_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['extension_sessions']['Row']> & {
+          user_id: string;
+          token_hash: string;
+          expires_at: string;
+        };
+        Update: Partial<Database['public']['Tables']['extension_sessions']['Row']>;
         Relationships: [];
       };
       applications: {
