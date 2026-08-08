@@ -31,6 +31,29 @@ Manifest V3, requesting the minimum permissions that make the click-triggered wo
   `debugger` permissions.** None of these are needed for click-triggered DOM analysis, and
   each would materially widen what the extension could theoretically observe.
 
+### 1a. Manifest fields beyond the permission set (added Phase 2)
+
+Two additional manifest fields exist beyond the `permissions`/`host_permissions` list above.
+Neither is a Chrome _permission_ — neither grants the extension any new ability to read page
+content, DOM state, or browser data it couldn't already reach — but per this document's own
+posture on manifest changes, both are documented here with their justification rather than
+added silently:
+
+- **`externally_connectable`** — `{ "matches": ["https://apply.mypham.space/*"] }` (plus
+  `http://localhost:3000/*` in dev builds). Whitelists which page origins may open a
+  `chrome.runtime.sendMessage`/`connect` channel to this extension's background worker — used
+  exactly once, for the one-time auth-token handoff in §4: the Career OS web app's
+  `/extension-connect` page sends the newly-minted token to the extension after login, instead
+  of requiring the user to copy/paste it. Only the Career OS origin is whitelisted; no other
+  page can reach this channel. The background worker additionally validates the message's shape
+  strictly (`isExternalTokenHandoffMessage`) before writing anything to storage, rather than
+  trusting the origin whitelist alone.
+- **`key`** — a public RSA key (not secret) that pins the extension's ID to a stable value
+  across dev rebuilds/checkouts. Without it, loading the extension unpacked generates a new
+  random ID every time, which would break `/extension-connect`'s
+  `sendMessage(EXTENSION_ID, ...)` targeting. A real Chrome Web Store listing gets its own
+  key/ID at publish time, at which point this dev key stops mattering.
+
 ## 2. What the extension explicitly does not do
 
 - No screen recording or screenshot capture of arbitrary pages.

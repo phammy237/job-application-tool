@@ -76,6 +76,25 @@ click and the resulting analysis/autofill call, not as a standing capability. An
 permission expansion should be treated as a security-review event, not a routine manifest
 edit.
 
+**Phase 2 addition, treated as exactly that security-review event** (full detail in
+`docs/EXTENSION_DESIGN.md` §1a): `externally_connectable` and a pinned `key` were added to the
+manifest for the auth-token handoff from `/extension-connect`. Risk assessment:
+
+- `externally_connectable` does not grant DOM/browser data access — it only whitelists which
+  page origins may open a message channel to the extension's own background worker. The
+  whitelist is the single Career OS web origin; no other site can reach this channel.
+- The message handler independently validates the payload shape before acting on it
+  (`isExternalTokenHandoffMessage` in `apps/extension/src/types/chrome-messages.ts`), so even a
+  compromised or misconfigured whitelist entry couldn't inject an arbitrary value into
+  `chrome.storage.local` — only a shape-conforming `{ type: 'CAREER_OS_EXTENSION_TOKEN', token,
+  expiresAt }` message is accepted.
+- The one thing an attacker who fully controlled the whitelisted origin (i.e. Career OS itself
+  were compromised) could do is hand the extension an arbitrary bearer token — but that's
+  already true of the existing token-mint endpoint's blast radius (`POST
+  /api/auth/extension-token`) and isn't a new capability this manifest field introduces.
+- `key` is a public value with no confidentiality requirement; it only stabilizes the
+  extension's ID across rebuilds and carries no capability of its own.
+
 ## 8. Gmail OAuth risk
 
 Covered in full in `docs/EMAIL_INTEGRATION.md` §6. Summarized here: restricted-scope
