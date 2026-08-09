@@ -12,7 +12,7 @@
  * relationship descriptors here if/when a query needs to embed a related table.
  *
  * Tables intentionally NOT included yet (added in their respective phases):
- * generated_answers (Phase 3), email_connections / email_signals (Phase 5).
+ * email_connections / email_signals (Phase 5).
  */
 
 export type Json = string | number | boolean | null | { [key: string]: Json } | Json[];
@@ -306,9 +306,51 @@ export interface Database {
         Update: Partial<Database['public']['Tables']['feature_flags']['Row']>;
         Relationships: [];
       };
+      generated_answers: {
+        Row: {
+          id: string;
+          user_id: string;
+          application_id: string | null;
+          job_id: string | null;
+          field_label: string;
+          field_classification: string;
+          answer: string;
+          confidence: number;
+          source_fact_ids: string[];
+          reasoning_summary: string | null;
+          unsupported_claims: string[];
+          requires_user_review: boolean;
+          user_decision: string | null;
+          final_text: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['generated_answers']['Row']> & {
+          user_id: string;
+          field_label: string;
+          field_classification: string;
+          answer: string;
+          confidence: number;
+        };
+        Update: Partial<Database['public']['Tables']['generated_answers']['Row']>;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
-    Functions: Record<string, never>;
+    Functions: {
+      increment_ai_request_usage: {
+        Args: {
+          p_user_id: string;
+          p_period_length?: string;
+        };
+        Returns: {
+          allowed: boolean;
+          ai_requests_this_period: number;
+          ai_request_limit: number;
+          ai_request_period_started_at: string;
+        }[];
+      };
+    };
     Enums: Record<string, never>;
   };
 }

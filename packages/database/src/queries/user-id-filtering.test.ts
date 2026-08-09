@@ -13,14 +13,16 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
  * cross-user access. It complements, and does not replace, the pgTAP RLS isolation tests in
  * supabase/tests/database/ which verify the actual database-enforced boundary.
  *
- * feature_flags is exempt — it is not a user-owned table (docs/DATA_MODEL.md).
+ * feature_flags is exempt — it is not a user-owned table (docs/DATA_MODEL.md). Co-located
+ * *.test.ts files are exempt too — they exercise a query module's own user_id filtering with a
+ * fake client rather than containing a `.eq('user_id', ...)` call themselves.
  */
-const EXEMPT_FILES = new Set(['feature-flags.ts', 'user-id-filtering.test.ts']);
+const EXEMPT_FILES = new Set(['feature-flags.ts']);
 
 describe('every user-scoped query filters by user_id explicitly', () => {
   const queriesDir = __dirname;
   const files = readdirSync(queriesDir).filter(
-    (f) => f.endsWith('.ts') && !EXEMPT_FILES.has(f),
+    (f) => f.endsWith('.ts') && !f.endsWith('.test.ts') && !EXEMPT_FILES.has(f),
   );
 
   it('found the expected set of query modules', () => {

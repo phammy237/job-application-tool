@@ -2,6 +2,13 @@ import { userSettingsSchema, type UserSettings } from '@career-os/shared';
 import { assertNoError, unwrapRow } from '../errors';
 import type { CareerOsSupabaseClient } from '../types/client';
 
+export interface AiUsageCheck {
+  allowed: boolean;
+  aiRequestsThisPeriod: number;
+  aiRequestLimit: number;
+  aiRequestPeriodStartedAt: string;
+}
+
 function rowToUserSettings(row: {
   user_id: string;
   gmail_integration_enabled: boolean;
@@ -45,4 +52,29 @@ export async function getOrCreateOwnUserSettings(
   return rowToUserSettings(
     unwrapRow(created, insertError, 'getOrCreateOwnUserSettings (insert)'),
   );
+}
+
+/**
+ * Atomically checks-and-increments the caller's AI request usage via the
+ * increment_ai_request_usage Postgres function (supabase/migrations/
+ * 0004_increment_ai_request_usage.sql), which row-locks the user_settings row for the
+ * duration of the check — closing the read-then-write race a plain select-then-update from
+ * application code would have. Only increments when `allowed` comes back true, so a blocked
+ * request is never double-counted. See docs/AI_GROUNDING.md §7 and
+ * docs/SECURITY_AND_PRIVACY.md's rate-limit enforcement risk.
+ */
+export async function incrementOwnAiRequestUsage(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+): Promise<AiUsageCheck> {
+  const { data, error } = await supabase
+    .rpc('increment_ai_request_usage', { p_user_id: userId })
+    .single();
+  const row = unwrapRow(data, error, 'incrementOwnAiRequestUsage');
+  return {
+    allowed: row.allowed,
+    aiRequestsThisPeriod: row.ai_requests_this_period,
+    aiRequestLimit: row.ai_request_limit,
+    aiRequestPeriodStartedAt: row.ai_request_period_started_at,
+  };
 }

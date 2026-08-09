@@ -14,3 +14,4 @@ export * from './schemas/feature-flag';
 export * from './schemas/extension-session';
 export * from './schemas/detected-field';
 export * from './schemas/job-extraction';
+export * from './schemas/generated-answer';

@@ -7,6 +7,8 @@ import {
   detectedFieldSchema,
   experienceSchema,
   extensionSessionSchema,
+  generatedAnswerContractSchema,
+  generatedAnswerSchema,
   jobExtractionPayloadSchema,
   mintedExtensionTokenSchema,
   profileUpdateSchema,
@@ -205,6 +207,94 @@ describe('detectedFieldSchema', () => {
       inputType: 'text',
       classification: 'UNKNOWN',
       confidence: 1.5,
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('generatedAnswerContractSchema', () => {
+  const valid = {
+    answer: 'Built the payments service handling 2M requests/day.',
+    confidence: 0.8,
+    sourceFactIds: ['11111111-1111-4111-8111-111111111111'],
+    reasoningSummary: 'Based on your Acme Corp backend role.',
+    unsupportedClaims: [],
+    requiresUserReview: true,
+  };
+
+  it('accepts a well-formed contract response', () => {
+    expect(generatedAnswerContractSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it('rejects an empty sourceFactIds array — there is no zero-provenance answer', () => {
+    const result = generatedAnswerContractSchema.safeParse({ ...valid, sourceFactIds: [] });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects confidence outside [0, 1]', () => {
+    expect(generatedAnswerContractSchema.safeParse({ ...valid, confidence: 1.1 }).success).toBe(
+      false,
+    );
+  });
+
+  it('rejects a reasoningSummary over 400 characters', () => {
+    const result = generatedAnswerContractSchema.safeParse({
+      ...valid,
+      reasoningSummary: 'x'.repeat(401),
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('a non-empty unsupportedClaims still parses structurally — the rejection gate is a separate check, not schema-level', () => {
+    const result = generatedAnswerContractSchema.safeParse({
+      ...valid,
+      unsupportedClaims: ['claims a certification not in any provided fact'],
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe('generatedAnswerSchema', () => {
+  it('accepts a full persisted row, including a rejected (audit-only) one', () => {
+    const result = generatedAnswerSchema.safeParse({
+      id: '11111111-1111-4111-8111-111111111111',
+      userId: '22222222-2222-4222-8222-222222222222',
+      applicationId: null,
+      jobId: '33333333-3333-4333-8333-333333333333',
+      fieldLabel: 'Why do you want to work here?',
+      fieldClassification: 'FREE_RESPONSE',
+      answer: 'Draft answer text.',
+      confidence: 0.4,
+      sourceFactIds: [],
+      reasoningSummary: null,
+      unsupportedClaims: ['claims a skill not in any provided fact'],
+      requiresUserReview: true,
+      userDecision: null,
+      finalText: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a fieldClassification outside the shared enum', () => {
+    const result = generatedAnswerSchema.safeParse({
+      id: '11111111-1111-4111-8111-111111111111',
+      userId: '22222222-2222-4222-8222-222222222222',
+      applicationId: null,
+      jobId: null,
+      fieldLabel: 'x',
+      fieldClassification: 'NOT_A_REAL_CLASSIFICATION',
+      answer: 'x',
+      confidence: 0.5,
+      sourceFactIds: [],
+      reasoningSummary: null,
+      unsupportedClaims: [],
+      requiresUserReview: true,
+      userDecision: null,
+      finalText: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
     });
     expect(result.success).toBe(false);
   });
