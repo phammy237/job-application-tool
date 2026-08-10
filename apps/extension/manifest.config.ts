@@ -38,7 +38,11 @@ export default defineManifest({
   permissions: ['activeTab', 'scripting', 'storage'],
   host_permissions: [],
   externally_connectable: {
-    matches: ['http://localhost:3000/*', 'https://apply.mypham.space/*'],
+    // No port on the localhost entry — Chrome match patterns without an explicit port match
+    // any port on that host, so the dev server can run on whatever port is free locally rather
+    // than requiring exactly 3000. Still scoped to localhost (this machine only) and the real
+    // production origin; not a broadening of what's reachable, just which local port works.
+    matches: ['http://localhost/*', 'https://apply.mypham.space/*'],
   },
   key: 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA6Oh4jBUmG++l9YK1p1y5Nu+LfkUfY97e31ZCZ3M8HmHSLdjAJzifg+Rsqbks4cAskSqM7TE9Vpb9KnCoGM6fpB8cPb37jEYPmn7FsiNbK4J13tQOZWbOVVwsYYSKMwwCLpYgL8Ld8SydHN4QV5Di5IDXNUDT2N9bg5jN2qim2lVw3GzFgn76fYKNYm2V4j19IbzEGNQ7J9uEq4AQlIDkmtXWq30fQ1+YUWkoZ7IZuXwZuWG3A/2ZoC7NhlmdgaxoM1I/PcjdbHrXG1iYwCkFvhcy1N5Z+XveYkLxXPxUpmxvbCkfbJ8ts5gsjI1Jq7Fy5wpyREEKKs8bn7K9dMkjMwIDAQAB',
 });

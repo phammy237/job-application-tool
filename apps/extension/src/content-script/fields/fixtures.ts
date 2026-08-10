@@ -31,13 +31,33 @@ export const classificationFixtures: {
     expected: 'BASIC_PROFILE',
   },
   {
+    description: 'bare "Name" field (not "Full Name") — a real gap found testing against a live application form',
+    signals: signals({ label: 'Name', name: 'name' }),
+    expected: 'BASIC_PROFILE',
+  },
+  {
+    description: '"Project name" must not match the bare "name" pattern — a project is not applicant identity info',
+    signals: signals({ label: 'Project name', name: 'project_name' }),
+    expected: 'UNKNOWN',
+  },
+  {
     description: 'school field',
     signals: signals({ label: 'School', name: 'school' }),
     expected: 'EDUCATION',
   },
   {
+    description: 'field of study',
+    signals: signals({ label: 'Field of study', name: 'field_of_study' }),
+    expected: 'EDUCATION',
+  },
+  {
     description: 'current employer field',
     signals: signals({ label: 'Current Employer', name: 'employer' }),
+    expected: 'EXPERIENCE',
+  },
+  {
+    description: 'bare "Title" field inside a repeated Work Experience entry',
+    signals: signals({ label: 'Title', name: 'title', sectionHeading: 'Work Experience' }),
     expected: 'EXPERIENCE',
   },
   {

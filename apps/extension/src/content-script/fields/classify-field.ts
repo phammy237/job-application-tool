@@ -33,15 +33,28 @@ const PATTERNS: [Exclude<FieldClassification, 'AUTHENTICATION' | 'UNKNOWN' | 'FI
   ],
   ['RELOCATION', /relocat/i],
   ['COMPENSATION', /salary|compensation|pay expectation|desired pay|expected (salary|pay)/i],
-  ['EDUCATION', /\bschool\b|university|college|degree|\bgpa\b|graduation/i],
+  [
+    'EDUCATION',
+    /\bschool\b|university|college|\bdegree\b|\bgpa\b|graduation|field of study|\bmajor\b/i,
+  ],
   [
     'EXPERIENCE',
-    /employer|company name|job title|years of experience|current (role|title|position)|work experience|previous employer/i,
+    // Bare "title"/"company" are checked here (after EDUCATION, before BASIC_PROFILE) because
+    // real-world application forms repeat these bare labels inside "Work Experience"/"Projects"
+    // add-entry blocks far more often than as a standalone field elsewhere — an imperfect but
+    // pragmatic default given the schema has no dedicated "project" classification to fall back
+    // to instead (docs/EXTENSION_DESIGN.md's enum is fixed; a bare "Title" is more often a job
+    // title than anything else on an application form).
+    /employer|company( name)?|job title|\btitle\b|years of experience|current (role|title|position)|work experience|previous employer/i,
   ],
   ['SKILLS', /\bskills?\b|technologies|proficienc/i],
   [
     'BASIC_PROFILE',
-    /full name|first name|last name|\bemail\b|phone\b|linkedin|portfolio|website|\baddress\b/i,
+    // Negative lookbehind on the bare "name" match excludes "project name" specifically — a
+    // real false-positive found testing against a live form (a project's name isn't applicant
+    // identity info, and UNKNOWN is a more honest fallback for it than BASIC_PROFILE, given the
+    // schema has no dedicated "project" classification — see the EXPERIENCE comment above).
+    /full name|first name|last name|(?<!project )\bname\b|\bemail\b|phone\b|linkedin|portfolio|website|\baddress\b/i,
   ],
 ];
 

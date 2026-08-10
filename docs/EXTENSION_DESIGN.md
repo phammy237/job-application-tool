@@ -40,7 +40,9 @@ posture on manifest changes, both are documented here with their justification r
 added silently:
 
 - **`externally_connectable`** — `{ "matches": ["https://apply.mypham.space/*"] }` (plus
-  `http://localhost:3000/*` in dev builds). Whitelists which page origins may open a
+  `http://localhost/*` for local dev — a match pattern with no explicit port matches any port
+  on that host, so the dev server isn't pinned to a specific port). Whitelists which page
+  origins may open a
   `chrome.runtime.sendMessage`/`connect` channel to this extension's background worker — used
   exactly once, for the one-time auth-token handoff in §4: the Career OS web app's
   `/extension-connect` page sends the newly-minted token to the extension after login, instead
