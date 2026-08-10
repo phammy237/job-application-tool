@@ -70,6 +70,7 @@ function validContractJson(overrides: Record<string, unknown> = {}): string {
     reasoningSummary: 'Based on your Acme Corp backend role.',
     unsupportedClaims: [],
     requiresUserReview: true,
+    insufficientData: false,
     ...overrides,
   });
 }

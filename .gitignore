@@ -45,3 +45,6 @@ Thumbs.db
 # misc
 *.tsbuildinfo
 .turbo/
+
+# Claude Code local state/runtime — machine-specific, never shared
+.claude/

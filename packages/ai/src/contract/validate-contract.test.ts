@@ -13,6 +13,7 @@ function validContract(overrides: Record<string, unknown> = {}) {
     reasoningSummary: 'Based on your Acme Corp backend role.',
     unsupportedClaims: [],
     requiresUserReview: true,
+    insufficientData: false,
     ...overrides,
   });
 }
