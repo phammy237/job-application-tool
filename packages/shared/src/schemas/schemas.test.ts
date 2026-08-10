@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  aiUsageEventSchema,
   applicationInputSchema,
   applicationStatusSchema,
   candidateFactInputSchema,
@@ -220,6 +221,7 @@ describe('generatedAnswerContractSchema', () => {
     reasoningSummary: 'Based on your Acme Corp backend role.',
     unsupportedClaims: [],
     requiresUserReview: true,
+    insufficientData: false,
   };
 
   it('accepts a well-formed contract response', () => {
@@ -271,6 +273,11 @@ describe('generatedAnswerSchema', () => {
       requiresUserReview: true,
       userDecision: null,
       finalText: null,
+      insufficientData: true,
+      rejectionReason: 'unsupported_claims_present',
+      availableFactIds: ['44444444-4444-4444-8444-444444444444'],
+      generationRunId: '55555555-5555-4555-8555-555555555555',
+      attemptNumber: 1,
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z',
     });
@@ -293,8 +300,93 @@ describe('generatedAnswerSchema', () => {
       requiresUserReview: true,
       userDecision: null,
       finalText: null,
+      insufficientData: null,
+      rejectionReason: null,
+      availableFactIds: null,
+      generationRunId: null,
+      attemptNumber: null,
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('aiUsageEventSchema', () => {
+  it('accepts a real provider attempt row', () => {
+    const result = aiUsageEventSchema.safeParse({
+      id: '11111111-1111-4111-8111-111111111111',
+      userId: '22222222-2222-4222-8222-222222222222',
+      applicationId: null,
+      generationRunId: '55555555-5555-4555-8555-555555555555',
+      attemptNumber: 1,
+      ladder: 'normal',
+      fieldClassification: 'EXPERIENCE',
+      provider: 'openai',
+      model: 'gpt-5.6-luna',
+      taskType: 'field_suggestion',
+      providerSucceeded: true,
+      outcome: 'accepted',
+      rejectionReason: null,
+      escalationReason: null,
+      inputTokens: 1200,
+      cachedInputTokens: 0,
+      outputTokens: 150,
+      estimatedCost: 0.00042,
+      latencyMs: 850,
+      createdAt: '2026-01-01T00:00:00.000Z',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts a deterministic short-circuit row with a null provider/model', () => {
+    const result = aiUsageEventSchema.safeParse({
+      id: '11111111-1111-4111-8111-111111111111',
+      userId: '22222222-2222-4222-8222-222222222222',
+      applicationId: null,
+      generationRunId: '55555555-5555-4555-8555-555555555555',
+      attemptNumber: 1,
+      ladder: 'deterministic',
+      fieldClassification: 'BASIC_PROFILE',
+      provider: null,
+      model: null,
+      taskType: 'field_suggestion',
+      providerSucceeded: null,
+      outcome: 'deterministic',
+      rejectionReason: null,
+      escalationReason: null,
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      estimatedCost: 0,
+      latencyMs: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects an outcome outside the enum', () => {
+    const result = aiUsageEventSchema.safeParse({
+      id: '11111111-1111-4111-8111-111111111111',
+      userId: '22222222-2222-4222-8222-222222222222',
+      applicationId: null,
+      generationRunId: '55555555-5555-4555-8555-555555555555',
+      attemptNumber: 1,
+      ladder: 'normal',
+      fieldClassification: 'EXPERIENCE',
+      provider: 'openai',
+      model: 'gpt-5.6-luna',
+      taskType: 'field_suggestion',
+      providerSucceeded: true,
+      outcome: 'NOT_A_REAL_OUTCOME',
+      rejectionReason: null,
+      escalationReason: null,
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      estimatedCost: null,
+      latencyMs: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
     });
     expect(result.success).toBe(false);
   });

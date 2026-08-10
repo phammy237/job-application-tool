@@ -20,4 +20,5 @@ export * from './queries/feature-flags';
 export * from './queries/extension-sessions';
 export * from './queries/generation-facts';
 export * from './queries/generated-answers';
+export * from './queries/ai-usage-events';
 export * from './crypto/extension-token';

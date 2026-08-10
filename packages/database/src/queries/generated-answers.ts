@@ -25,6 +25,11 @@ function rowToGeneratedAnswer(row: Row): GeneratedAnswer {
     requiresUserReview: row.requires_user_review,
     userDecision: row.user_decision,
     finalText: row.final_text,
+    insufficientData: row.insufficient_data,
+    rejectionReason: row.rejection_reason,
+    availableFactIds: row.available_fact_ids,
+    generationRunId: row.generation_run_id,
+    attemptNumber: row.attempt_number,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });
@@ -58,6 +63,11 @@ export async function createOwnGeneratedAnswer(
       requires_user_review: input.requiresUserReview,
       user_decision: input.userDecision,
       final_text: input.finalText,
+      insufficient_data: input.insufficientData,
+      rejection_reason: input.rejectionReason,
+      available_fact_ids: input.availableFactIds,
+      generation_run_id: input.generationRunId,
+      attempt_number: input.attemptNumber,
     })
     .select('*')
     .single();

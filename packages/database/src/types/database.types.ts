@@ -322,6 +322,11 @@ export interface Database {
           requires_user_review: boolean;
           user_decision: string | null;
           final_text: string | null;
+          insufficient_data: boolean | null;
+          rejection_reason: string | null;
+          available_fact_ids: string[] | null;
+          generation_run_id: string | null;
+          attempt_number: number | null;
           created_at: string;
           updated_at: string;
         };
@@ -333,6 +338,41 @@ export interface Database {
           confidence: number;
         };
         Update: Partial<Database['public']['Tables']['generated_answers']['Row']>;
+        Relationships: [];
+      };
+      ai_usage_events: {
+        Row: {
+          id: string;
+          user_id: string;
+          application_id: string | null;
+          generation_run_id: string;
+          attempt_number: number;
+          ladder: string;
+          field_classification: string;
+          provider: string | null;
+          model: string | null;
+          task_type: string;
+          provider_succeeded: boolean | null;
+          outcome: string;
+          rejection_reason: string | null;
+          escalation_reason: string | null;
+          input_tokens: number;
+          cached_input_tokens: number;
+          output_tokens: number;
+          estimated_cost: number | null;
+          latency_ms: number | null;
+          created_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['ai_usage_events']['Row']> & {
+          user_id: string;
+          generation_run_id: string;
+          attempt_number: number;
+          ladder: string;
+          field_classification: string;
+          task_type: string;
+          outcome: string;
+        };
+        Update: Partial<Database['public']['Tables']['ai_usage_events']['Row']>;
         Relationships: [];
       };
     };
