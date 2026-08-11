@@ -1,40 +1,127 @@
-import type { DetectedField } from '@career-os/shared';
+import type { ReviewableField } from '@career-os/shared';
+import { BUTTON_STYLE, PRIMARY_BUTTON_STYLE } from '../styles';
+import { FieldReviewRow } from './FieldReviewRow';
+
+const SECTION_TITLES: Record<ReviewableField['reviewState'], string> = {
+  READY: 'Ready to fill',
+  SUGGESTED: 'Needs your review',
+  PENDING_SUGGESTION: 'Not yet suggested',
+  NEEDS_INPUT: 'Needs your input',
+  ALREADY_COMPLETED: 'Already completed',
+  SENSITIVE: 'Sensitive — always manual',
+  UNSUPPORTED: 'Manual — unsupported',
+};
+
+/** Render order: the states a user can act on first, structurally-manual states last. */
+const SECTION_ORDER: ReviewableField['reviewState'][] = [
+  'READY',
+  'SUGGESTED',
+  'PENDING_SUGGESTION',
+  'NEEDS_INPUT',
+  'ALREADY_COMPLETED',
+  'SENSITIVE',
+  'UNSUPPORTED',
+];
 
 /**
- * Read-only display of what was detected — no approve/edit/skip controls here. Phase 2 is
- * extraction + classification only; suggestions and autofill are Phase 3/4
- * (docs/IMPLEMENTATION_PLAN.md).
+ * Grouped, stateful field review (docs/IMPLEMENTATION_PLAN.md Phase 4A) — supersedes the old
+ * Phase 2 read-only list. Every field is bucketed by `reviewState`; approve/edit/skip controls
+ * only ever render inside FieldReviewRow for READY/SUGGESTED, per CLAUDE.md's "there is
+ * structurally no suggestion to approve" rule for every other classification/state.
  */
-export function FieldList({ fields }: { fields: DetectedField[] }) {
-  if (fields.length === 0) {
+export function FieldList({
+  fields,
+  loadingIds,
+  onRequestSuggestion,
+  onRequestAllSuggestions,
+  onApprove,
+  onSkip,
+  onEdit,
+  onResetDecision,
+  onApproveAllEligible,
+}: {
+  fields: Record<string, ReviewableField>;
+  loadingIds: Record<string, boolean>;
+  onRequestSuggestion: (fieldId: string) => void;
+  onRequestAllSuggestions: () => void;
+  onApprove: (fieldId: string) => void;
+  onSkip: (fieldId: string) => void;
+  onEdit: (fieldId: string, text: string) => void;
+  onResetDecision: (fieldId: string) => void;
+  onApproveAllEligible: () => void;
+}) {
+  const allFields = Object.values(fields);
+
+  if (allFields.length === 0) {
     return <p style={{ fontSize: 13, color: '#666' }}>No form fields detected on this page.</p>;
   }
 
+  const grouped = new Map<ReviewableField['reviewState'], ReviewableField[]>();
+  for (const field of allFields) {
+    const bucket = grouped.get(field.reviewState) ?? [];
+    bucket.push(field);
+    grouped.set(field.reviewState, bucket);
+  }
+
+  const hasFieldsToSuggest = (grouped.get('PENDING_SUGGESTION')?.length ?? 0) > 0;
+  const hasReadyFieldsToApprove = allFields.some(
+    (field) => field.reviewState === 'READY' && field.approvalState === 'PENDING',
+  );
+
   return (
     <div>
-      <p style={{ margin: '0 0 6px', fontSize: 13, fontWeight: 600 }}>
-        Detected fields ({fields.length})
+      <p style={{ margin: '0 0 8px', fontSize: 13, fontWeight: 600 }}>
+        Detected fields ({allFields.length})
       </p>
-      <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
-        {fields.map((field) => (
-          <li
-            key={field.fieldId}
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              gap: 8,
-              padding: '6px 0',
-              borderBottom: '1px solid #eee',
-              fontSize: 13,
-            }}
-          >
-            <span>{field.label ?? field.htmlName ?? field.htmlId ?? '(unlabeled field)'}</span>
-            <span style={{ color: '#666', fontSize: 12, whiteSpace: 'nowrap' }}>
-              {field.classification}
-            </span>
-          </li>
-        ))}
-      </ul>
+
+      {hasFieldsToSuggest || hasReadyFieldsToApprove ? (
+        <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
+          {hasFieldsToSuggest ? (
+            <button type="button" style={BUTTON_STYLE} onClick={onRequestAllSuggestions}>
+              Suggest all eligible
+            </button>
+          ) : null}
+          {hasReadyFieldsToApprove ? (
+            <button type="button" style={PRIMARY_BUTTON_STYLE} onClick={onApproveAllEligible}>
+              Approve all ready
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {SECTION_ORDER.filter((state) => grouped.has(state)).map((state) => {
+        const sectionFields = grouped.get(state)!;
+        return (
+          <section key={state} aria-label={SECTION_TITLES[state]} style={{ marginBottom: 10 }}>
+            <h2
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                textTransform: 'uppercase',
+                letterSpacing: 0.3,
+                color: '#475569',
+                margin: '0 0 4px',
+              }}
+            >
+              {SECTION_TITLES[state]} ({sectionFields.length})
+            </h2>
+            <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
+              {sectionFields.map((field) => (
+                <FieldReviewRow
+                  key={field.detected.fieldId}
+                  field={field}
+                  loading={Boolean(loadingIds[field.detected.fieldId])}
+                  onRequestSuggestion={() => onRequestSuggestion(field.detected.fieldId)}
+                  onApprove={() => onApprove(field.detected.fieldId)}
+                  onSkip={() => onSkip(field.detected.fieldId)}
+                  onEdit={(text) => onEdit(field.detected.fieldId, text)}
+                  onResetDecision={() => onResetDecision(field.detected.fieldId)}
+                />
+              ))}
+            </ul>
+          </section>
+        );
+      })}
     </div>
   );
 }

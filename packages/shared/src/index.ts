@@ -16,3 +16,4 @@ export * from './schemas/detected-field';
 export * from './schemas/job-extraction';
 export * from './schemas/generated-answer';
 export * from './schemas/ai-usage-event';
+export * from './schemas/field-review';

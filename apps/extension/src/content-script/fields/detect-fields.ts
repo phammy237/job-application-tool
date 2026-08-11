@@ -78,6 +78,29 @@ function getInputType(field: FormControl): string {
 }
 
 /**
+ * Best-effort "does this field already have something in it" snapshot, feeding Phase 4's
+ * "Already completed" review state (docs/IMPLEMENTATION_PLAN.md). Deliberately conservative:
+ * skipped entirely for checkbox/radio/file (a single control's checked/empty state, or a
+ * browser-restricted file input value, isn't a meaningful text snapshot the way an input/
+ * textarea/select's content is), and for select elements this can't distinguish a real first
+ * option from an unset one sitting at selectedIndex 0 — a false negative (missing an actually-
+ * completed select) is preferred over a false positive that hides a field the user still needs
+ * to fill.
+ */
+function readCurrentValue(field: FormControl, inputType: string): string | null {
+  if (inputType === 'checkbox' || inputType === 'radio' || inputType === 'file') return null;
+
+  if (field.tagName === 'SELECT') {
+    const select = field as HTMLSelectElement;
+    const text = select.options[select.selectedIndex]?.textContent?.trim();
+    return text ? text : null;
+  }
+
+  const value = (field as HTMLInputElement | HTMLTextAreaElement).value?.trim();
+  return value ? value : null;
+}
+
+/**
  * Walks every form control on the page and builds a DetectedField[]. AUTHENTICATION fields
  * (password inputs) are excluded here, before classification ever runs — per CLAUDE.md, "never
  * extract-then-ignore." Non-data controls (hidden/submit/button/image/reset inputs) are skipped
@@ -127,6 +150,7 @@ export function detectFields(document: Document): DetectedField[] {
         classification,
         confidence,
         selectOptions,
+        currentValue: readCurrentValue(field, inputType),
       }),
     );
     index += 1;

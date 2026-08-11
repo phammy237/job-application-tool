@@ -18,7 +18,7 @@ vi.mock('../../../../../lib/supabase/admin', () => ({
   createAdminClient: mocks.createAdminClient,
 }));
 
-const { POST } = await import('./route');
+const { POST, OPTIONS } = await import('./route');
 
 const USER_ID = '22222222-2222-4222-8222-222222222222';
 const PARAMS = { params: Promise.resolve({ id: 'job-1' }) };
@@ -109,5 +109,33 @@ describe('POST /api/jobs/[id]/suggestions', () => {
       USER_ID,
       expect.objectContaining({ jobId: 'job-1' }),
     );
+  });
+
+  it('reflects a chrome-extension:// origin in Access-Control-Allow-Origin so the popup can read the response (Phase 4A)', async () => {
+    mocks.generateSuggestion.mockResolvedValue({ status: 'insufficient_facts' });
+    const response = await POST(
+      jsonRequest(VALID_BODY, { origin: 'chrome-extension://abcdefg' }),
+      PARAMS,
+    );
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('chrome-extension://abcdefg');
+  });
+
+  it('does not set CORS headers for a non-extension origin', async () => {
+    mocks.generateSuggestion.mockResolvedValue({ status: 'insufficient_facts' });
+    const response = await POST(
+      jsonRequest(VALID_BODY, { origin: 'https://evil.example' }),
+      PARAMS,
+    );
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull();
+  });
+
+  it('OPTIONS returns 204 with CORS headers for a preflight from the extension', () => {
+    const request = new Request('http://localhost/api/jobs/job-1/suggestions', {
+      method: 'OPTIONS',
+      headers: { origin: 'chrome-extension://abcdefg' },
+    });
+    const response = OPTIONS(request);
+    expect(response.status).toBe(204);
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('chrome-extension://abcdefg');
   });
 });

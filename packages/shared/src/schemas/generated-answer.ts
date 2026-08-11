@@ -100,3 +100,19 @@ export const generateSuggestionRequestSchema = z.object({
   applicationId: uuidSchema.optional(),
 });
 export type GenerateSuggestionRequest = z.infer<typeof generateSuggestionRequestSchema>;
+
+/**
+ * The 200-status response shapes for POST /api/jobs/:id/suggestions (see the route handler) —
+ * the honest "nothing to show" outcomes (not_supported_for_field/insufficient_facts/
+ * no_suggestion) are deliberately identical in shape so a caller can't distinguish "rejected"
+ * from "insufficient facts" and accidentally surface a partial answer. Non-2xx outcomes
+ * (rate_limited/job_not_found/provider_error) use different HTTP status codes with their own
+ * {error} shape and are handled by status code on the client, not through this schema.
+ */
+export const generateSuggestionResponseSchema = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('generated'), suggestion: generatedAnswerSchema }),
+  z.object({ status: z.literal('not_supported_for_field') }),
+  z.object({ status: z.literal('insufficient_facts') }),
+  z.object({ status: z.literal('no_suggestion') }),
+]);
+export type GenerateSuggestionResponse = z.infer<typeof generateSuggestionResponseSchema>;

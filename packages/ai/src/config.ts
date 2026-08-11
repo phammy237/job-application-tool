@@ -1,5 +1,3 @@
-import type { FieldClassification } from '@career-os/shared';
-
 /**
  * Single source of truth for the model id — swapping models is a one-line change here,
  * never a per-call-site edit. claude-sonnet-5, per the user's locked-in Phase 3 decision
@@ -12,15 +10,13 @@ export const MODEL_ID = 'claude-sonnet-5';
 export const MAX_OUTPUT_TOKENS = 4096;
 
 /**
- * CLAUDE.md: "Fields classified DEMOGRAPHIC, LEGAL, or AUTHENTICATION never get a generated
- * suggestion, ever." Checked first, before any DB read or Claude call, in generate-suggestion.ts
- * — this is the enforcement point, not just documentation of the rule.
+ * Re-exported from packages/shared (not defined here) starting Phase 4, so the extension's
+ * popup — banned from importing this package, see apps/extension/.eslintrc.json — can enforce
+ * the identical structural refusal client-side instead of only relying on this package's
+ * generate-suggestion.ts to say no. Checked first there too, before any DB read or Claude call
+ * — this remains the server-side enforcement point regardless of what the client does.
  */
-export const NEVER_SUGGEST_CLASSIFICATIONS: ReadonlySet<FieldClassification> = new Set([
-  'DEMOGRAPHIC',
-  'LEGAL',
-  'AUTHENTICATION',
-]);
+export { NEVER_SUGGEST_CLASSIFICATIONS } from '@career-os/shared';
 
 /** Retrieval/ranking tuning — deliberately in one place so retuning is a config change,
  * not a code change. See packages/ai/src/retrieval/score-fact.ts and rank-facts.ts. */

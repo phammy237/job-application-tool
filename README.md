@@ -12,9 +12,11 @@ boundary.
 
 ## Status
 
-This repository currently contains the architecture and planning stage only — no application
-code yet. See `docs/IMPLEMENTATION_PLAN.md` for the phased build plan, starting with Phase 1
-(repository setup, auth, database, candidate profile, manual application tracker).
+Phases 1–3 are built (auth, database, candidate profile, manual tracker, Chrome extension
+shell with page extraction, and Claude-generated suggestions), plus Phase 4A (the popup's
+field review/approval UI). Phase 4B (the safe autofill engine) is next. See
+`docs/IMPLEMENTATION_PLAN.md`'s Status checklist for the current phase and the phased build
+plan.
 
 ## Documentation
 
@@ -71,4 +73,14 @@ Gmail API (server-side OAuth only), Vitest, Playwright, ESLint, Prettier, npm wo
 
 ## Development
 
-Setup instructions land with Phase 1 repository scaffolding — not yet present.
+```
+npm install
+npm run dev          # apps/web dev server
+npm run lint
+npm run typecheck
+npm run test         # vitest, all workspaces
+npm run test:e2e      # playwright, apps/web
+```
+
+Requires a `.env` (see `.env.example`) with Supabase project credentials and
+`ANTHROPIC_API_KEY` for `packages/ai`.

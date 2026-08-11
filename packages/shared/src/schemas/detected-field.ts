@@ -25,6 +25,20 @@ export const fieldClassificationSchema = z.enum([
 export type FieldClassification = z.infer<typeof fieldClassificationSchema>;
 
 /**
+ * CLAUDE.md: "Fields classified DEMOGRAPHIC, LEGAL, or AUTHENTICATION never get a generated
+ * suggestion, ever." Lives here (not in packages/ai, which the extension is banned from
+ * importing — see apps/extension/.eslintrc.json) so both the server-side generation pipeline
+ * (packages/ai/src/config.ts re-exports this) and the extension's popup (which must never even
+ * offer to fetch a suggestion for one of these fields, not just rely on the backend refusing the
+ * request) enforce the identical set from one source, not two that could drift.
+ */
+export const NEVER_SUGGEST_CLASSIFICATIONS: ReadonlySet<FieldClassification> = new Set([
+  'DEMOGRAPHIC',
+  'LEGAL',
+  'AUTHENTICATION',
+]);
+
+/**
  * A single form field detected on a job application page by the extension's content script.
  * Lives only in the extension (popup state / chrome.storage.local) in Phase 2 — never sent to
  * or persisted by the backend, since nothing server-side consumes field data until Phase 3's
@@ -48,5 +62,14 @@ export const detectedFieldSchema = z.object({
   classification: fieldClassificationSchema,
   confidence: z.number().min(0).max(1),
   selectOptions: z.array(z.string()).optional(),
+  /**
+   * Non-empty text already present in the field at detection time (trimmed), or null if it
+   * reads as unfilled. Drives Phase 4's "Already completed" review state (never silently
+   * overwrite a value the user already entered). Deliberately not captured for
+   * checkbox/radio/file inputs — a single control's checked/empty state isn't a meaningful
+   * "current value" snapshot the way text/select content is; see detect-fields.ts. Defaults to
+   * null so every existing DetectedField literal built before this field existed still parses.
+   */
+  currentValue: z.string().nullable().default(null),
 });
 export type DetectedField = z.infer<typeof detectedFieldSchema>;

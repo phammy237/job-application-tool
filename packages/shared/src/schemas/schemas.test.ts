@@ -211,6 +211,19 @@ describe('detectedFieldSchema', () => {
     });
     expect(result.success).toBe(false);
   });
+
+  it('defaults currentValue to null when omitted, so pre-Phase-4 literals still parse', () => {
+    const result = detectedFieldSchema.parse({
+      fieldId: 'field-1',
+      label: null,
+      htmlName: null,
+      htmlId: null,
+      inputType: 'text',
+      classification: 'UNKNOWN',
+      confidence: 0.5,
+    });
+    expect(result.currentValue).toBeNull();
+  });
 });
 
 describe('generatedAnswerContractSchema', () => {

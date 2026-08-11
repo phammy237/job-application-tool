@@ -1,9 +1,33 @@
 # Implementation Plan
 
 This plan is deliberately sequential — each phase produces a working, testable slice, and no
-phase depends on a later phase's output. Nothing in this document is implemented yet; Phase 1
-begins only when explicitly kicked off (see the prompt at the end of the planning summary
-delivered alongside this doc set).
+phase depends on a later phase's output.
+
+## Status (updated 2026-08-11)
+
+- [x] Phase 1 — Repository setup, authentication, database, candidate profile, manual tracker
+- [x] Phase 2 — Chrome extension shell, page extraction, generic form-field detection
+- [x] Phase 3 — Job matching, candidate-fact retrieval, Claude-generated suggestions
+- [ ] Phase 4 — Approved-field autofill and application-saving workflow
+  - [x] Phase 4A — Field review and approval state
+  - [ ] **Phase 4B — Safe autofill engine ← current**
+  - [ ] Phase 4C — Application saving and tracker integration
+  - [ ] Phase 4D — End-to-end integration and safety verification
+- [ ] Phase 5 — Manual Gmail synchronization, email classification, status matching
+- [ ] Phase 6 — Multi-user beta hardening, privacy controls, testing, deployment
+- [ ] Phase 7 — Optional mypham.space integration, public onboarding, future sharing
+
+Phase 4A shipped: the popup classifies every detected field into a review state (sensitive /
+unsupported / already-completed / pending-suggestion / ready / suggested / needs-input),
+requests suggestions from POST /api/jobs/:id/suggestions one field at a time, and supports
+approve/edit/skip + bulk "approve all ready" — all decisions live in chrome.storage.local only,
+nothing DOM-writing or backend-persisting yet. See packages/shared/src/schemas/field-review.ts,
+apps/extension/src/popup/state/review-reducer.ts, and apps/extension/src/popup/hooks/
+useFieldReview.ts.
+
+Update this checklist when a phase's definition of done is met and the next one starts —
+this is the single source of truth for "what phase are we on," so it needs to stay current,
+not be reconstructed from git log each time.
 
 ---
 
