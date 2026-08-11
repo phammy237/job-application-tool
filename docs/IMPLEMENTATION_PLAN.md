@@ -170,6 +170,16 @@ gated by the grounding rules in `docs/AI_GROUNDING.md`.
 
 Add `generated_answers` table + RLS.
 
+Also added: `ai_usage_events` table + RLS, and `generated_answers`'s `insufficient_data`/
+`rejection_reason`/`available_fact_ids`/`generation_run_id`/`attempt_number` audit columns.
+These are schema-level groundwork for a future multi-provider AI routing/escalation system (a
+`deterministic -> normal -> premium` ladder across providers) — **not implemented in Phase 3**.
+The actual Phase 3 implementation (`generate-suggestion.ts`) is single-provider (Claude Sonnet
+only, one retry) and never writes to `ai_usage_events`
+(`packages/database`'s `recordAiUsageEvent` has no call site yet). The table exists now so a
+future routing implementation has telemetry storage from day one rather than needing its own
+schema change. See `packages/shared/src/schemas/ai-usage-event.ts` for the full modeled shape.
+
 ### API endpoints
 
 - `POST /api/jobs/:id/suggestions` — runs retrieval + Claude, returns validated
@@ -202,6 +212,11 @@ Add `generated_answers` table + RLS.
 
 - Autofill (writing suggestions into the page) — Phase 4.
 - Any Gmail-related classification (separate Claude usage path, Phase 5).
+- Multi-provider AI routing/escalation (choosing between providers/models across a
+  deterministic/normal/premium ladder, retrying via a second provider, cost-based routing) —
+  `ai_usage_events`' schema anticipates this (see "Database changes" above) but no phase in
+  this plan has scoped the actual routing logic yet. Needs its own planning pass before
+  implementation starts, rather than being built ad hoc against the existing schema.
 
 ---
 

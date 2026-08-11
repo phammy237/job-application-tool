@@ -32,9 +32,10 @@ function rowToAiUsageEvent(row: Row): AiUsageEvent {
 
 /**
  * Records one provider attempt (or the deterministic short-circuit, or a deliberately skipped
- * escalation slot). Callers (packages/ai's generate-suggestion.ts) must treat insert failures
- * as non-fatal — wrap this call so a lost telemetry row never fails the user's actual request.
- * See the Phase 4 routing plan's telemetry-discipline note.
+ * escalation slot). No call site exists yet — packages/ai's generate-suggestion.ts is
+ * single-provider today and doesn't call this. Once a caller is wired up, it must treat insert
+ * failures as non-fatal (wrap this call so a lost telemetry row never fails the user's actual
+ * request). See docs/IMPLEMENTATION_PLAN.md's Phase 3 note on ai_usage_events.
  */
 export async function recordAiUsageEvent(
   supabase: CareerOsSupabaseClient,

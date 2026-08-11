@@ -1,10 +1,14 @@
--- Career OS — Phase 4: ai_usage_events
+-- Career OS — Phase 3: ai_usage_events
 --
--- Records every AI provider attempt (and the deterministic short-circuit, and a deliberately
--- skipped escalation slot) made by packages/ai's multi-provider suggestion pipeline, so
--- cost-per-user/application/task/model, provider failure rate, grounding-gate rejection rate,
--- and how-often-and-why Luna escalates to Sonnet are all answerable from real data. See the
--- Phase 4 routing plan and docs/AI_GROUNDING.md.
+-- Schema-level groundwork for a future multi-provider AI routing/escalation system (a
+-- deterministic -> normal -> premium "ladder" across providers) — not yet implemented.
+-- packages/ai's current generate-suggestion.ts is single-provider (Claude Sonnet only, one
+-- retry) and never writes to this table (packages/database's recordAiUsageEvent has no call
+-- site yet). The table exists now so that when routing/escalation logic is actually built, its
+-- telemetry (cost-per-user/application/task/model, provider failure rate, grounding-gate
+-- rejection rate, escalation frequency/reason) has a home from day one, rather than bolting on
+-- a schema change alongside the feature. See docs/IMPLEMENTATION_PLAN.md's Phase 3 note on
+-- this table and docs/AI_GROUNDING.md.
 --
 -- Append-only, matching 0001_init.sql's application_events convention: no updated_at/trigger.
 --

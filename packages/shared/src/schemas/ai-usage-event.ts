@@ -44,7 +44,7 @@ export const aiUsageEventEscalationReasonSchema = z
 export type AiUsageEventEscalationReason = z.infer<typeof aiUsageEventEscalationReasonSchema>;
 
 /** One member today — not a generic task-type dispatcher, just enough for telemetry rows to
- * carry the right value. Extend when a second real caller exists (Phase 4/5). */
+ * carry the right value. Extend when a second real caller exists. */
 export const aiUsageEventTaskTypeSchema = z.enum(['field_suggestion']);
 export type AiUsageEventTaskType = z.infer<typeof aiUsageEventTaskTypeSchema>;
 
@@ -52,7 +52,12 @@ export type AiUsageEventTaskType = z.infer<typeof aiUsageEventTaskTypeSchema>;
  * One row per provider attempt (or deterministic short-circuit, or deliberately-skipped
  * escalation slot) within a `generate-suggestion.ts` execution. `generationRunId` correlates
  * every row from the same execution; `attemptNumber` (1 or 2) plus `ladder` reconstructs the
- * full NORMAL/PREMIUM decision path. See docs/AI_GROUNDING.md and the Phase 4 routing plan.
+ * full NORMAL/PREMIUM decision path.
+ *
+ * This schema is forward-looking groundwork: `generate-suggestion.ts` is currently
+ * single-provider (Claude Sonnet only) and never calls recordAiUsageEvent, so no row with a
+ * non-null `provider`/`ladder` other than the single-path case exists yet in practice. See
+ * docs/AI_GROUNDING.md and docs/IMPLEMENTATION_PLAN.md's Phase 3 note on this table.
  */
 export const aiUsageEventSchema = z.object({
   id: uuidSchema,

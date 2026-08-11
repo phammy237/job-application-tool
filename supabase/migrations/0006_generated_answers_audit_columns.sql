@@ -1,8 +1,10 @@
--- Career OS — Phase 4: generated_answers audit/correlation columns
+-- Career OS — Phase 3: generated_answers audit/correlation columns
 --
--- Adds the columns needed to later check whether the multi-provider pipeline's insufficientData
--- self-report (docs/AI_GROUNDING.md, Phase 4 routing plan) is calibrated, and to join a
--- persisted answer back to its ai_usage_events telemetry rows for the same generation run.
+-- Adds the columns needed to later check whether the insufficientData self-report
+-- (docs/AI_GROUNDING.md) is calibrated, and to join a persisted answer back to its
+-- ai_usage_events telemetry rows for the same generation run — see 0005_ai_usage_events.sql's
+-- comment: that table (and this correlation) is schema-level groundwork for a future
+-- multi-provider routing system, not yet implemented.
 --
 -- generation_run_id/attempt_number are deliberately plain uuid/smallint columns, NOT a foreign
 -- key to ai_usage_events — telemetry inserts are best-effort (see generate-suggestion.ts) and a
