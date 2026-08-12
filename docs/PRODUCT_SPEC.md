@@ -79,8 +79,17 @@ for each step. In short: upload résumé → system extracts candidate facts →
 approves facts → user opens a job posting → extension analyzes the page on click → backend
 ranks approved experiences against the job → Claude drafts suggestions from approved facts
 only → user reviews/edits/approves/skips each suggestion → extension fills only approved
-fields → user submits manually on the employer's site → application saved to dashboard →
-optional Gmail sync proposes timeline updates for confirmation.
+fields → user saves the opportunity to the dashboard (tracked as `SAVED` or `IN_PROGRESS` —
+this can happen before, during, or after filling, and repeated saves update the same tracked
+application rather than duplicating it) → user submits manually on the employer's own site,
+outside Career OS's control → user explicitly clicks **Mark as Applied** and confirms, which is
+the *only* action that ever changes the tracked status to `APPLIED` → optional Gmail sync
+proposes timeline updates for confirmation from there.
+
+Saving, autofilling, or completing every field never implies submission or `APPLIED` status —
+those are two independently human-triggered signals (the actual submit click happens on the
+employer's site, entirely outside what Career OS can observe or control; "Mark as Applied" is
+the user separately telling Career OS that submission happened).
 
 ## 6. Candidate profile scope
 

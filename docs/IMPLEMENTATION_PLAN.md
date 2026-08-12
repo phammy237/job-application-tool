@@ -3,19 +3,26 @@
 This plan is deliberately sequential — each phase produces a working, testable slice, and no
 phase depends on a later phase's output.
 
-## Status (updated 2026-08-11)
+## Status (updated 2026-08-12)
 
 - [x] Phase 1 — Repository setup, authentication, database, candidate profile, manual tracker
 - [x] Phase 2 — Chrome extension shell, page extraction, generic form-field detection
 - [x] Phase 3 — Job matching, candidate-fact retrieval, Claude-generated suggestions
-- [ ] Phase 4 — Approved-field autofill and application-saving workflow
+- [x] Phase 4 — Approved-field autofill and application-saving workflow
   - [x] Phase 4A — Field review and approval state
   - [x] Phase 4B — Safe autofill engine
   - [x] Phase 4C — Application saving and tracker integration
-  - [ ] **Phase 4D — End-to-end integration and safety verification ← current**
+  - [x] Phase 4D — End-to-end integration and safety verification
 - [ ] Phase 5 — Manual Gmail synchronization, email classification, status matching
 - [ ] Phase 6 — Multi-user beta hardening, privacy controls, testing, deployment
 - [ ] Phase 7 — Optional mypham.space integration, public onboarding, future sharing
+
+**Not yet started, ordering undecided:** an "Opportunity Intelligence Foundation" phase — job-
+posting snapshots, requirement-to-evidence mapping, a consistency firewall, frozen submission
+packets, next actions/deadlines. Scoped (see the proposed Phase 5A boundary at the end of this
+document) but deliberately not implemented, and not yet slotted into the numbered sequence
+above relative to Phase 5's Gmail work — that ordering decision is intentionally left open
+rather than assumed here.
 
 Phase 4A shipped: the popup classifies every detected field into a review state (sensitive /
 unsupported / already-completed / pending-suggestion / ready / suggested / needs-input),
@@ -54,6 +61,92 @@ are persisted — never raw DOM data, full ReviewableField/DetectedField objects
 field values. Fixed a Phase 4B compatibility gap along the way: autofill results now persist to
 chrome.storage.local per job (lib/fill-result-storage.ts) so they survive popup closure, same
 pattern as Phase 4A's review-storage.ts.
+
+Phase 4D shipped: end-to-end verification of the full Phase 4 workflow plus targeted hardening,
+all found and fixed by exercising the real system rather than by inspection alone —
+
+- **Cross-tab/stale-response fix**: `chrome.runtime.sendMessage` is a broadcast with no
+  built-in request/response correlation; a late `ANALYZE_JOB_RESULT`/`AUTOFILL_RESULT` from a
+  previous tab, a closed-and-reopened popup, or a duplicate click could have silently
+  overwritten the current job's state. Every request/result pair (`ANALYZE_JOB`,
+  `AUTOFILL_APPROVED_FIELDS`) now carries a `requestId` the popup generates and checks on
+  receipt, discarding anything stale. The accept/reject decision itself is extracted into a
+  small pure helper (`apps/extension/src/lib/request-correlation.ts` — `startRequest`/
+  `isCurrentRequest`) rather than left as inline ref comparisons, specifically so it can be
+  unit-tested directly: 6 focused tests cover a normal matching response, an idle popup with
+  nothing pending, a stale response arriving after a newer request superseded it, a response
+  carrying an id that was never issued as the pending request at all (another tab/context), and
+  many-simultaneous-requests (only the latest is ever accepted). `useAnalysis.ts` and
+  `useAutofill.ts` both consume the shared helper instead of duplicating the comparison inline.
+- **Missing `location` column**: `upsert_application_from_extension` referenced
+  `applications.location` from Phase 4C onward, but migration 0008 never added it — caught only
+  by calling the RPC against a real database (no mocked test could catch a column that neither
+  side's mocks knew was missing). Because 0008 was already committed (and, by the time this was
+  caught, already applied to a real database), the fix was **not** made by editing 0008 in
+  place — `supabase db push` tracks applied migrations by filename, so a database that already
+  ran 0008 would never pick up an in-place edit to it, silently diverging from a fresh
+  database's schema. Instead, migration 0008 was restored to its exact original committed form
+  and a new forward migration, `supabase/migrations/
+  0009_applications_extension_fields_fixes.sql`, carries the `location` column addition plus
+  the other Phase 4D corrections below. A fresh database (0001→0009) and a database already at
+  0008 (0009 alone) are verified to converge on the identical final schema.
+- **Dedup-index/query mismatch**: the `canonical_url` unique index didn't exclude rows already
+  claimed by a distinct `external_id`, so two different requisitions sharing one generic
+  apply-page URL could collide at the database level even though the RPC's own SELECT logic
+  already knew to treat them as separate — fixed in migration 0009 by dropping and recreating
+  the index with the matching predicate, then confirmed race-free under genuine 8-way
+  concurrency.
+- **RPC hardening** (also migration 0009): pinned `search_path`, independently re-verified
+  `job_id` ownership inside the function (it runs via service-role, bypassing RLS), bounded the
+  `unique_violation` retry loop, normalized empty-string `external_id`/`canonical_url` to `null`.
+- **`recordOwnGeneratedAnswerDecision` hardening**: now scoped by `job_id` in addition to
+  `user_id`, so a same-user answer generated for a *different* job can never be silently
+  re-pointed onto the application being saved.
+- **CI-crash fix, reassessed**: `applicationSchema` required the Phase 4C columns to always be
+  present; any database without migrations 0008/0009 applied (e.g. a CI Supabase project, since
+  migrations aren't run in CI) returns rows missing those keys entirely, not `null` — changed to
+  `.nullable().default(null)` so those rows parse instead of throwing. Making the fields
+  optional this way trades a loud crash for a quiet gap, so it is deliberately narrow: it only
+  affects the *read* path's 7 Phase 4C/4D columns, `rowToApplication` is a pure mapper (no
+  writes, nothing gets corrupted by defaulting to null), and the *write* path
+  (`upsert_application_from_extension`) still fails loudly with a real Postgres error if those
+  columns don't exist — a missing migration can never silently succeed at saving an
+  application. What the schema relaxation alone would have left silent is a production
+  environment quietly reading degraded (all-null) data with no signal anything is wrong; that
+  gap is closed by `warnIfMigrationColumnsMissing` in `packages/database/src/queries/
+  applications.ts`, which logs a warn-once-per-process message the first time a row is missing
+  these columns, naming migrations 0008/0009 explicitly. The schema was not broadened beyond
+  the original 7 fields.
+
+Verified against a real (confirmed-disposable) linked Supabase project, not mocks, starting
+from a genuine already-at-0008 state and again from a fresh 0001–0009 apply — both converge on
+the same schema: create/repeated-update/all three dedup tiers/status-non-regression/
+empty-string-normalization/job-ownership-rejection all pass (12/12 scenario checks); 8-way true
+concurrent saves for both the canonical-URL and requisition-ID tiers each produce exactly one
+row with zero errors; the pgTAP RLS suite (`supabase/tests/database/0009_applications.test.sql`
+— an independently, pre-existingly numbered pgTAP file, unrelated to migration 0009 above; no
+naming collision, different directories) passes 5/5 against the post-migration schema.
+
+**E2E status — honest, not rounded up.** The existing Playwright e2e suite
+(`apps/web/e2e/signup-flow.spec.ts`) does **not** pass as a whole. Root-caused and reproduced
+twice with identical results: run against an isolated dev server (the default `reuseExistingServer:
+true` config was previously and silently reusing an unrelated dev server already on port 3000 —
+worked around for diagnosis only, by running on an isolated port, not by editing repo config),
+the suite exercises the full flow through the application status change successfully, then fails
+at the final sign-out assertion. This is not asserted as a harmless flake by default assumption —
+`--trace on` was captured and the resulting `error-context.md` accessibility-tree snapshot at the
+moment of timeout was read directly. It shows two concrete facts: the page never navigated away
+from `/applications` (the sign-out form's submit never actually went through), and the Next.js
+Dev Tools overlay menu was open/expanded and sitting on top of the page in the accessibility tree
+at that exact moment. That is proof, not inference, that the dev-mode-only overlay intercepted
+the click — consistent with this test file's own pre-existing inline comment about the overlay,
+and consistent with CI never seeing this failure mode (CI runs `npm run start`, a production
+build, where this overlay does not render). So: **core application flow through status-change is
+proven to work end-to-end; the full suite did not pass; the sign-out failure has a proven,
+reproduced root cause rather than an assumed one.** It does not exercise the extension's own
+save/autofill code paths directly (no extension-level browser-automation harness exists in this
+repo yet); those paths are covered instead by the real-database RPC verification above plus the
+unit/integration suite (271+ tests, see the Phase 4D report for the exact final count).
 
 Update this checklist when a phase's definition of done is met and the next one starts —
 this is the single source of truth for "what phase are we on," so it needs to stay current,
@@ -518,3 +611,90 @@ place from Phase 1). Possibly a `public_slug`-based lookup index on `profiles`.
 - **Billing** is intentionally never implemented in this plan. `user_settings.ai_request_limit`
   is the seam a future plan/billing system would hang off of (per-user limit already exists;
   a `plan` enum and Stripe integration would be additive, not a restructure).
+
+---
+
+## Proposed: Opportunity Intelligence Foundation — Phase 5A boundary (NOT implemented)
+
+Scoped during Phase 4D planning at the user's request, as the first of three independently
+shippable subphases (5A: snapshot + evidence mapping; 5B: consistency firewall + frozen
+submission packet; 5C: next actions + dashboard integration — 5B/5C intentionally left
+unscoped here). **No code, migration, or UI for this exists yet.** This section is a proposal
+to review, not a commitment — implementation should start in a fresh session or a clean
+branch/worktree, per the same phase-boundary discipline every other phase in this document
+follows (don't start 5A until this proposal itself has been reviewed).
+
+### Goals
+
+Preserve job-posting content past the point the original listing disappears, and give the
+user an explainable mapping from what a posting asks for to which of their *approved* facts
+actually support it — without ever inventing evidence or treating page content as
+instructions.
+
+### New tables (proposed shape, not final)
+
+**`job_snapshots`** — one current sanitized snapshot per `(user_id, job_id)` (versioning
+deferred — see "Explicitly excluded" below), upserted on save the same way `applications`
+already is: `user_id`, `job_id` (`on delete set null`, so the snapshot outlives the `jobs` row
+being re-analyzed or removed — the entire point of this table), `company`, `title`,
+`source_url`, `external_id`, `description` (full normalized text), `required_qualifications
+text[]`, `preferred_qualifications text[]`, `responsibilities text[]`, `salary_min`/
+`salary_max numeric`, `salary_currency text`, `locations text[]`, `work_mode` (`REMOTE,
+HYBRID, ONSITE, UNKNOWN`), `remote_location_restrictions text`,
+`work_authorization_language text` (captured verbatim as data, never treated as instructions
+— see "Security risks"), `captured_at timestamptz`, `source_type` (reuses
+`jobPlatformTypeSchema`), `structured_metadata jsonb`, `content_fingerprint text` (dedup —
+re-saving unchanged content is a no-op, not a new row), `created_at`, `updated_at`.
+
+**`requirement_evidence_mappings`** — `user_id`, `job_snapshot_id references job_snapshots(id)
+on delete cascade`, `requirement_text`, `requirement_category`, `required_or_preferred`
+(`REQUIRED`/`PREFERRED`), `relationship` (`DIRECT`/`EQUIVALENT`/`INFERRED`/`MISSING`),
+`matched_fact_ids uuid[]` (validated server-side against `listOwnApprovedFactsForGeneration` —
+the same approved-facts-only allowlist `packages/ai` already enforces, reused rather than
+re-derived), `explanation text`, `confidence numeric(3,2)`,
+`requires_user_confirmation boolean`, `model`/`provider`/`prompt_version text`, `created_at`.
+
+Both tables: `user_id` + RLS + the four standard policies in the migration that creates them,
+per `CLAUDE.md`, plus cross-user isolation tests in the same PR.
+
+### API endpoints (proposed)
+
+- Snapshot capture folded into the existing `POST /api/applications` save flow (or a sibling
+  endpoint if that route is already doing too much) — extending, not duplicating, Phase 4C's
+  save path.
+- `POST /api/job-snapshots/:id/requirements` — triggers requirement extraction + evidence
+  mapping (reuses `packages/ai`'s existing retrieval/ranking, not a new AI pipeline).
+- `GET /api/job-snapshots/:id/requirements` — list mappings for display.
+
+### Security risks
+
+- Page content (the job posting) is untrusted data, never instructions — same posture
+  `docs/AI_GROUNDING.md` already requires for job descriptions; a posting containing
+  prompt-injection-style text must not change extraction/mapping behavior.
+- `matched_fact_ids` must be re-verified server-side as belonging to the authenticated user
+  and `approved_for_applications = true` on every read/write, not trusted from a stored value.
+- `INFERRED` relationships must never auto-promote into an approved candidate fact.
+- No raw HTML, scripts, cookies, or `AUTHENTICATION`-classified content in the snapshot —
+  only the sanitized, structured fields listed above.
+
+### Tests (proposed)
+
+- Cross-user RLS isolation for both new tables.
+- Snapshot dedup/idempotency: same URL saved twice updates, doesn't duplicate; same URL from
+  two different users produces two independent snapshots; same external job ID from different
+  ATS sources doesn't incorrectly merge.
+- Requirement mappings referencing an invalid, foreign, or unapproved fact ID are rejected.
+- `INFERRED` evidence never becomes an approved fact automatically.
+- A requirement with no supporting approved fact produces `MISSING`, never a fabricated match.
+- Fixtures: Greenhouse-style, Lever-style, Workday-style (if the current extractor supports
+  it), and generic HTML — no real employer sites accessed in tests.
+
+### Explicitly excluded from Phase 5A
+
+- Snapshot **version history** — one current snapshot only; versioning is a later
+  enhancement, not silently dropped scope.
+- The consistency firewall and frozen submission packet (Phase 5B).
+- Next actions/deadlines and the dashboard overview section (Phase 5C).
+- Calling a result an "ATS score," "hiring probability," or similar — hard eligibility stays
+  separate from qualification coverage, per the original request.
+- Any change to the extension's autofill/save/mark-applied flow verified in Phase 4D.

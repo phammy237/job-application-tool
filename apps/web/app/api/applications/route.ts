@@ -131,6 +131,7 @@ export async function POST(request: Request) {
   for (const answered of parsed.data.answeredFields) {
     await recordOwnGeneratedAnswerDecision(supabase, userId, answered.generatedAnswerId, {
       applicationId: result.applicationId,
+      jobId: job.id,
       decision: answered.decision,
       finalText: answered.decision === 'EDITED' ? answered.finalText : null,
     });

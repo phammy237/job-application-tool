@@ -19,12 +19,13 @@ chrome.runtime.onMessage.addListener(
 
     try {
       const results = runFillEngine(document, message.fields);
-      const response: AutofillResult = { type: 'AUTOFILL_RESULT', results };
+      const response: AutofillResult = { type: 'AUTOFILL_RESULT', requestId: message.requestId, results };
       void chrome.runtime.sendMessage(response);
       sendResponse(response);
     } catch (error) {
       const response: AutofillError = {
         type: 'AUTOFILL_ERROR',
+        requestId: message.requestId,
         message: error instanceof Error ? error.message : 'Could not autofill this page.',
       };
       void chrome.runtime.sendMessage(response);

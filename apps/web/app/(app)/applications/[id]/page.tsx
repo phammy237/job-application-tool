@@ -28,7 +28,10 @@ export default async function ApplicationDetailPage({
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{application.title}</h1>
-          <p className="text-muted-foreground mt-1">{application.company}</p>
+          <p className="text-muted-foreground mt-1">
+            {application.company}
+            {application.location ? ` · ${application.location}` : ''}
+          </p>
         </div>
         <StatusBadge status={application.status} />
       </div>

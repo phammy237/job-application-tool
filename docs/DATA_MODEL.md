@@ -213,20 +213,64 @@ Indexes: `(user_id)`, `(user_id, source_url)`. RLS: standard.
 
 ## `applications`
 
-| column       | type                                                        | notes                                                                                                                            |
-| ------------ | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `id`         | `uuid pk`                                                   |                                                                                                                                  |
-| `user_id`    | `uuid not null references auth.users(id) on delete cascade` |                                                                                                                                  |
-| `job_id`     | `uuid references jobs(id) on delete set null`               |                                                                                                                                  |
-| `resume_id`  | `uuid references resumes(id) on delete set null`            |                                                                                                                                  |
-| `company`    | `text not null`                                             | denormalized for fast filtering even if `job_id` is later nulled                                                                 |
-| `title`      | `text not null`                                             |                                                                                                                                  |
-| `status`     | `text not null default 'SAVED'`                             | `SAVED, IN_PROGRESS, APPLIED, APPLICATION_RECEIVED, ASSESSMENT, INTERVIEW, ACTION_REQUIRED, OFFER, REJECTED, WITHDRAWN, UNKNOWN` |
-| `notes`      | `text`                                                      |                                                                                                                                  |
-| `applied_at` | `timestamptz`                                               |                                                                                                                                  |
+| column               | type                                                        | notes                                                                                                                            |
+| -------------------- | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                 | `uuid pk`                                                   |                                                                                                                                  |
+| `user_id`            | `uuid not null references auth.users(id) on delete cascade` |                                                                                                                                  |
+| `job_id`             | `uuid references jobs(id) on delete set null`               |                                                                                                                                  |
+| `resume_id`          | `uuid references resumes(id) on delete set null`            |                                                                                                                                  |
+| `company`            | `text not null`                                             | denormalized for fast filtering even if `job_id` is later nulled                                                                 |
+| `title`              | `text not null`                                             |                                                                                                                                  |
+| `status`             | `text not null default 'SAVED'`                             | `SAVED, IN_PROGRESS, APPLIED, APPLICATION_RECEIVED, ASSESSMENT, INTERVIEW, ACTION_REQUIRED, OFFER, REJECTED, WITHDRAWN, UNKNOWN` |
+| `notes`              | `text`                                                      |                                                                                                                                  |
+| `applied_at`         | `timestamptz`                                               | set only by the explicit "mark as applied" action, alongside `status = 'APPLIED'`                                              |
+| `location`           | `text`                                                      | denormalized from the job at save time (Phase 4C)                                                                                |
+| `source_url`         | `text`                                                      | denormalized from the job's `source_url` at save time — survives `job_id` being nulled                                          |
+| `canonical_url`      | `text`                                                      | `source_url` normalized (query string, fragment, trailing slash stripped — `packages/shared`'s `canonicalizeUrl`); tier-2 dedup key |
+| `ats_provider`       | `text`                                                      | `GENERIC, GREENHOUSE, LEVER, WORKDAY` — denormalized from `jobs.platform_type`                                                   |
+| `external_id`        | `text`                                                      | requisition/job ID, when reliably detected — tier-1 dedup key; no current extractor populates this yet                          |
+| `autofill_summary`   | `jsonb`                                                     | counts only — `{approved, filled, skipped, failed, unresolved, manual}`, validated by `autofillSummarySchema`. No per-field content |
+| `unresolved_fields`  | `jsonb`                                                     | sanitized array of `{label, classification, status, reason}` — never a value, never a DOM locator, validated by `unresolvedFieldSummarySchema` |
 
-Indexes: `(user_id)`, `(user_id, status)`, `(user_id, company)`, `(user_id, applied_at desc)`.
+Indexes: `(user_id)`, `(user_id, status)`, `(user_id, company)`, `(user_id, applied_at desc)`,
+unique partial `(user_id, canonical_url) where canonical_url is not null and external_id is
+null`, unique partial `(user_id, ats_provider, external_id) where external_id is not null`.
 RLS: standard.
+
+### Extension-save duplicate prevention (`upsert_application_from_extension`, Phase 4C/4D)
+
+The extension's save flow (`POST /api/applications`) never does a plain client-side
+select-then-insert — it calls this `security invoker` Postgres function (pinned
+`search_path`), which atomically finds-or-creates the tracked application using a strict
+preference order, each tier scoped so it can never collapse two genuinely different
+applications:
+
+1. **`(user_id, ats_provider, external_id)`** — the strongest signal, when a requisition ID is
+   available.
+2. **`(user_id, canonical_url)`**, excluding rows already claimed by a distinct `external_id`
+   — without that exclusion, two different requisitions sharing one generic apply-page URL
+   (a canonical URL strips the query string entirely) would incorrectly merge.
+3. **`(user_id, lower(company), lower(title))`**, only among rows with neither a canonical URL
+   nor an external ID — deliberately *not* a database uniqueness constraint (a company/title
+   match alone can describe two genuinely different openings), so this tier is a best-effort,
+   row-locked application-layer check with an accepted narrow race window under true
+   concurrency; tiers 1–2 are enforced by real partial unique indexes and are fully race-free
+   (`unique_violation` triggers an automatic, bounded retry as an update instead of a
+   duplicate insert).
+
+The function also: independently re-verifies `job_id` belongs to the calling `user_id` (it
+runs via the service-role admin client, so RLS does not apply — this check is the enforcement
+point); never regresses `status` backward once it has moved past `SAVED`/`IN_PROGRESS` (e.g. a
+plain save after "mark as applied" leaves `APPLIED` untouched); and normalizes empty-string
+`external_id`/`canonical_url` to `null` so an empty string can never masquerade as a distinct
+dedup key. Verified against a real Postgres instance: create, repeated-save-updates,
+per-tier separation, 8-way true concurrent saves (both keyed tiers), status non-regression,
+and job-ownership rejection all pass — see `docs/IMPLEMENTATION_PLAN.md` Phase 4D.
+
+Approved/edited generated answers are linked to the saved application by updating the
+*existing* `generated_answers` row (`user_decision`, `final_text`, `application_id` —
+`recordOwnGeneratedAnswerDecision`, scoped by `user_id` *and* `job_id`) rather than inserting a
+new row, so repeated saves never duplicate answer-usage records.
 
 ## `application_events`
 

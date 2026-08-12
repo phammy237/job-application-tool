@@ -12,17 +12,31 @@ import type { ExtensionMessage } from '../types/chrome-messages';
  */
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendResponse) => {
   if (message.type === 'ANALYZE_JOB') {
+    const analyzeRequest = message;
     chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
       if (!tab?.id) {
-        sendResponse({ type: 'ANALYZE_JOB_ERROR', message: 'No active tab found.' });
+        sendResponse({
+          type: 'ANALYZE_JOB_ERROR',
+          requestId: analyzeRequest.requestId,
+          message: 'No active tab found.',
+        });
         return;
       }
+      const tabId = tab.id;
+      // Same two-step pattern as AUTOFILL_APPROVED_FIELDS below: executeScript's `files` form
+      // can't take arguments directly, so the content script waits for this follow-up message
+      // (carrying requestId) instead of running eagerly at injection time — see
+      // content-script/index.ts's doc comment. The listener it registers as its first
+      // synchronous action is guaranteed live by the time this promise resolves, so the
+      // follow-up send can't race the injected script's readiness.
       chrome.scripting
-        .executeScript({ target: { tabId: tab.id }, files: [contentScriptPath] })
+        .executeScript({ target: { tabId }, files: [contentScriptPath] })
+        .then(() => chrome.tabs.sendMessage(tabId, analyzeRequest))
         .catch((error: unknown) => {
           console.error('Failed to inject content script', error);
           sendResponse({
             type: 'ANALYZE_JOB_ERROR',
+            requestId: analyzeRequest.requestId,
             message: 'Could not analyze this page.',
           });
         });
@@ -34,15 +48,14 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
     const fillRequest = message;
     chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
       if (!tab?.id) {
-        sendResponse({ type: 'AUTOFILL_ERROR', message: 'No active tab found.' });
+        sendResponse({
+          type: 'AUTOFILL_ERROR',
+          requestId: fillRequest.requestId,
+          message: 'No active tab found.',
+        });
         return;
       }
       const tabId = tab.id;
-      // executeScript's `files` form can't take arguments directly (unlike its `func` form,
-      // which would require inlining the whole fill engine as a self-contained function string
-      // instead of importing it — see autofill-entry.ts's doc comment). The listener it
-      // registers as its first synchronous action is guaranteed live by the time this promise
-      // resolves, so this follow-up send can't race the injected script's readiness.
       chrome.scripting
         .executeScript({ target: { tabId }, files: [autofillEntryPath] })
         .then(() => chrome.tabs.sendMessage(tabId, fillRequest))
@@ -50,6 +63,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
           console.error('Failed to inject autofill content script', error);
           sendResponse({
             type: 'AUTOFILL_ERROR',
+            requestId: fillRequest.requestId,
             message: 'Could not autofill this page.',
           });
         });

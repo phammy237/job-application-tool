@@ -496,4 +496,50 @@ describe('runFillEngine — never touches navigation/submission controls', () =>
     const fieldsWithButtonName = detectFields(dom).filter((f) => f.inputType === 'submit');
     expect(fieldsWithButtonName).toHaveLength(0);
   });
+
+  it('never clicks a "Next" button in a multi-step form — no attempt to advance the form exists at all', () => {
+    const dom = loadDom(`
+      <form>
+        <label for="step1_name">Full Name</label>
+        <input id="step1_name" name="step1_name" type="text" />
+        <button type="button" id="next-btn">Next</button>
+      </form>
+    `);
+    let nextClicked = false;
+    dom.getElementById('next-btn')!.addEventListener('click', () => {
+      nextClicked = true;
+    });
+
+    runFillEngine(dom, [
+      reviewableField(dom, 'step1_name', { detected: findDetected(dom, 'step1_name') }),
+    ]);
+
+    expect(nextClicked).toBe(false);
+    // A <button> element (unlike <input type="submit">) is never even matched by the
+    // input/select/textarea scan the fill engine resolves against, so there is structurally no
+    // path from an approved field to this element at all.
+    expect(detectFields(dom).some((f) => f.htmlId === 'next-btn')).toBe(false);
+  });
+});
+
+describe('runFillEngine — custom combobox/listbox is unsupported, not simulated', () => {
+  it('a custom ARIA combobox is never detected as a fillable field in the first place', () => {
+    const dom = loadDom(`
+      <form>
+        <label for="country">Country</label>
+        <div id="country" role="combobox" aria-expanded="false">
+          <input type="text" aria-autocomplete="list" />
+        </div>
+      </form>
+    `);
+    // detectFields only ever walks input/select/textarea — the wrapping [role=combobox] div is
+    // never itself a candidate, and the inner plain text input has no name/id of its own here,
+    // matching how a real custom-combobox widget typically only exposes an unlabeled internal
+    // input. Phase 4B deliberately does not add ARIA-combobox-specific detection or interaction
+    // (docs/IMPLEMENTATION_PLAN.md Phase 4B: "only if it can be implemented reliably") — this
+    // test documents that absence rather than simulating a combobox interaction that doesn't
+    // exist in the codebase.
+    const fields = detectFields(dom);
+    expect(fields.every((f) => f.htmlId !== 'country')).toBe(true);
+  });
 });

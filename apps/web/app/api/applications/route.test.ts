@@ -213,8 +213,14 @@ describe('POST /api/applications', () => {
       expect.anything(),
       USER_ID,
       GENERATED_ANSWER_ID,
-      { applicationId: APPLICATION_ID, decision: 'APPROVED', finalText: null },
+      { applicationId: APPLICATION_ID, jobId: JOB_ID, decision: 'APPROVED', finalText: null },
     );
+  });
+
+  it('scopes the answer decision to the job being saved, not just the user — a cross-job reference must fail closed', async () => {
+    await POST(jsonRequest('POST', VALID_SAVE_BODY));
+    const call = mocks.recordOwnGeneratedAnswerDecision.mock.calls[0];
+    expect(call?.[3]).toMatchObject({ jobId: JOB_ID });
   });
 
   it('passes finalText through only for an EDITED decision, never for APPROVED', async () => {
@@ -230,7 +236,7 @@ describe('POST /api/applications', () => {
       expect.anything(),
       USER_ID,
       GENERATED_ANSWER_ID,
-      { applicationId: APPLICATION_ID, decision: 'EDITED', finalText: 'My own wording' },
+      { applicationId: APPLICATION_ID, jobId: JOB_ID, decision: 'EDITED', finalText: 'My own wording' },
     );
   });
 

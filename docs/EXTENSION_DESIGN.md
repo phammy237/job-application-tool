@@ -92,12 +92,17 @@ Backend: ranks approved facts, calls Claude, validates response, returns suggest
         │
         ▼
 Popup renders suggestions with per-field edit/approve/skip controls
-        │  (user clicks Autofill Approved Fields)
+        │  (user clicks Autofill Approved Fields — optional, and any point from here on)
         ▼
 Content script writes only approved values into matching DOM fields (no submit)
-        │  (user clicks Save Application)
+        │  (user clicks Save Application — before, during, or after autofill; repeatable)
         ▼
-Popup calls POST /api/applications with final state
+Popup calls POST /api/applications (creates or updates the tracked application as SAVED or
+IN_PROGRESS — never APPLIED here) — see docs/DATA_MODEL.md "applications" for the dedup logic
+        │  (user submits manually on the employer's own site — outside Career OS entirely)
+        │  (user clicks Mark as Applied and confirms, in the popup or the dashboard)
+        ▼
+Popup calls PATCH /api/applications/:id/mark-applied — the only path that ever sets APPLIED
 ```
 
 Every arrow crossing from extension → backend carries the user's session token; the backend
@@ -178,14 +183,27 @@ Sections, top to bottom:
 1. **Current-page detection state** — "Not analyzed" / "Analyzing…" / detected platform badge
 2. **Analyze Job** button (disabled while analyzing)
 3. **Detected company and role**
-4. **Job-match summary** — short, ranked summary of which approved experiences/projects are
-   most relevant, with a rationale (`reasoningSummary`, not raw model output)
-5. **Suggested candidate experiences** — the ranked list backing the match summary
-6. **Proposed field answers** — one row per detected field, grouped by classification, each
-   with edit / approve / skip controls per §6
-7. **Autofill Approved Fields** button — writes only approved values to the page
-8. **Save Application** button — persists current state to the dashboard
-9. **Open Dashboard** button — deep link to `/applications/:id` on the web app
+4. **Proposed field answers** — one row per detected field, grouped by review state (ready /
+   needs review / not yet suggested / needs input / already completed / sensitive /
+   unsupported — see `packages/shared`'s `field-review.ts`), each with edit / approve / skip
+   controls per §6, plus bulk "Suggest all eligible" and "Approve all ready" actions
+   (READY-confidence fields only — never a bulk approval for a lower-confidence draft or a
+   sensitive/unsupported field). A standalone ranked "job-match summary" /
+   "suggested candidate experiences" section, distinct from the per-field list, is not
+   currently implemented — deferred, not a documentation error going forward.
+5. **Autofill Approved Fields** button — writes only approved values to the page; per-field
+   fill results (filled / skipped / failed / stale / unsupported / needs a rescan) render
+   inline once available.
+6. **Save Application** / **Update Saved Application** button (label reflects whether this
+   job is already tracked) — creates or updates the `applications` row as `SAVED` or
+   `IN_PROGRESS`; safe to click before, during, or after autofill, and repeatedly (see
+   `docs/DATA_MODEL.md` "applications" for the dedup/upsert behavior). Never sets `APPLIED`.
+7. **View in Dashboard** link — opens `/applications/:id` on the web app once the job is
+   tracked.
+8. **Mark as Applied** button — a separate section, gated behind an explicit inline
+   confirmation step ("Mark this application as applied?" → Yes/Cancel). The only control
+   anywhere in the extension that can set status `APPLIED`; never triggered by filling,
+   saving, or any other action.
 
 ## 8. Content-script data lifecycle
 

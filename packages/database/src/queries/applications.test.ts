@@ -16,6 +16,7 @@ const BASE_ROW = {
   status: 'IN_PROGRESS',
   notes: null,
   applied_at: null,
+  location: 'Remote',
   source_url: 'https://boards.example.com/job/123',
   canonical_url: 'https://boards.example.com/job/123',
   ats_provider: 'GENERIC',
@@ -55,6 +56,43 @@ describe('getOwnApplicationByJobId', () => {
 
     const result = await getOwnApplicationByJobId(supabase, USER_ID, JOB_ID);
     expect(result).toBeNull();
+  });
+});
+
+describe('rowToApplication migration-observability warning (via getOwnApplicationByJobId)', () => {
+  function chainReturning(row: unknown) {
+    const chain: Record<string, unknown> = {};
+    chain.select = vi.fn(() => chain);
+    chain.eq = vi.fn(() => chain);
+    chain.order = vi.fn(() => chain);
+    chain.limit = vi.fn(() => chain);
+    chain.maybeSingle = vi.fn().mockResolvedValue({ data: row, error: null });
+    return { from: vi.fn(() => chain) } as unknown as CareerOsSupabaseClient;
+  }
+
+  it('warns exactly once when a row is missing the migration 0008/0009 columns, and never crashes', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      // A row shaped like one read from a database that never had migrations 0008/0009 applied
+      // — the keys are absent entirely, not present-and-null.
+      const { source_url: _sourceUrl, location: _location, ...rowMissingMigrationColumns } = BASE_ROW;
+
+      const first = await getOwnApplicationByJobId(chainReturning(rowMissingMigrationColumns), USER_ID, JOB_ID);
+      expect(first?.sourceUrl).toBeNull();
+      expect(first?.location).toBeNull();
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy.mock.calls[0]?.[0]).toContain('migration 0008/0009');
+
+      // A second row shaped the same way must not warn again (once per process, not once per row).
+      await getOwnApplicationByJobId(chainReturning(rowMissingMigrationColumns), USER_ID, JOB_ID);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+
+      // A normally-shaped row (migration present) must not trigger any further warning either.
+      await getOwnApplicationByJobId(chainReturning(BASE_ROW), USER_ID, JOB_ID);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });
 

@@ -46,31 +46,47 @@ false`, `visibleOnPublicProfile = false`. Nothing extracted is usable until step
    adapters if matched) to extract company, title, location, employment type, description,
    responsibilities, qualifications, skills, platform type, and visible form fields.
 3. Extraction payload is validated against the shared Zod schema and sent to the
-   authenticated Career OS API, which creates/updates a `jobs` row and an `applications` row
-   in `SAVED` or `IN_PROGRESS` status.
-4. Backend retrieval (`docs/AI_GROUNDING.md`) ranks the user's approved, `
-approvedForApplications = true` experiences/projects against the job, and Claude drafts
-   suggestions — one per relevant field/question — each with `sourceFactIds`,
-   `reasoningSummary`, `confidence`, and `unsupportedClaims`.
-5. Popup displays: detected company/role, job-match summary, suggested experiences, and
-   proposed field answers, each with edit/approve/skip controls. Nothing is written to the
-   page yet.
+   authenticated Career OS API, which creates or updates only a `jobs` row (re-analyzing the
+   same URL updates that same row rather than duplicating it). **No `applications` row is
+   created at this step** — tracking an application is always a separate, explicit action (§5
+   below), never an automatic side effect of analysis.
+4. The popup checks whether this job is already tracked (`GET /api/applications?jobId=...`)
+   and, if so, shows its current status.
+5. For each detected field the user chooses to request one for, backend retrieval
+   (`docs/AI_GROUNDING.md`) ranks the user's approved, `approvedForApplications = true`
+   experiences/projects against the job, and Claude drafts a suggestion — with
+   `sourceFactIds`, `reasoningSummary`, `confidence`, and `unsupportedClaims`.
+6. Popup displays: detected company/role, and the proposed field answers grouped by review
+   state, each with edit/approve/skip controls. Nothing is written to the page yet.
 
-## 5. Review and autofill
+## 5. Review, autofill, save, and mark as applied
 
-1. User reviews each suggestion in the popup. Auto-suggested low-risk fields (name, email,
-   phone, LinkedIn, portfolio, school, degree, graduation date) are pre-checked; everything
-   else (experience descriptions, free-response, why-company, work authorization,
-   relocation, compensation) requires an explicit per-field approval click.
+1. User reviews each suggestion in the popup. Fields the retrieval pipeline is confident
+   about are grouped as "ready" (bulk-approvable via one click, still never pre-checked
+   automatically); everything else (experience descriptions, free-response, why-company, work
+   authorization, relocation, compensation) requires an explicit per-field approval click.
 2. Fields classified as `DEMOGRAPHIC`, `LEGAL`, or `AUTHENTICATION` are never offered for
    autofill at all (see `docs/EXTENSION_DESIGN.md` field taxonomy) — there is nothing to
    approve because the system never proposes a value for them.
 3. User clicks **Autofill Approved Fields** — the content script writes only the
-   user-approved values into the matching DOM fields. Nothing is submitted.
-4. User completes any remaining fields manually on the employer's site and submits the
-   application themselves, on the employer's own page, outside Career OS's control.
-5. User clicks **Save Application** in the popup to persist the final state (or the
-   dashboard state is already current if step 3 already wrote through the API).
+   user-approved values into the matching DOM fields, re-validating each target immediately
+   before writing and never overwriting a field that already has a value without a separate
+   explicit replacement decision. Nothing is submitted.
+4. At any point — before autofill, after a partial fill, or after every eligible field is
+   filled — the user can click **Save Application** (or **Update Saved Application** once
+   already tracked) to persist the current state: company/title/location, source/canonical
+   URL, ATS provider, a sanitized autofill-progress summary, and which generated answers were
+   approved/edited. This creates or updates one `applications` row (`SAVED` or `IN_PROGRESS`
+   — see `docs/DATA_MODEL.md` "applications" for how repeated saves are deduplicated) and
+   never changes status to `APPLIED`.
+5. User completes any remaining fields manually and submits the application themselves, on
+   the employer's own page — entirely outside Career OS's control; Career OS has no way to
+   observe or influence that submit action.
+6. User explicitly clicks **Mark as Applied** in the popup (a dedicated action with its own
+   inline confirm step), or selects `APPLIED` from the status dropdown on the dashboard's
+   generic manual-status-change control (§6) — either way, an explicit, deliberate user action
+   is what sets status to `APPLIED`. It is never inferred from filling, saving, page
+   navigation, or detecting a submit button.
 
 ## 6. Reviewing applications on the dashboard
 

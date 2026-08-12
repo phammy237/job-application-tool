@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReviewableField } from '@career-os/shared';
 import { getStoredFillResults, setStoredFillResults } from '../../lib/fill-result-storage';
+import { isCurrentRequest, startRequest } from '../../lib/request-correlation';
 import type { AutofillResult, ExtensionMessage } from '../../types/chrome-messages';
 
 export type AutofillStatus = 'idle' | 'running' | 'done' | 'error';
@@ -16,11 +17,19 @@ export type AutofillStatus = 'idle' | 'running' | 'done' | 'error';
  * lib/fill-result-storage.ts) and hydrated on mount, so results survive the popup being closed
  * and reopened — needed for the save flow (Phase 4C) to read the latest autofill outcome even
  * when the user didn't keep the popup open after autofilling.
+ *
+ * Phase 4D fix: chrome.runtime.sendMessage is a broadcast (see chrome-messages.ts's doc
+ * comment) — every AUTOFILL_RESULT/ERROR is tagged with the requestId this hook generated when
+ * it triggered the fill, and a result whose requestId doesn't match the currently pending one
+ * is discarded. Without this, a late result from a previous autofill run (a different tab, an
+ * old page before the user navigated, a double click) could silently overwrite the current
+ * job's fill results and get persisted under the wrong job's storage key.
  */
 export function useAutofill(jobId: string | null) {
   const [status, setStatus] = useState<AutofillStatus>('idle');
   const [results, setResults] = useState<AutofillResult['results']>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const pendingRequestIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!jobId) return;
@@ -37,11 +46,14 @@ export function useAutofill(jobId: string | null) {
 
   useEffect(() => {
     function handleMessage(message: ExtensionMessage) {
+      if (message.type !== 'AUTOFILL_RESULT' && message.type !== 'AUTOFILL_ERROR') return;
+      if (!isCurrentRequest(pendingRequestIdRef.current, message.requestId)) return; // stale — ignore
+
       if (message.type === 'AUTOFILL_RESULT') {
         setResults(message.results);
         setStatus('done');
         if (jobId) void setStoredFillResults(jobId, message.results);
-      } else if (message.type === 'AUTOFILL_ERROR') {
+      } else {
         setErrorMessage(message.message);
         setStatus('error');
       }
@@ -51,9 +63,11 @@ export function useAutofill(jobId: string | null) {
   }, [jobId]);
 
   const runAutofill = useCallback((fields: ReviewableField[]) => {
+    const requestId = startRequest();
+    pendingRequestIdRef.current = requestId;
     setStatus('running');
     setErrorMessage(null);
-    const message: ExtensionMessage = { type: 'AUTOFILL_APPROVED_FIELDS', fields };
+    const message: ExtensionMessage = { type: 'AUTOFILL_APPROVED_FIELDS', requestId, fields };
     chrome.runtime.sendMessage(message);
   }, []);
 

@@ -28,7 +28,39 @@ function parseUnresolvedFields(value: unknown): UnresolvedFieldSummary[] | null 
   return unresolvedFieldSummarySchema.array().parse(value);
 }
 
+/**
+ * `applicationSchema`'s Phase 4C fields (`sourceUrl`/`canonicalUrl`/`atsProvider`/`externalId`/
+ * `autofillSummary`/`unresolvedFields`/`location`) default to `null` when the *key itself* is
+ * missing from a row — not just when it's null — so that reading pre-existing application data
+ * in an environment whose database hasn't had migrations 0008/0009 applied yet (e.g. a CI
+ * Supabase project, since CI never runs `supabase db push`; see docs/IMPLEMENTATION_PLAN.md
+ * Phase 4D) degrades gracefully instead of crashing every application read.
+ *
+ * This is intentionally narrow — no other field on this schema tolerates a missing key — and it
+ * is *not* the thing that would let a missing migration go unnoticed in production: the write
+ * path (`upsertApplicationFromExtension`) references these columns directly in raw SQL and
+ * fails loudly the moment anyone tries to save an application, which is by far the more likely
+ * way a missing migration would actually be discovered. This check exists so the *read* path
+ * doesn't stay silent too — it logs once per process (not once per row, to avoid flooding logs
+ * in a genuinely broken environment) the first time it notices a row shaped this way, so the gap
+ * shows up in server logs even for an install that only ever reads existing applications and
+ * never exercises the extension's save flow.
+ */
+let warnedAboutMissingMigration = false;
+function warnIfMigrationColumnsMissing(row: Row): void {
+  if (warnedAboutMissingMigration) return;
+  if ('source_url' in row) return;
+  warnedAboutMissingMigration = true;
+  console.warn(
+    '[career-os] applications row is missing the migration 0008/0009 columns ' +
+      '(source_url and siblings) — the database this environment points at appears to be ' +
+      'missing those migrations. Reads will degrade gracefully (nulls), but saving an ' +
+      'application from the extension will fail until the migrations are applied.',
+  );
+}
+
 function rowToApplication(row: Row): Application {
+  warnIfMigrationColumnsMissing(row);
   return applicationSchema.parse({
     id: row.id,
     userId: row.user_id,
@@ -39,6 +71,7 @@ function rowToApplication(row: Row): Application {
     status: row.status,
     notes: row.notes,
     appliedAt: row.applied_at,
+    location: row.location,
     sourceUrl: row.source_url,
     canonicalUrl: row.canonical_url,
     atsProvider: row.ats_provider,

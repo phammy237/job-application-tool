@@ -245,6 +245,7 @@ export interface Database {
           status: string;
           notes: string | null;
           applied_at: string | null;
+          location: string | null;
           source_url: string | null;
           canonical_url: string | null;
           ats_provider: string | null;

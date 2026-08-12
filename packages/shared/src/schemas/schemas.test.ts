@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   aiUsageEventSchema,
   applicationInputSchema,
+  applicationSchema,
   applicationStatusSchema,
   candidateFactInputSchema,
   candidateFactSchema,
@@ -122,6 +123,48 @@ describe('applicationInputSchema', () => {
 describe('profileUpdateSchema', () => {
   it('never includes userId — server always derives it from the session', () => {
     expect('userId' in profileUpdateSchema.shape).toBe(false);
+  });
+});
+
+describe('applicationSchema', () => {
+  const baseRow = {
+    id: '11111111-1111-4111-8111-111111111111',
+    userId: '22222222-2222-4222-8222-222222222222',
+    jobId: null,
+    resumeId: null,
+    company: 'Acme',
+    title: 'Backend Engineer',
+    status: 'SAVED',
+    notes: null,
+    appliedAt: null,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  };
+
+  it('parses a full row with the Phase 4C columns present', () => {
+    const result = applicationSchema.safeParse({
+      ...baseRow,
+      sourceUrl: 'https://boards.example.com/job/1',
+      canonicalUrl: 'https://boards.example.com/job/1',
+      atsProvider: 'GENERIC',
+      externalId: null,
+      autofillSummary: { approved: 1, filled: 1, skipped: 0, failed: 0, unresolved: 0, manual: 0 },
+      unresolvedFields: [],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('defaults the Phase 4C columns to null when the keys are missing entirely — the exact shape a database that has not had migration 0008 applied yet returns (regression: this crashed CI when applicationSchema required these keys)', () => {
+    const result = applicationSchema.safeParse(baseRow);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.sourceUrl).toBeNull();
+      expect(result.data.canonicalUrl).toBeNull();
+      expect(result.data.atsProvider).toBeNull();
+      expect(result.data.externalId).toBeNull();
+      expect(result.data.autofillSummary).toBeNull();
+      expect(result.data.unresolvedFields).toBeNull();
+    }
   });
 });
 

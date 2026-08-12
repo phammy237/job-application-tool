@@ -78,13 +78,22 @@ export const applicationSchema = z.object({
   status: applicationStatusSchema.default('SAVED'),
   notes: z.string().nullable(),
   appliedAt: isoDateTimeSchema.nullable(),
-  /** Denormalized from the jobs row at save time — see docs/DATA_MODEL.md "applications". */
-  sourceUrl: z.string().nullable(),
-  canonicalUrl: z.string().nullable(),
-  atsProvider: jobPlatformTypeSchema.nullable(),
-  externalId: z.string().nullable(),
-  autofillSummary: autofillSummarySchema.nullable(),
-  unresolvedFields: z.array(unresolvedFieldSummarySchema).nullable(),
+  /**
+   * Denormalized from the jobs row at save time — see docs/DATA_MODEL.md "applications".
+   * `.default(null)` (not just `.nullable()`) is deliberate: these columns were added in
+   * migration 0008, so any environment whose database hasn't had that migration applied yet
+   * (e.g. a CI Supabase project migrations aren't run against) returns rows with these keys
+   * *missing* entirely, not present-and-null — a bare `.nullable()` rejects `undefined` and
+   * would hard-crash every application read in that environment. Defaulting to null degrades
+   * gracefully instead.
+   */
+  location: z.string().nullable().default(null),
+  sourceUrl: z.string().nullable().default(null),
+  canonicalUrl: z.string().nullable().default(null),
+  atsProvider: jobPlatformTypeSchema.nullable().default(null),
+  externalId: z.string().nullable().default(null),
+  autofillSummary: autofillSummarySchema.nullable().default(null),
+  unresolvedFields: z.array(unresolvedFieldSummarySchema).nullable().default(null),
   createdAt: isoDateTimeSchema,
   updatedAt: isoDateTimeSchema,
 });

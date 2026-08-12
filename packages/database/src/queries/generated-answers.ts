@@ -76,6 +76,12 @@ export async function createOwnGeneratedAnswer(
 
 export interface RecordGeneratedAnswerDecisionInput {
   applicationId: string;
+  /** The job this decision is being recorded for — the update is additionally scoped to
+   * generated_answers rows whose own job_id matches this, so a same-user answer generated for a
+   * *different* job can never be silently re-pointed onto this application (Phase 4D hardening:
+   * user_id alone wasn't a strong enough scope — "foreign, nonexistent, sensitive, or
+   * incompatible answer references" per docs/IMPLEMENTATION_PLAN.md Phase 4D). */
+  jobId: string;
   decision: 'APPROVED' | 'EDITED';
   /** The user's replacement text when decision is EDITED, null when APPROVED — never copies
    * `answer` into `finalText` for an unedited approval, so finalText staying null continues to
@@ -87,10 +93,13 @@ export interface RecordGeneratedAnswerDecisionInput {
  * Records the user's approve/edit decision against an *existing* generated_answers row and
  * links it to the application it was used for (docs/IMPLEMENTATION_PLAN.md Phase 4C) — this is
  * the first and only writer of user_decision/final_text; every prior code path leaves them null.
- * Ownership-scoped by user_id like every other write here; also scoped to rows that don't
- * already belong to a *different* application, so a save can't silently re-point an answer used
- * elsewhere. Updating the existing row (never inserting a new one) is what keeps repeated saves
- * from creating duplicate answer-usage rows.
+ * Ownership-scoped by user_id AND job_id like every other write here; also scoped to rows that
+ * don't already belong to a *different* application, so a save can't silently re-point an
+ * answer used elsewhere. A row that fails any of these scopes (wrong user, wrong job, already
+ * attached to a different application) simply isn't found — returns null, never an error that
+ * could distinguish "doesn't exist" from "exists but isn't yours" to the caller. Updating the
+ * existing row (never inserting a new one) is what keeps repeated saves from creating duplicate
+ * answer-usage rows.
  */
 export async function recordOwnGeneratedAnswerDecision(
   supabase: CareerOsSupabaseClient,
@@ -107,6 +116,7 @@ export async function recordOwnGeneratedAnswerDecision(
     })
     .eq('id', generatedAnswerId)
     .eq('user_id', userId)
+    .eq('job_id', input.jobId)
     .or(`application_id.is.null,application_id.eq.${input.applicationId}`)
     .select('*')
     .maybeSingle();
