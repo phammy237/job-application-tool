@@ -1,6 +1,25 @@
 import { useState } from 'react';
 import type { ReviewableField } from '@career-os/shared';
+import type { FillResult } from '../../content-script/fill/fill-engine';
 import { BUTTON_STYLE, MUTED_STYLE, PRIMARY_BUTTON_STYLE } from '../styles';
+
+const FILL_STATUS_COLOR: Record<FillResult['status'], string> = {
+  success: '#166534',
+  skipped: '#666',
+  failed: '#b91c1c',
+  stale: '#92400e',
+  unsupported: '#92400e',
+  requires_rescan: '#92400e',
+};
+
+const FILL_STATUS_LABEL: Record<FillResult['status'], string> = {
+  success: 'Filled',
+  skipped: 'Skipped',
+  failed: 'Failed',
+  stale: 'Needs a rescan',
+  unsupported: 'Unsupported',
+  requires_rescan: 'Needs a rescan',
+};
 
 const ROW_STYLE: React.CSSProperties = {
   padding: '8px 0',
@@ -31,6 +50,7 @@ function displayLabel(field: ReviewableField['detected']): string {
 export function FieldReviewRow({
   field,
   loading,
+  fillResult,
   onRequestSuggestion,
   onApprove,
   onSkip,
@@ -39,6 +59,7 @@ export function FieldReviewRow({
 }: {
   field: ReviewableField;
   loading: boolean;
+  fillResult: FillResult | null;
   onRequestSuggestion: () => void;
   onApprove: () => void;
   onSkip: () => void;
@@ -170,6 +191,19 @@ export function FieldReviewRow({
 
       {field.errorMessage ? (
         <p style={{ fontSize: 12, color: '#b91c1c', margin: '4px 0 0' }}>{field.errorMessage}</p>
+      ) : null}
+
+      {fillResult ? (
+        <p
+          style={{
+            fontSize: 12,
+            fontWeight: 600,
+            color: FILL_STATUS_COLOR[fillResult.status],
+            margin: '4px 0 0',
+          }}
+        >
+          {FILL_STATUS_LABEL[fillResult.status]} — {fillResult.reason}
+        </p>
       ) : null}
     </li>
   );

@@ -1,4 +1,5 @@
-import type { DetectedField, JobExtractionPayload } from '@career-os/shared';
+import type { DetectedField, JobExtractionPayload, ReviewableField } from '@career-os/shared';
+import type { FillResult } from '../content-script/fill/fill-engine';
 
 /** Popup -> background: user clicked "Analyze Job". */
 export interface AnalyzeJobRequest {
@@ -17,7 +18,36 @@ export interface AnalyzeJobError {
   message: string;
 }
 
-export type ExtensionMessage = AnalyzeJobRequest | AnalyzeJobResult | AnalyzeJobError;
+/**
+ * Popup -> background -> content script: fill only these fields (Phase 4B). Carries the popup's
+ * own ReviewableField objects (already-typed, reused rather than duplicated into a bespoke DTO)
+ * — the fill engine independently re-validates approvalState/reviewState/classification on the
+ * receiving end regardless of what this payload claims, since it runs in a separate script
+ * execution reached only via this message, not a direct call the popup's own guards could gate.
+ */
+export interface AutofillApprovedFieldsRequest {
+  type: 'AUTOFILL_APPROVED_FIELDS';
+  fields: ReviewableField[];
+}
+
+/** Content script -> popup: per-field fill outcomes. */
+export interface AutofillResult {
+  type: 'AUTOFILL_RESULT';
+  results: FillResult[];
+}
+
+export interface AutofillError {
+  type: 'AUTOFILL_ERROR';
+  message: string;
+}
+
+export type ExtensionMessage =
+  | AnalyzeJobRequest
+  | AnalyzeJobResult
+  | AnalyzeJobError
+  | AutofillApprovedFieldsRequest
+  | AutofillResult
+  | AutofillError;
 
 /**
  * Sent from the Career OS web app (docs/EXTENSION_DESIGN.md §4's one-time token handoff) via

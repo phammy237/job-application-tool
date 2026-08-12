@@ -1,4 +1,5 @@
 import type { ReviewableField } from '@career-os/shared';
+import type { FillResult } from '../../content-script/fill/fill-engine';
 import { BUTTON_STYLE, PRIMARY_BUTTON_STYLE } from '../styles';
 import { FieldReviewRow } from './FieldReviewRow';
 
@@ -39,6 +40,10 @@ export function FieldList({
   onEdit,
   onResetDecision,
   onApproveAllEligible,
+  fillResults,
+  canAutofill,
+  autofillRunning,
+  onAutofill,
 }: {
   fields: Record<string, ReviewableField>;
   loadingIds: Record<string, boolean>;
@@ -49,8 +54,13 @@ export function FieldList({
   onEdit: (fieldId: string, text: string) => void;
   onResetDecision: (fieldId: string) => void;
   onApproveAllEligible: () => void;
+  fillResults: FillResult[];
+  canAutofill: boolean;
+  autofillRunning: boolean;
+  onAutofill: () => void;
 }) {
   const allFields = Object.values(fields);
+  const fillResultByFieldId = new Map(fillResults.map((result) => [result.fieldId, result]));
 
   if (allFields.length === 0) {
     return <p style={{ fontSize: 13, color: '#666' }}>No form fields detected on this page.</p>;
@@ -89,6 +99,17 @@ export function FieldList({
         </div>
       ) : null}
 
+      {canAutofill ? (
+        <div style={{ marginBottom: 10 }}>
+          <button type="button" style={PRIMARY_BUTTON_STYLE} onClick={onAutofill} disabled={autofillRunning}>
+            {autofillRunning ? 'Autofilling…' : 'Autofill approved fields'}
+          </button>
+          <p style={{ fontSize: 11, color: '#666', margin: '4px 0 0' }}>
+            Only fills the fields you approved above. Never submits the form.
+          </p>
+        </div>
+      ) : null}
+
       {SECTION_ORDER.filter((state) => grouped.has(state)).map((state) => {
         const sectionFields = grouped.get(state)!;
         return (
@@ -111,6 +132,7 @@ export function FieldList({
                   key={field.detected.fieldId}
                   field={field}
                   loading={Boolean(loadingIds[field.detected.fieldId])}
+                  fillResult={fillResultByFieldId.get(field.detected.fieldId) ?? null}
                   onRequestSuggestion={() => onRequestSuggestion(field.detected.fieldId)}
                   onApprove={() => onApprove(field.detected.fieldId)}
                   onSkip={() => onSkip(field.detected.fieldId)}

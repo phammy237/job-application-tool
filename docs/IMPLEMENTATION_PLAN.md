@@ -10,8 +10,8 @@ phase depends on a later phase's output.
 - [x] Phase 3 — Job matching, candidate-fact retrieval, Claude-generated suggestions
 - [ ] Phase 4 — Approved-field autofill and application-saving workflow
   - [x] Phase 4A — Field review and approval state
-  - [ ] **Phase 4B — Safe autofill engine ← current**
-  - [ ] Phase 4C — Application saving and tracker integration
+  - [x] Phase 4B — Safe autofill engine
+  - [ ] **Phase 4C — Application saving and tracker integration ← current**
   - [ ] Phase 4D — End-to-end integration and safety verification
 - [ ] Phase 5 — Manual Gmail synchronization, email classification, status matching
 - [ ] Phase 6 — Multi-user beta hardening, privacy controls, testing, deployment
@@ -20,10 +20,25 @@ phase depends on a later phase's output.
 Phase 4A shipped: the popup classifies every detected field into a review state (sensitive /
 unsupported / already-completed / pending-suggestion / ready / suggested / needs-input),
 requests suggestions from POST /api/jobs/:id/suggestions one field at a time, and supports
-approve/edit/skip + bulk "approve all ready" — all decisions live in chrome.storage.local only,
-nothing DOM-writing or backend-persisting yet. See packages/shared/src/schemas/field-review.ts,
-apps/extension/src/popup/state/review-reducer.ts, and apps/extension/src/popup/hooks/
-useFieldReview.ts.
+approve/edit/skip + bulk "approve all ready." Decisions persist in chrome.storage.local keyed
+per job, reconciled field-by-field against a live fingerprint on every reopen (never trusted
+wholesale — see lib/field-fingerprint.ts) so a changed page, field, or current-value snapshot
+can never silently reuse a stale decision; the fingerprint stores a hash of a field's current
+value, never the raw text, and never anything at all for DEMOGRAPHIC/LEGAL/AUTHENTICATION
+fields. See packages/shared/src/schemas/field-review.ts, apps/extension/src/popup/state/
+review-reducer.ts, apps/extension/src/lib/{field-fingerprint,review-storage}.ts.
+
+Phase 4B shipped: a centralized fill engine (apps/extension/src/content-script/fill/
+fill-engine.ts) that re-resolves every approved field against the live page immediately before
+writing, fails closed for missing/ambiguous (`requires_rescan`), drifted-content (`stale`),
+hidden/disabled/readonly (`failed`), and sensitive/unrecognized (`unsupported`) targets, never
+overwrites a value that changed since review, writes via native prototype setters + input/
+change/blur events (React-compatible), and never touches a submit/button/file-upload control.
+Reachable from the popup via a new "Autofill approved fields" button (useAutofill.ts), which
+sends the approved ReviewableField[] to a newly-injected content-script entry
+(content-script/autofill-entry.ts) through the existing typed messaging architecture — the fill
+engine re-validates approval/classification independently regardless of what that message
+claims. No application-saving or tracker integration yet (Phase 4C).
 
 Update this checklist when a phase's definition of done is met and the next one starts —
 this is the single source of truth for "what phase are we on," so it needs to stay current,

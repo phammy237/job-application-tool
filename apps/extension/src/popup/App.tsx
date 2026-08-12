@@ -3,12 +3,18 @@ import { DetectionState } from './components/DetectionState';
 import { FieldList } from './components/FieldList';
 import { JobSummary } from './components/JobSummary';
 import { useAnalysis } from './hooks/useAnalysis';
+import { useAutofill } from './hooks/useAutofill';
 import { useFieldReview } from './hooks/useFieldReview';
 
 export function App() {
   const { state, analyze } = useAnalysis();
   const isResult = state.status === 'result';
   const review = useFieldReview(isResult ? state.jobId : null, isResult ? state.fields : []);
+  const autofill = useAutofill();
+
+  const approvedFields = Object.values(review.fields).filter(
+    (field) => field.approvalState === 'APPROVED' || field.approvalState === 'EDITED',
+  );
 
   return (
     <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -45,7 +51,14 @@ export function App() {
             onEdit={review.edit}
             onResetDecision={review.resetDecision}
             onApproveAllEligible={review.approveAllEligible}
+            fillResults={autofill.results}
+            canAutofill={approvedFields.length > 0}
+            autofillRunning={autofill.status === 'running'}
+            onAutofill={() => autofill.runAutofill(approvedFields)}
           />
+          {autofill.status === 'error' && autofill.errorMessage ? (
+            <p style={{ fontSize: 13, color: '#b91c1c' }}>{autofill.errorMessage}</p>
+          ) : null}
         </>
       ) : null}
     </div>

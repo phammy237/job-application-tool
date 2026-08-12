@@ -1,5 +1,7 @@
 import type { DetectedField, GeneratedAnswer, ReviewableField } from '@career-os/shared';
 import { describe, expect, it } from 'vitest';
+import { fingerprintField } from '../../lib/field-fingerprint';
+import type { PersistedReview } from '../../lib/review-storage';
 import { initialReviewState, reviewReducer, type ReviewState } from './review-reducer';
 
 function field(overrides: Partial<DetectedField> = {}): DetectedField {
@@ -127,6 +129,45 @@ describe('reviewReducer suggestion lifecycle', () => {
     expect(getField(state, 'a').errorMessage).toBe('AI provider error');
     expect(state.loadingIds.a).toBeUndefined();
   });
+
+  it('resets an existing approval decision back to PENDING when a fresh suggestion replaces the old one — a re-fetched suggestion must never inherit a decision made about different content', () => {
+    let state = stateWithOneField();
+    state = reviewReducer(state, {
+      type: 'SUGGESTION_SUCCEEDED',
+      fieldId: 'a',
+      suggestion: answer({ answer: 'First draft', confidence: 0.95 }),
+    });
+    state = reviewReducer(state, { type: 'APPROVE', fieldId: 'a' });
+    expect(getField(state, 'a').approvalState).toBe('APPROVED');
+
+    state = reviewReducer(state, {
+      type: 'SUGGESTION_SUCCEEDED',
+      fieldId: 'a',
+      suggestion: answer({ answer: 'Completely different second draft', confidence: 0.5 }),
+    });
+    expect(getField(state, 'a').approvalState).toBe('PENDING');
+    expect(getField(state, 'a').editedText).toBeNull();
+    expect(getField(state, 'a').suggestion?.answer).toBe('Completely different second draft');
+  });
+
+  it('clears a stale editedText when a fresh suggestion replaces an edited one', () => {
+    let state = stateWithOneField();
+    state = reviewReducer(state, {
+      type: 'SUGGESTION_SUCCEEDED',
+      fieldId: 'a',
+      suggestion: answer({ confidence: 0.95 }),
+    });
+    state = reviewReducer(state, { type: 'EDIT', fieldId: 'a', text: 'My own wording' });
+    expect(getField(state, 'a').editedText).toBe('My own wording');
+
+    state = reviewReducer(state, {
+      type: 'SUGGESTION_SUCCEEDED',
+      fieldId: 'a',
+      suggestion: answer({ confidence: 0.95 }),
+    });
+    expect(getField(state, 'a').approvalState).toBe('PENDING');
+    expect(getField(state, 'a').editedText).toBeNull();
+  });
 });
 
 describe('reviewReducer approve/edit/skip enforcement', () => {
@@ -222,22 +263,107 @@ describe('reviewReducer APPROVE_ALL_ELIGIBLE', () => {
     // SUGGESTED (below-threshold) is never bulk-approved, even though it has a suggestion.
     expect(getField(state, 'suggested').approvalState).toBe('PENDING');
   });
+
+  it('never approves a PENDING_SUGGESTION field — a field with no proposed answer at all must stay PENDING regardless of "approve all"', () => {
+    const state = reviewReducer(
+      reviewReducer(initialReviewState, {
+        type: 'INIT',
+        fields: [field({ fieldId: 'not-yet-suggested', classification: 'EXPERIENCE' })],
+      }),
+      { type: 'APPROVE_ALL_ELIGIBLE' },
+    );
+    expect(getField(state, 'not-yet-suggested').reviewState).toBe('PENDING_SUGGESTION');
+    expect(getField(state, 'not-yet-suggested').approvalState).toBe('PENDING');
+  });
+
+  it('defense in depth: refuses to approve a malformed READY field with no suggestion attached, even though this should be unreachable through normal reducer transitions', () => {
+    let state = reviewReducer(initialReviewState, {
+      type: 'INIT',
+      fields: [field({ fieldId: 'malformed', classification: 'EXPERIENCE' })],
+    });
+    // Simulate a hypothetical future bug that sets reviewState to READY without a suggestion —
+    // not reachable via any real action today, but the guard must hold regardless.
+    state = {
+      ...state,
+      byId: { ...state.byId, malformed: { ...getField(state, 'malformed'), reviewState: 'READY' } },
+    };
+
+    const approved = reviewReducer(state, { type: 'APPROVE', fieldId: 'malformed' });
+    expect(getField(approved, 'malformed').approvalState).toBe('PENDING');
+
+    const bulkApproved = reviewReducer(state, { type: 'APPROVE_ALL_ELIGIBLE' });
+    expect(getField(bulkApproved, 'malformed').approvalState).toBe('PENDING');
+  });
 });
 
 describe('reviewReducer HYDRATE', () => {
-  it('replaces byId wholesale and clears any stale loading flags', () => {
-    const stored: Record<string, ReviewableField> = {
-      a: {
-        detected: field({ fieldId: 'a' }),
-        reviewState: 'READY',
-        approvalState: 'APPROVED',
-        suggestion: null,
-        editedText: null,
-        errorMessage: null,
-      },
+  function persistedEntry(overrides: Partial<PersistedReview[string]> = {}): PersistedReview[string] {
+    return {
+      fingerprint: fingerprintField(field({ fieldId: 'a' })),
+      reviewState: 'READY',
+      approvalState: 'APPROVED',
+      suggestion: answer({ confidence: 0.95 }),
+      editedText: null,
+      ...overrides,
     };
-    const state = reviewReducer(initialReviewState, { type: 'HYDRATE', review: stored });
-    expect(state.byId).toEqual(stored);
+  }
+
+  it('restores a stored decision when the fingerprint still matches the fresh field', () => {
+    const stored: PersistedReview = { a: persistedEntry() };
+    const state = reviewReducer(initialReviewState, {
+      type: 'HYDRATE',
+      stored,
+      freshFields: [field({ fieldId: 'a' })],
+    });
+    expect(getField(state, 'a').approvalState).toBe('APPROVED');
+    expect(getField(state, 'a').reviewState).toBe('READY');
     expect(state.loadingIds).toEqual({});
+  });
+
+  it('discards a stored decision and reclassifies fresh when the field label changed since it was stored', () => {
+    const stored: PersistedReview = { a: persistedEntry() };
+    const state = reviewReducer(initialReviewState, {
+      type: 'HYDRATE',
+      stored,
+      freshFields: [field({ fieldId: 'a', label: 'A completely different question' })],
+    });
+    expect(getField(state, 'a').approvalState).toBe('PENDING');
+    expect(getField(state, 'a').suggestion).toBeNull();
+  });
+
+  it('discards a stored decision when the classification changed since it was stored — the real regression this guards against: index-based fieldIds are meaningless across a changed page', () => {
+    const stored: PersistedReview = {
+      'field-2': persistedEntry({
+        fingerprint: fingerprintField(field({ fieldId: 'field-2', classification: 'BASIC_PROFILE' })),
+      }),
+    };
+    const state = reviewReducer(initialReviewState, {
+      type: 'HYDRATE',
+      stored,
+      freshFields: [field({ fieldId: 'field-2', classification: 'COMPENSATION', label: 'Desired salary' })],
+    });
+    expect(getField(state, 'field-2').approvalState).toBe('PENDING');
+    expect(getField(state, 'field-2').reviewState).toBe('PENDING_SUGGESTION');
+  });
+
+  it('discards a stored decision when the current value changed since it was stored (e.g. the user answered it manually in between)', () => {
+    const stored: PersistedReview = {
+      a: persistedEntry({ fingerprint: fingerprintField(field({ fieldId: 'a', currentValue: null })) }),
+    };
+    const state = reviewReducer(initialReviewState, {
+      type: 'HYDRATE',
+      stored,
+      freshFields: [field({ fieldId: 'a', currentValue: 'Now filled in by hand' })],
+    });
+    expect(getField(state, 'a').approvalState).toBe('PENDING');
+  });
+
+  it('classifies a field with no stored entry fresh, same as INIT', () => {
+    const state = reviewReducer(initialReviewState, {
+      type: 'HYDRATE',
+      stored: null,
+      freshFields: [field({ fieldId: 'a', classification: 'DEMOGRAPHIC' })],
+    });
+    expect(getField(state, 'a').reviewState).toBe('SENSITIVE');
   });
 });

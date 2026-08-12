@@ -6,6 +6,8 @@ import {
   type GeneratedAnswer,
   type ReviewableField,
 } from '@career-os/shared';
+import { fingerprintMatches } from '../../lib/field-fingerprint';
+import type { PersistedReview } from '../../lib/review-storage';
 
 export interface ReviewState {
   byId: Record<string, ReviewableField>;
@@ -17,7 +19,7 @@ export interface ReviewState {
 
 export type ReviewAction =
   | { type: 'INIT'; fields: DetectedField[] }
-  | { type: 'HYDRATE'; review: Record<string, ReviewableField> }
+  | { type: 'HYDRATE'; stored: PersistedReview | null; freshFields: DetectedField[] }
   | { type: 'SUGGESTION_REQUESTED'; fieldId: string }
   | { type: 'SUGGESTION_SUCCEEDED'; fieldId: string; suggestion: GeneratedAnswer | null }
   | { type: 'SUGGESTION_FAILED'; fieldId: string; message: string }
@@ -85,8 +87,30 @@ export function reviewReducer(state: ReviewState, action: ReviewAction): ReviewS
       return { byId, loadingIds: {} };
     }
 
-    case 'HYDRATE':
-      return { byId: action.review, loadingIds: {} };
+    case 'HYDRATE': {
+      // Reconciled field by field against a live fingerprint, never trusted wholesale — a
+      // stored entry is only reused when it still describes the *same* field (same html
+      // name/id/classification/label/inputType and current-value hash) on this fresh analysis.
+      // Anything that drifted (a changed page, a changed field, a value the user typed since
+      // last time) gets a fresh classification instead of silently inheriting a stale decision.
+      const byId: Record<string, ReviewableField> = {};
+      for (const field of action.freshFields) {
+        const storedEntry = action.stored?.[field.fieldId];
+        if (storedEntry && fingerprintMatches(storedEntry.fingerprint, field)) {
+          byId[field.fieldId] = {
+            detected: field,
+            reviewState: storedEntry.reviewState,
+            approvalState: storedEntry.approvalState,
+            suggestion: storedEntry.suggestion,
+            editedText: storedEntry.editedText,
+            errorMessage: null,
+          };
+        } else {
+          byId[field.fieldId] = buildReviewableField(field);
+        }
+      }
+      return { byId, loadingIds: {} };
+    }
 
     case 'SUGGESTION_REQUESTED':
       return {
@@ -97,10 +121,17 @@ export function reviewReducer(state: ReviewState, action: ReviewAction): ReviewS
     case 'SUGGESTION_SUCCEEDED':
       return {
         loadingIds: withoutLoading(state.loadingIds, action.fieldId),
+        // A fresh suggestion always requires a fresh decision — approvalState/editedText reset
+        // to PENDING/null unconditionally, even on a re-request. Without this, re-requesting a
+        // suggestion for a field the user had already approved or edited would silently keep
+        // showing/using that old decision next to a brand-new (unreviewed) suggestion object
+        // underneath it, misattributing the user's approval to content they never saw.
         byId: setField(state.byId, action.fieldId, (field) => ({
           ...field,
           suggestion: action.suggestion,
           reviewState: reviewStateForSuggestion(action.suggestion),
+          approvalState: 'PENDING',
+          editedText: null,
           errorMessage: null,
         })),
       };
@@ -117,10 +148,12 @@ export function reviewReducer(state: ReviewState, action: ReviewAction): ReviewS
     case 'APPROVE':
       return {
         ...state,
-        byId: setDecidableField(state.byId, action.fieldId, (field) => ({
-          ...field,
-          approvalState: 'APPROVED',
-        })),
+        // Defense in depth alongside setDecidableField's reviewState check: a field is never
+        // approved without an actual proposed answer attached, even if reviewState/suggestion
+        // ever drifted out of sync (see APPROVE_ALL_ELIGIBLE's identical guard for why).
+        byId: setDecidableField(state.byId, action.fieldId, (field) =>
+          field.suggestion ? { ...field, approvalState: 'APPROVED' } : field,
+        ),
       };
 
     case 'SKIP':
@@ -155,7 +188,12 @@ export function reviewReducer(state: ReviewState, action: ReviewAction): ReviewS
     case 'APPROVE_ALL_ELIGIBLE': {
       const byId: Record<string, ReviewableField> = { ...state.byId };
       for (const [fieldId, field] of Object.entries(byId)) {
-        if (field.reviewState === 'READY' && field.approvalState === 'PENDING') {
+        // reviewState READY is only ever set alongside a non-null suggestion (see
+        // SUGGESTION_SUCCEEDED above), so `field.suggestion` here should always be non-null —
+        // checked explicitly anyway as defense in depth: a field must never be bulk-approved
+        // without an actual proposed answer attached, even if some future change to this
+        // reducer ever lets reviewState and suggestion drift out of sync.
+        if (field.reviewState === 'READY' && field.approvalState === 'PENDING' && field.suggestion) {
           byId[fieldId] = { ...field, approvalState: 'APPROVED' };
         }
       }

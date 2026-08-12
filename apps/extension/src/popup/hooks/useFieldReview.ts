@@ -24,21 +24,12 @@ export function useFieldReview(jobId: string | null, fields: DetectedField[]) {
     let cancelled = false;
     hydratedJobIdRef.current = null;
 
+    // HYDRATE reconciles field by field against a live fingerprint (review-reducer.ts) — every
+    // stored entry is a candidate, never trusted outright, so a stale/rescanned page can never
+    // silently inherit a decision that was actually made about a different field.
     void getStoredReview(jobId).then((stored) => {
       if (cancelled) return;
-      const currentFieldIds = new Set(fields.map((field) => field.fieldId));
-      const storedFieldIds = stored ? new Set(Object.keys(stored)) : null;
-      const storedMatchesCurrentFields =
-        stored !== null &&
-        storedFieldIds !== null &&
-        storedFieldIds.size === currentFieldIds.size &&
-        [...currentFieldIds].every((id) => storedFieldIds.has(id));
-
-      if (stored && storedMatchesCurrentFields) {
-        dispatch({ type: 'HYDRATE', review: stored });
-      } else {
-        dispatch({ type: 'INIT', fields });
-      }
+      dispatch({ type: 'HYDRATE', stored, freshFields: fields });
       hydratedJobIdRef.current = jobId;
     });
 

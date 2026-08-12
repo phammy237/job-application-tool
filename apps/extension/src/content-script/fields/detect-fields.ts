@@ -1,7 +1,7 @@
 import { detectedFieldSchema, type DetectedField } from '@career-os/shared';
 import { classifyField, type FieldSignals } from './classify-field';
 
-type FormControl = HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
+export type FormControl = HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
 
 const NON_DATA_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'image', 'reset']);
 
@@ -87,7 +87,7 @@ function getInputType(field: FormControl): string {
  * completed select) is preferred over a false positive that hides a field the user still needs
  * to fill.
  */
-function readCurrentValue(field: FormControl, inputType: string): string | null {
+export function readCurrentValue(field: FormControl, inputType: string): string | null {
   if (inputType === 'checkbox' || inputType === 'radio' || inputType === 'file') return null;
 
   if (field.tagName === 'SELECT') {
@@ -100,15 +100,25 @@ function readCurrentValue(field: FormControl, inputType: string): string | null 
   return value ? value : null;
 }
 
+export interface ScannedControl {
+  element: FormControl;
+  field: DetectedField;
+}
+
 /**
- * Walks every form control on the page and builds a DetectedField[]. AUTHENTICATION fields
- * (password inputs) are excluded here, before classification ever runs — per CLAUDE.md, "never
- * extract-then-ignore." Non-data controls (hidden/submit/button/image/reset inputs) are skipped
- * too, since they're not something a user answers.
+ * Walks every form control on the page and pairs each with both its live element and its
+ * classified DetectedField snapshot. Shared by detectFields (Phase 2 analysis — snapshot only,
+ * DetectedField[] never carries a live reference) and the Phase 4B fill engine (which needs the
+ * live element to re-resolve and write to, matched by fingerprint against a previously-approved
+ * DetectedField — see lib/field-fingerprint.ts). AUTHENTICATION fields (password inputs) are
+ * excluded here, before classification ever runs — per CLAUDE.md, "never extract-then-ignore."
+ * Non-data controls (hidden/submit/button/image/reset inputs) are skipped too, since they're not
+ * something a user answers — and, for the fill engine, this is also what guarantees it can never
+ * reach a submit/button control at all, structurally, not by a runtime check.
  */
-export function detectFields(document: Document): DetectedField[] {
+export function scanFormControls(document: Document): ScannedControl[] {
   const controls = document.querySelectorAll<FormControl>('input, select, textarea');
-  const results: DetectedField[] = [];
+  const results: ScannedControl[] = [];
   let index = 0;
 
   for (const field of controls) {
@@ -140,8 +150,9 @@ export function detectFields(document: Document): DetectedField[] {
 
     const { classification, confidence } = classifyField(signals);
 
-    results.push(
-      detectedFieldSchema.parse({
+    results.push({
+      element: field,
+      field: detectedFieldSchema.parse({
         fieldId: `field-${index}`,
         label: signals.label,
         htmlName: signals.name,
@@ -152,9 +163,16 @@ export function detectFields(document: Document): DetectedField[] {
         selectOptions,
         currentValue: readCurrentValue(field, inputType),
       }),
-    );
+    });
     index += 1;
   }
 
   return results;
+}
+
+/** Snapshot-only view of scanFormControls — used by the Phase 2 analysis flow, which sends
+ * DetectedField[] across the content-script/popup message boundary and must never carry a live
+ * DOM reference across it. */
+export function detectFields(document: Document): DetectedField[] {
+  return scanFormControls(document).map((entry) => entry.field);
 }
