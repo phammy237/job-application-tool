@@ -11,8 +11,8 @@ phase depends on a later phase's output.
 - [ ] Phase 4 — Approved-field autofill and application-saving workflow
   - [x] Phase 4A — Field review and approval state
   - [x] Phase 4B — Safe autofill engine
-  - [ ] **Phase 4C — Application saving and tracker integration ← current**
-  - [ ] Phase 4D — End-to-end integration and safety verification
+  - [x] Phase 4C — Application saving and tracker integration
+  - [ ] **Phase 4D — End-to-end integration and safety verification ← current**
 - [ ] Phase 5 — Manual Gmail synchronization, email classification, status matching
 - [ ] Phase 6 — Multi-user beta hardening, privacy controls, testing, deployment
 - [ ] Phase 7 — Optional mypham.space integration, public onboarding, future sharing
@@ -38,7 +38,22 @@ Reachable from the popup via a new "Autofill approved fields" button (useAutofil
 sends the approved ReviewableField[] to a newly-injected content-script entry
 (content-script/autofill-entry.ts) through the existing typed messaging architecture — the fill
 engine re-validates approval/classification independently regardless of what that message
-claims. No application-saving or tracker integration yet (Phase 4C).
+claims.
+
+Phase 4C shipped: POST /api/applications (create/update, atomic tiered dedup — requisition id >
+canonical URL > company/title, via the upsert_application_from_extension Postgres function),
+GET /api/applications?jobId=... ("already tracked?"), and PATCH /api/applications/:id/mark-applied
+(the only path to APPLIED, a separate explicit popup action with its own confirm step — never a
+side effect of saving or filling). `applications` gained source_url/canonical_url/ats_provider/
+external_id/autofill_summary/unresolved_fields columns (supabase/migrations/
+0008_applications_extension_fields.sql) — no new table, no parallel status model. Approved
+answers are recorded by updating the *existing* generated_answers row's user_decision/
+final_text/application_id (packages/database's recordOwnGeneratedAnswerDecision) rather than
+duplicating content. Only sanitized counts and {label, classification, status, reason} summaries
+are persisted — never raw DOM data, full ReviewableField/DetectedField objects, or sensitive
+field values. Fixed a Phase 4B compatibility gap along the way: autofill results now persist to
+chrome.storage.local per job (lib/fill-result-storage.ts) so they survive popup closure, same
+pattern as Phase 4A's review-storage.ts.
 
 Update this checklist when a phase's definition of done is met and the next one starts —
 this is the single source of truth for "what phase are we on," so it needs to stay current,

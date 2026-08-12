@@ -13,6 +13,7 @@ import {
   jobExtractionPayloadSchema,
   mintedExtensionTokenSchema,
   profileUpdateSchema,
+  saveApplicationRequestSchema,
 } from '../index';
 
 describe('candidateFactSchema', () => {
@@ -121,6 +122,41 @@ describe('applicationInputSchema', () => {
 describe('profileUpdateSchema', () => {
   it('never includes userId — server always derives it from the session', () => {
     expect('userId' in profileUpdateSchema.shape).toBe(false);
+  });
+});
+
+describe('saveApplicationRequestSchema', () => {
+  it('never includes userId, company, title, or sourceUrl — those are derived server-side from the owned jobs row, never trusted from the client', () => {
+    for (const field of ['userId', 'company', 'title', 'sourceUrl']) {
+      expect(field in saveApplicationRequestSchema.shape).toBe(false);
+    }
+  });
+
+  it('only accepts SAVED or IN_PROGRESS — APPLIED has its own separate, explicit endpoint', () => {
+    expect(
+      saveApplicationRequestSchema.safeParse({
+        jobId: '11111111-1111-4111-8111-111111111111',
+        status: 'APPLIED',
+        autofillSummary: { approved: 0, filled: 0, skipped: 0, failed: 0, unresolved: 0, manual: 0 },
+        unresolvedFields: [],
+        answeredFields: [],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('accepts a well-formed save request', () => {
+    const result = saveApplicationRequestSchema.safeParse({
+      jobId: '11111111-1111-4111-8111-111111111111',
+      status: 'IN_PROGRESS',
+      autofillSummary: { approved: 1, filled: 1, skipped: 0, failed: 0, unresolved: 0, manual: 0 },
+      unresolvedFields: [
+        { label: 'Gender', classification: 'DEMOGRAPHIC', status: 'SENSITIVE', reason: 'Always requires your direct input.' },
+      ],
+      answeredFields: [
+        { generatedAnswerId: '22222222-2222-4222-8222-222222222222', decision: 'APPROVED', finalText: null },
+      ],
+    });
+    expect(result.success).toBe(true);
   });
 });
 

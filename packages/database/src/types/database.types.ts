@@ -245,6 +245,12 @@ export interface Database {
           status: string;
           notes: string | null;
           applied_at: string | null;
+          source_url: string | null;
+          canonical_url: string | null;
+          ats_provider: string | null;
+          external_id: string | null;
+          autofill_summary: Json | null;
+          unresolved_fields: Json | null;
           created_at: string;
           updated_at: string;
         };
@@ -388,6 +394,28 @@ export interface Database {
           ai_requests_this_period: number;
           ai_request_limit: number;
           ai_request_period_started_at: string;
+        }[];
+      };
+      upsert_application_from_extension: {
+        Args: {
+          p_user_id: string;
+          p_job_id: string | null;
+          p_company: string;
+          p_title: string;
+          p_location: string | null;
+          p_status: string;
+          p_source_url: string | null;
+          p_canonical_url: string | null;
+          p_ats_provider: string | null;
+          p_external_id: string | null;
+          p_autofill_summary: Json;
+          p_unresolved_fields: Json;
+        };
+        Returns: {
+          application_id: string;
+          created: boolean;
+          final_status: string;
+          previous_status: string | null;
         }[];
       };
     };

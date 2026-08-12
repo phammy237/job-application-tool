@@ -33,6 +33,37 @@ export default async function ApplicationDetailPage({
         <StatusBadge status={application.status} />
       </div>
 
+      {application.sourceUrl || application.autofillSummary ? (
+        <section className="space-y-2">
+          <h2 className="text-muted-foreground text-sm font-medium">Source</h2>
+          <div className="text-muted-foreground space-y-1 text-sm">
+            {application.sourceUrl ? (
+              <p>
+                <a
+                  href={application.sourceUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hover:text-primary underline"
+                >
+                  Original job posting
+                </a>
+                {application.atsProvider ? ` · ${application.atsProvider}` : ''}
+              </p>
+            ) : null}
+            {application.autofillSummary ? (
+              <p>
+                Autofill: {application.autofillSummary.filled} filled,{' '}
+                {application.autofillSummary.approved} approved,{' '}
+                {application.autofillSummary.skipped} skipped,{' '}
+                {application.autofillSummary.failed} failed,{' '}
+                {application.autofillSummary.unresolved} unresolved,{' '}
+                {application.autofillSummary.manual} manual
+              </p>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
+
       <section className="space-y-2">
         <h2 className="text-muted-foreground text-sm font-medium">Status</h2>
         <form

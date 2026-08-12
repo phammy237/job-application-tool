@@ -1,15 +1,32 @@
 import {
   applicationSchema,
+  autofillSummarySchema,
+  unresolvedFieldSummarySchema,
   type Application,
   type ApplicationInput,
   type ApplicationStatus,
+  type AutofillSummary,
+  type UnresolvedFieldSummary,
 } from '@career-os/shared';
-import { assertNoError, unwrapRow } from '../errors';
+import { DatabaseError, assertNoError, unwrapRow } from '../errors';
 import type { Database } from '../types/database.types';
 import type { CareerOsSupabaseClient } from '../types/client';
 import { recordApplicationEvent } from './application-events';
 
 type Row = Database['public']['Tables']['applications']['Row'];
+
+/** Both jsonb columns are validated on read, not just trusted — a row written by a future
+ * consumer with a slightly different shape fails closed (parse error) rather than silently
+ * flowing an unvalidated shape into UI code. */
+function parseAutofillSummary(value: unknown): AutofillSummary | null {
+  if (value === null || value === undefined) return null;
+  return autofillSummarySchema.parse(value);
+}
+
+function parseUnresolvedFields(value: unknown): UnresolvedFieldSummary[] | null {
+  if (value === null || value === undefined) return null;
+  return unresolvedFieldSummarySchema.array().parse(value);
+}
 
 function rowToApplication(row: Row): Application {
   return applicationSchema.parse({
@@ -22,6 +39,12 @@ function rowToApplication(row: Row): Application {
     status: row.status,
     notes: row.notes,
     appliedAt: row.applied_at,
+    sourceUrl: row.source_url,
+    canonicalUrl: row.canonical_url,
+    atsProvider: row.ats_provider,
+    externalId: row.external_id,
+    autofillSummary: parseAutofillSummary(row.autofill_summary),
+    unresolvedFields: parseUnresolvedFields(row.unresolved_fields),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });
@@ -172,4 +195,131 @@ export async function deleteOwnApplication(
     .eq('id', id)
     .eq('user_id', userId);
   assertNoError(error, 'deleteOwnApplication');
+}
+
+/**
+ * "Is this job already tracked?" — the extension's popup calls this right after analysis so it
+ * can show "Already tracked (IN_PROGRESS)" before the user does anything (Phase 4C). Matches by
+ * job_id only, the cheap/exact case; the full tiered duplicate-matching (requisition id ->
+ * canonical url -> company/title) lives in upsertApplicationFromExtension below and is what
+ * actually runs at save time, so this check and the save can disagree in principle (e.g. the
+ * user re-analyzes a URL that redirected, producing a new jobs row) — that's fine, the save
+ * path is the source of truth; this is only a fast, best-effort hint for the UI.
+ */
+export async function getOwnApplicationByJobId(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+  jobId: string,
+): Promise<Application | null> {
+  const { data, error } = await supabase
+    .from('applications')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('job_id', jobId)
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  assertNoError(error, 'getOwnApplicationByJobId');
+  return data ? rowToApplication(data) : null;
+}
+
+export interface UpsertApplicationFromExtensionInput {
+  jobId: string;
+  company: string;
+  title: string;
+  location: string | null;
+  status: 'SAVED' | 'IN_PROGRESS';
+  sourceUrl: string | null;
+  canonicalUrl: string | null;
+  atsProvider: string | null;
+  externalId: string | null;
+  autofillSummary: AutofillSummary;
+  unresolvedFields: UnresolvedFieldSummary[];
+}
+
+export interface UpsertApplicationFromExtensionResult {
+  applicationId: string;
+  created: boolean;
+  status: ApplicationStatus;
+  /** Null when a new row was created; otherwise the status the matched row had *before* this
+   * call. Lets the caller decide whether a STATUS_CHANGE timeline event is warranted without a
+   * second read — a repeat save that doesn't actually change status shouldn't spam the
+   * timeline (docs/DATA_MODEL.md "application_events" is meant to reflect real transitions). */
+  previousStatus: ApplicationStatus | null;
+}
+
+/**
+ * Atomic create-or-update via the upsert_application_from_extension Postgres function
+ * (supabase/migrations/0008_applications_extension_fields.sql) — see that migration for the
+ * full tiered-matching and concurrency design. This wrapper only maps params/results; all the
+ * actual dedup/race-safety logic lives in the database function, not here, so two concurrent
+ * calls to this function are safe by construction rather than by convention.
+ */
+export async function upsertApplicationFromExtension(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+  input: UpsertApplicationFromExtensionInput,
+): Promise<UpsertApplicationFromExtensionResult> {
+  const { data, error } = await supabase
+    .rpc('upsert_application_from_extension', {
+      p_user_id: userId,
+      p_job_id: input.jobId,
+      p_company: input.company,
+      p_title: input.title,
+      p_location: input.location,
+      p_status: input.status,
+      p_source_url: input.sourceUrl,
+      p_canonical_url: input.canonicalUrl,
+      p_ats_provider: input.atsProvider,
+      p_external_id: input.externalId,
+      p_autofill_summary: input.autofillSummary,
+      p_unresolved_fields: input.unresolvedFields,
+    })
+    .single();
+  const row = unwrapRow(data, error, 'upsertApplicationFromExtension');
+  return {
+    applicationId: row.application_id,
+    created: row.created,
+    status: row.final_status as ApplicationStatus,
+    previousStatus: row.previous_status as ApplicationStatus | null,
+  };
+}
+
+/**
+ * The only place applications.status ever becomes APPLIED from the extension — a separate,
+ * explicit action (docs/IMPLEMENTATION_PLAN.md Phase 4C: "never infer APPLIED from filling or
+ * detecting a submit button"). Sets applied_at alongside status, unlike the generic
+ * changeOwnApplicationStatus (which the manual dashboard flow uses and which deliberately
+ * doesn't touch applied_at for every status transition) — this one specifically means "the user
+ * told us, right now, that they applied."
+ */
+export async function markOwnApplicationApplied(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+  id: string,
+): Promise<Application> {
+  const current = await getOwnApplication(supabase, userId, id);
+  if (!current) {
+    throw new DatabaseError('markOwnApplicationApplied: application not found or not owned by this user.');
+  }
+
+  const appliedAt = new Date().toISOString();
+  const { data, error } = await supabase
+    .from('applications')
+    .update({ status: 'APPLIED', applied_at: appliedAt })
+    .eq('id', id)
+    .eq('user_id', userId)
+    .select('*')
+    .single();
+  const application = rowToApplication(unwrapRow(data, error, 'markOwnApplicationApplied'));
+
+  await recordApplicationEvent(supabase, userId, {
+    applicationId: id,
+    eventType: 'STATUS_CHANGE',
+    fromStatus: current.status,
+    toStatus: 'APPLIED',
+    source: 'USER',
+  });
+
+  return application;
 }

@@ -74,6 +74,46 @@ export async function createOwnGeneratedAnswer(
   return rowToGeneratedAnswer(unwrapRow(data, error, 'createOwnGeneratedAnswer'));
 }
 
+export interface RecordGeneratedAnswerDecisionInput {
+  applicationId: string;
+  decision: 'APPROVED' | 'EDITED';
+  /** The user's replacement text when decision is EDITED, null when APPROVED — never copies
+   * `answer` into `finalText` for an unedited approval, so finalText staying null continues to
+   * mean exactly "unedited AI output," never "edited to be identical." */
+  finalText: string | null;
+}
+
+/**
+ * Records the user's approve/edit decision against an *existing* generated_answers row and
+ * links it to the application it was used for (docs/IMPLEMENTATION_PLAN.md Phase 4C) — this is
+ * the first and only writer of user_decision/final_text; every prior code path leaves them null.
+ * Ownership-scoped by user_id like every other write here; also scoped to rows that don't
+ * already belong to a *different* application, so a save can't silently re-point an answer used
+ * elsewhere. Updating the existing row (never inserting a new one) is what keeps repeated saves
+ * from creating duplicate answer-usage rows.
+ */
+export async function recordOwnGeneratedAnswerDecision(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+  generatedAnswerId: string,
+  input: RecordGeneratedAnswerDecisionInput,
+): Promise<GeneratedAnswer | null> {
+  const { data, error } = await supabase
+    .from('generated_answers')
+    .update({
+      user_decision: input.decision,
+      final_text: input.finalText,
+      application_id: input.applicationId,
+    })
+    .eq('id', generatedAnswerId)
+    .eq('user_id', userId)
+    .or(`application_id.is.null,application_id.eq.${input.applicationId}`)
+    .select('*')
+    .maybeSingle();
+  assertNoError(error, 'recordOwnGeneratedAnswerDecision');
+  return data ? rowToGeneratedAnswer(data) : null;
+}
+
 export async function getOwnGeneratedAnswer(
   supabase: CareerOsSupabaseClient,
   userId: string,

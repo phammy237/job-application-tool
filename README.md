@@ -14,8 +14,9 @@ boundary.
 
 Phases 1–3 are built (auth, database, candidate profile, manual tracker, Chrome extension
 shell with page extraction, and Claude-generated suggestions), plus Phase 4A (the popup's
-field review/approval UI) and Phase 4B (the centralized safe autofill engine). Phase 4C
-(application saving and tracker integration) is next. See
+field review/approval UI), Phase 4B (the centralized safe autofill engine), and Phase 4C
+(application saving and dashboard tracker integration). Phase 4D (end-to-end integration and
+safety verification) is next. See
 `docs/IMPLEMENTATION_PLAN.md`'s Status checklist for the current phase and the phased build
 plan.
 

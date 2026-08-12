@@ -17,3 +17,4 @@ export * from './schemas/job-extraction';
 export * from './schemas/generated-answer';
 export * from './schemas/ai-usage-event';
 export * from './schemas/field-review';
+export * from './lib/canonicalize-url';
