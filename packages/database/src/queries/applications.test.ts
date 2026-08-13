@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { SanitizedJobSnapshotContent } from '@career-os/shared';
 import type { CareerOsSupabaseClient } from '../types/client';
-import { getOwnApplicationByJobId, upsertApplicationFromExtension } from './applications';
+import {
+  getOwnApplicationByJobId,
+  upsertApplicationFromExtension,
+  upsertApplicationWithSnapshot,
+} from './applications';
 
 const USER_ID = '22222222-2222-4222-8222-222222222222';
 const JOB_ID = '33333333-3333-4333-8333-333333333333';
@@ -130,5 +135,118 @@ describe('upsertApplicationFromExtension', () => {
       status: 'SAVED',
       previousStatus: null,
     });
+  });
+});
+
+const SNAPSHOT_ID = '55555555-5555-4555-8555-555555555555';
+
+const BASE_SNAPSHOT_CONTENT: SanitizedJobSnapshotContent = {
+  company: 'Acme',
+  title: 'Backend Engineer',
+  location: 'Remote',
+  employmentType: 'Full-time',
+  sourceUrl: 'https://boards.example.com/job/123',
+  externalId: null,
+  description: 'Build things.',
+  requiredQualifications: ['5 years of Python'],
+  preferredQualifications: [],
+  responsibilities: [],
+  skills: ['Python'],
+  salaryMin: null,
+  salaryMax: null,
+  salaryCurrency: null,
+  locations: ['Remote'],
+  workMode: 'REMOTE',
+  remoteLocationRestrictions: null,
+  workAuthorizationLanguage: null,
+  sourceType: 'GENERIC',
+};
+
+describe('upsertApplicationWithSnapshot', () => {
+  it('calls the server-only upsert_application_with_snapshot RPC with the authenticated user id and links the snapshot when SAVED/IN_PROGRESS', async () => {
+    const rpc = vi.fn().mockReturnValue({
+      single: vi.fn().mockResolvedValue({
+        data: {
+          application_id: APPLICATION_ID,
+          created: true,
+          final_status: 'SAVED',
+          previous_status: null,
+          job_snapshot_id: SNAPSHOT_ID,
+          snapshot_frozen: false,
+        },
+        error: null,
+      }),
+    });
+    const supabase = { rpc } as unknown as CareerOsSupabaseClient;
+
+    const result = await upsertApplicationWithSnapshot(supabase, USER_ID, {
+      jobId: JOB_ID,
+      status: 'SAVED',
+      snapshot: BASE_SNAPSHOT_CONTENT,
+      snapshotContentFingerprint: 'v1:abc123',
+      snapshotContentTruncated: false,
+      snapshotTruncatedFields: [],
+      location: 'Remote',
+      sourceUrl: 'https://boards.example.com/job/123',
+      canonicalUrl: 'https://boards.example.com/job/123',
+      atsProvider: 'GENERIC',
+      externalId: null,
+      autofillSummary: { approved: 0, filled: 0, skipped: 0, failed: 0, unresolved: 0, manual: 0 },
+      unresolvedFields: [],
+    });
+
+    expect(rpc).toHaveBeenCalledWith(
+      'upsert_application_with_snapshot',
+      expect.objectContaining({
+        p_user_id: USER_ID,
+        p_job_id: JOB_ID,
+        p_snapshot_content_fingerprint: 'v1:abc123',
+      }),
+    );
+    expect(result).toEqual({
+      applicationId: APPLICATION_ID,
+      created: true,
+      status: 'SAVED',
+      previousStatus: null,
+      jobSnapshotId: SNAPSHOT_ID,
+      snapshotFrozen: false,
+    });
+  });
+
+  it('surfaces snapshotFrozen=true and the preserved (unchanged) jobSnapshotId when the application is already APPLIED', async () => {
+    const EXISTING_SNAPSHOT_ID = '99999999-9999-4999-8999-999999999999';
+    const rpc = vi.fn().mockReturnValue({
+      single: vi.fn().mockResolvedValue({
+        data: {
+          application_id: APPLICATION_ID,
+          created: false,
+          final_status: 'APPLIED',
+          previous_status: 'APPLIED',
+          job_snapshot_id: EXISTING_SNAPSHOT_ID,
+          snapshot_frozen: true,
+        },
+        error: null,
+      }),
+    });
+    const supabase = { rpc } as unknown as CareerOsSupabaseClient;
+
+    const result = await upsertApplicationWithSnapshot(supabase, USER_ID, {
+      jobId: JOB_ID,
+      status: 'SAVED',
+      snapshot: { ...BASE_SNAPSHOT_CONTENT, description: 'Re-analyzed, different content now.' },
+      snapshotContentFingerprint: 'v1:different',
+      snapshotContentTruncated: false,
+      snapshotTruncatedFields: [],
+      location: 'Remote',
+      sourceUrl: 'https://boards.example.com/job/123',
+      canonicalUrl: 'https://boards.example.com/job/123',
+      atsProvider: 'GENERIC',
+      externalId: null,
+      autofillSummary: { approved: 0, filled: 0, skipped: 0, failed: 0, unresolved: 0, manual: 0 },
+      unresolvedFields: [],
+    });
+
+    expect(result.snapshotFrozen).toBe(true);
+    expect(result.jobSnapshotId).toBe(EXISTING_SNAPSHOT_ID);
   });
 });

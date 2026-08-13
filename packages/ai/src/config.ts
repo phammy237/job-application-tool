@@ -28,3 +28,19 @@ export const MIN_RELEVANCE_SCORE = 0.15;
  * injected content volume. */
 export const JOB_DESCRIPTION_CHAR_CAP = 4000;
 export const FACT_TEXT_CHAR_CAP = 500;
+
+/**
+ * Phase 5A requirement-mapping pipeline (packages/ai/src/generate-requirement-mapping.ts) —
+ * separate caps from the single-field pipeline above since it analyzes a whole posting rather
+ * than one field, and its output is an array rather than one answer. The snapshot content sent
+ * here is already sanitized/capped per JOB_SNAPSHOT_CAPS (packages/shared) before it ever reaches
+ * this pipeline; this cap bounds what's placed in the *prompt* specifically (never larger than
+ * what's stored, per docs/IMPLEMENTATION_PLAN.md's round-4 addendum §8).
+ */
+export const SNAPSHOT_DESCRIPTION_CHAR_CAP = 20_000;
+export const REQUIREMENT_MAPPING_MAX_OUTPUT_TOKENS = 8192;
+
+/** Bumped whenever the requirement-mapping system/user prompt changes materially — persisted on
+ * every run (requirement_mapping_runs.prompt_version) and every ai_usage_events row so past
+ * generations stay attributable to the prompt that actually produced them. */
+export const REQUIREMENT_MAPPING_PROMPT_VERSION = 'requirement-evidence-v1';

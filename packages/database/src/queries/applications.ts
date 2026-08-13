@@ -6,6 +6,7 @@ import {
   type ApplicationInput,
   type ApplicationStatus,
   type AutofillSummary,
+  type SanitizedJobSnapshotContent,
   type UnresolvedFieldSummary,
 } from '@career-os/shared';
 import { DatabaseError, assertNoError, unwrapRow } from '../errors';
@@ -78,6 +79,7 @@ function rowToApplication(row: Row): Application {
     externalId: row.external_id,
     autofillSummary: parseAutofillSummary(row.autofill_summary),
     unresolvedFields: parseUnresolvedFields(row.unresolved_fields),
+    jobSnapshotId: 'job_snapshot_id' in row ? row.job_snapshot_id : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });
@@ -315,6 +317,98 @@ export async function upsertApplicationFromExtension(
     created: row.created,
     status: row.final_status as ApplicationStatus,
     previousStatus: row.previous_status as ApplicationStatus | null,
+  };
+}
+
+export interface UpsertApplicationWithSnapshotInput {
+  jobId: string;
+  status: 'SAVED' | 'IN_PROGRESS';
+  snapshot: SanitizedJobSnapshotContent;
+  snapshotContentFingerprint: string;
+  snapshotContentTruncated: boolean;
+  snapshotTruncatedFields: string[];
+  location: string | null;
+  sourceUrl: string | null;
+  canonicalUrl: string | null;
+  atsProvider: string | null;
+  externalId: string | null;
+  autofillSummary: AutofillSummary;
+  unresolvedFields: UnresolvedFieldSummary[];
+}
+
+export interface UpsertApplicationWithSnapshotResult {
+  applicationId: string;
+  created: boolean;
+  status: ApplicationStatus;
+  previousStatus: ApplicationStatus | null;
+  jobSnapshotId: string | null;
+  /** True when the application had already moved past SAVED/IN_PROGRESS (APPLIED or later) —
+   * the snapshot was still captured/deduped as usual, but its historical `job_snapshot_id`
+   * pointer was deliberately left untouched (docs/IMPLEMENTATION_PLAN.md round-4 addendum §5). */
+  snapshotFrozen: boolean;
+}
+
+/**
+ * Atomic create-or-update-plus-snapshot-capture via the upsert_application_with_snapshot
+ * Postgres function (supabase/migrations/0010_job_snapshots_and_requirement_evidence.sql).
+ * Deliberately a new, separately-named function rather than an extension of
+ * upsertApplicationFromExtension/upsert_application_from_extension — CREATE OR REPLACE FUNCTION
+ * cannot change an existing function's argument list without creating an ambiguous PostgREST
+ * overload, so that function and its TS wrapper above are left completely untouched. This is now
+ * the only call site apps/web/app/api/applications/route.ts uses; upsertApplicationFromExtension
+ * remains exported for backward compatibility even though nothing in this repository calls it
+ * directly anymore.
+ */
+export async function upsertApplicationWithSnapshot(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+  input: UpsertApplicationWithSnapshotInput,
+): Promise<UpsertApplicationWithSnapshotResult> {
+  const { snapshot } = input;
+  const { data, error } = await supabase
+    .rpc('upsert_application_with_snapshot', {
+      p_user_id: userId,
+      p_job_id: input.jobId,
+      p_status: input.status,
+      p_snapshot_company: snapshot.company,
+      p_snapshot_title: snapshot.title,
+      p_snapshot_location: snapshot.location,
+      p_snapshot_employment_type: snapshot.employmentType,
+      p_snapshot_source_url: snapshot.sourceUrl,
+      p_snapshot_external_id: snapshot.externalId,
+      p_snapshot_description: snapshot.description,
+      p_snapshot_required_qualifications: snapshot.requiredQualifications,
+      p_snapshot_preferred_qualifications: snapshot.preferredQualifications,
+      p_snapshot_responsibilities: snapshot.responsibilities,
+      p_snapshot_skills: snapshot.skills,
+      p_snapshot_salary_min: snapshot.salaryMin,
+      p_snapshot_salary_max: snapshot.salaryMax,
+      p_snapshot_salary_currency: snapshot.salaryCurrency,
+      p_snapshot_locations: snapshot.locations,
+      p_snapshot_work_mode: snapshot.workMode,
+      p_snapshot_remote_location_restrictions: snapshot.remoteLocationRestrictions,
+      p_snapshot_work_authorization_language: snapshot.workAuthorizationLanguage,
+      p_snapshot_source_type: snapshot.sourceType,
+      p_snapshot_content_fingerprint: input.snapshotContentFingerprint,
+      p_snapshot_content_truncated: input.snapshotContentTruncated,
+      p_snapshot_truncated_fields: input.snapshotTruncatedFields,
+      p_location: input.location,
+      p_source_url: input.sourceUrl,
+      p_canonical_url: input.canonicalUrl,
+      p_ats_provider: input.atsProvider,
+      p_external_id: input.externalId,
+      p_autofill_summary: input.autofillSummary,
+      p_unresolved_fields: input.unresolvedFields,
+    })
+    .single();
+  const row = unwrapRow(data, error, 'upsertApplicationWithSnapshot');
+  return {
+    applicationId: row.application_id,
+    created: row.created,
+    status: row.final_status as ApplicationStatus,
+    previousStatus: row.previous_status as ApplicationStatus | null,
+    jobSnapshotId: row.job_snapshot_id,
+    snapshotFrozen: row.snapshot_frozen,
   };
 }
 
