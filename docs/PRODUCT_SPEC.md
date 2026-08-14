@@ -23,6 +23,11 @@ without a rewrite.
    drafts suggestions for the user to review, edit, approve, or skip.
 5. **Optional Gmail application-status tracker** — manual sync that classifies
    recruiting-related emails and proposes application-timeline updates for confirmation.
+6. **Opportunity intelligence — requirement-evidence mapping (Phase 5A)** — an immutable,
+   versioned archive of a posting's content captured at save time, plus a user-triggered,
+   per-requirement breakdown of which approved facts support it. Never a fabricated match, and
+   never reduced to a single "ATS score" or hiring-probability number — see §3 and
+   `docs/AI_GROUNDING.md` §8.
 
 ## 3. Non-goals (explicit)
 
@@ -43,6 +48,11 @@ These are deliberate exclusions, not gaps to be filled opportunistically:
   not implemented (see `docs/IMPLEMENTATION_PLAN.md` Phase 7).
 - **No coupling to mypham.space.** Separate repo, separate database, separate deploy
   pipeline. See `docs/ARCHITECTURE.md` §1 and §6.
+- **No aggregate match score.** The requirement-evidence mapping feature (Phase 5A) never
+  computes or displays an "ATS score," hiring probability, or interview probability — only a
+  per-requirement breakdown of which approved facts support it. Hard eligibility (e.g. work
+  authorization) is shown separately from general qualification coverage, never blended into
+  one number. See `docs/AI_GROUNDING.md` §8.
 
 ## 4. Public vs. private product areas
 

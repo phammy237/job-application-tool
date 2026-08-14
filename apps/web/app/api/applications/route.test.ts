@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({
   getOwnJob: vi.fn(),
   recordApplicationEvent: vi.fn(),
   recordOwnGeneratedAnswerDecision: vi.fn(),
-  upsertApplicationFromExtension: vi.fn(),
+  upsertApplicationWithSnapshot: vi.fn(),
   getUserIdFromExtensionToken: vi.fn(),
   createAdminClient: vi.fn(),
 }));
@@ -15,7 +15,7 @@ vi.mock('@career-os/database', () => ({
   getOwnJob: mocks.getOwnJob,
   recordApplicationEvent: mocks.recordApplicationEvent,
   recordOwnGeneratedAnswerDecision: mocks.recordOwnGeneratedAnswerDecision,
-  upsertApplicationFromExtension: mocks.upsertApplicationFromExtension,
+  upsertApplicationWithSnapshot: mocks.upsertApplicationWithSnapshot,
 }));
 
 vi.mock('../../../lib/extension-auth', () => ({
@@ -39,8 +39,17 @@ const OWN_JOB = {
   company: 'Acme',
   title: 'Backend Engineer',
   location: 'Remote',
+  employmentType: 'Full-time',
+  description: 'Build the payments service.',
+  responsibilities: ['Own the payments pipeline'],
+  qualifications: ['5+ years backend experience'],
+  preferredQualifications: ['AWS experience'],
+  skills: ['TypeScript'],
   sourceUrl: 'https://boards.example.com/job/123?utm_source=linkedin',
   platformType: 'GENERIC',
+  rawExtraction: null,
+  createdAt: '2026-01-01T00:00:00.000Z',
+  updatedAt: '2026-01-01T00:00:00.000Z',
 };
 
 const VALID_SAVE_BODY = {
@@ -66,11 +75,13 @@ beforeEach(() => {
   mocks.getUserIdFromExtensionToken.mockResolvedValue(USER_ID);
   mocks.createAdminClient.mockReturnValue({});
   mocks.getOwnJob.mockResolvedValue(OWN_JOB);
-  mocks.upsertApplicationFromExtension.mockResolvedValue({
+  mocks.upsertApplicationWithSnapshot.mockResolvedValue({
     applicationId: APPLICATION_ID,
     created: true,
     status: 'IN_PROGRESS',
     previousStatus: null,
+    jobSnapshotId: 'snap-1',
+    snapshotFrozen: false,
   });
 });
 
@@ -117,45 +128,61 @@ describe('POST /api/applications', () => {
     mocks.getUserIdFromExtensionToken.mockResolvedValue(null);
     const response = await POST(jsonRequest('POST', VALID_SAVE_BODY));
     expect(response.status).toBe(401);
-    expect(mocks.upsertApplicationFromExtension).not.toHaveBeenCalled();
+    expect(mocks.upsertApplicationWithSnapshot).not.toHaveBeenCalled();
   });
 
   it('returns 400 for a malformed body', async () => {
     const response = await POST(jsonRequest('POST', { jobId: 'not-a-uuid' }));
     expect(response.status).toBe(400);
-    expect(mocks.upsertApplicationFromExtension).not.toHaveBeenCalled();
+    expect(mocks.upsertApplicationWithSnapshot).not.toHaveBeenCalled();
   });
 
   it('rejects a status other than SAVED/IN_PROGRESS at the schema level (APPLIED is a separate endpoint)', async () => {
     const response = await POST(jsonRequest('POST', { ...VALID_SAVE_BODY, status: 'APPLIED' }));
     expect(response.status).toBe(400);
-    expect(mocks.upsertApplicationFromExtension).not.toHaveBeenCalled();
+    expect(mocks.upsertApplicationWithSnapshot).not.toHaveBeenCalled();
   });
 
   it('returns 404 when the job does not exist or is not owned by the caller', async () => {
     mocks.getOwnJob.mockResolvedValue(null);
     const response = await POST(jsonRequest('POST', VALID_SAVE_BODY));
     expect(response.status).toBe(404);
-    expect(mocks.upsertApplicationFromExtension).not.toHaveBeenCalled();
+    expect(mocks.upsertApplicationWithSnapshot).not.toHaveBeenCalled();
   });
 
   it('derives company/title/location/sourceUrl from the owned job row, never from the request body', async () => {
     await POST(jsonRequest('POST', VALID_SAVE_BODY));
-    expect(mocks.upsertApplicationFromExtension).toHaveBeenCalledWith(
+    expect(mocks.upsertApplicationWithSnapshot).toHaveBeenCalledWith(
       expect.anything(),
       USER_ID,
       expect.objectContaining({
-        company: 'Acme',
-        title: 'Backend Engineer',
         location: 'Remote',
         sourceUrl: OWN_JOB.sourceUrl,
+        snapshot: expect.objectContaining({ company: 'Acme', title: 'Backend Engineer' }),
+      }),
+    );
+  });
+
+  it('captures the full sanitized snapshot content (qualifications/responsibilities/skills), not just description', async () => {
+    await POST(jsonRequest('POST', VALID_SAVE_BODY));
+    expect(mocks.upsertApplicationWithSnapshot).toHaveBeenCalledWith(
+      expect.anything(),
+      USER_ID,
+      expect.objectContaining({
+        snapshot: expect.objectContaining({
+          requiredQualifications: OWN_JOB.qualifications,
+          preferredQualifications: OWN_JOB.preferredQualifications,
+          responsibilities: OWN_JOB.responsibilities,
+          skills: OWN_JOB.skills,
+        }),
+        snapshotContentFingerprint: expect.stringMatching(/^v1:[0-9a-f]{64}$/),
       }),
     );
   });
 
   it('canonicalizes the job source URL for the dedup match', async () => {
     await POST(jsonRequest('POST', VALID_SAVE_BODY));
-    expect(mocks.upsertApplicationFromExtension).toHaveBeenCalledWith(
+    expect(mocks.upsertApplicationWithSnapshot).toHaveBeenCalledWith(
       expect.anything(),
       USER_ID,
       expect.objectContaining({ canonicalUrl: 'https://boards.example.com/job/123' }),
@@ -164,7 +191,7 @@ describe('POST /api/applications', () => {
 
   it('always passes externalId null — no current extractor populates a requisition id', async () => {
     await POST(jsonRequest('POST', VALID_SAVE_BODY));
-    expect(mocks.upsertApplicationFromExtension).toHaveBeenCalledWith(
+    expect(mocks.upsertApplicationWithSnapshot).toHaveBeenCalledWith(
       expect.anything(),
       USER_ID,
       expect.objectContaining({ externalId: null }),
@@ -181,7 +208,7 @@ describe('POST /api/applications', () => {
   });
 
   it('does not record a STATUS_CHANGE event on a repeat save that does not change status', async () => {
-    mocks.upsertApplicationFromExtension.mockResolvedValue({
+    mocks.upsertApplicationWithSnapshot.mockResolvedValue({
       applicationId: APPLICATION_ID,
       created: false,
       status: 'IN_PROGRESS',
@@ -192,7 +219,7 @@ describe('POST /api/applications', () => {
   });
 
   it('records a STATUS_CHANGE event when an update actually changes status', async () => {
-    mocks.upsertApplicationFromExtension.mockResolvedValue({
+    mocks.upsertApplicationWithSnapshot.mockResolvedValue({
       applicationId: APPLICATION_ID,
       created: false,
       status: 'IN_PROGRESS',

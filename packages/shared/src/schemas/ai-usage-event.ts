@@ -43,9 +43,10 @@ export const aiUsageEventEscalationReasonSchema = z
   .nullable();
 export type AiUsageEventEscalationReason = z.infer<typeof aiUsageEventEscalationReasonSchema>;
 
-/** One member today — not a generic task-type dispatcher, just enough for telemetry rows to
- * carry the right value. Extend when a second real caller exists. */
-export const aiUsageEventTaskTypeSchema = z.enum(['field_suggestion']);
+/** 'requirement_mapping' added in migration 0010 (Phase 5A) — packages/ai's
+ * generate-requirement-mapping.ts is this table's first real caller (generate-suggestion.ts still
+ * has none — see the schema doc comment below). */
+export const aiUsageEventTaskTypeSchema = z.enum(['field_suggestion', 'requirement_mapping']);
 export type AiUsageEventTaskType = z.infer<typeof aiUsageEventTaskTypeSchema>;
 
 /**
@@ -66,7 +67,10 @@ export const aiUsageEventSchema = z.object({
   generationRunId: uuidSchema,
   attemptNumber: z.number().int().min(1).max(2),
   ladder: aiUsageEventLadderSchema,
-  fieldClassification: fieldClassificationSchema,
+  /** Nullable since migration 0010 — a requirement_mapping task_type analyzes a whole posting,
+   * not one classified form field, so no single FieldClassification applies. Non-null for every
+   * field_suggestion row, as before. */
+  fieldClassification: fieldClassificationSchema.nullable(),
   provider: aiUsageEventProviderSchema,
   model: z.string().nullable(),
   taskType: aiUsageEventTaskTypeSchema,
@@ -79,6 +83,9 @@ export const aiUsageEventSchema = z.object({
   outputTokens: z.number().int().min(0),
   estimatedCost: z.number().nullable(),
   latencyMs: z.number().int().nullable(),
+  /** Added in migration 0010 — null for every pre-Phase-5A row (and for field_suggestion rows,
+   * which don't set it either, since that pipeline has no live recordAiUsageEvent call site). */
+  promptVersion: z.string().nullable(),
   createdAt: isoDateTimeSchema,
 });
 export type AiUsageEvent = z.infer<typeof aiUsageEventSchema>;

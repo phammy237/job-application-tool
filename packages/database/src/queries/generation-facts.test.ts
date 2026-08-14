@@ -48,6 +48,7 @@ describe('listOwnApprovedFactsForGeneration', () => {
           tags: ['backend'],
           start_date: '2023-01-01',
           end_date: null,
+          updated_at: '2026-06-01T00:00:00.000Z',
         },
       ],
       education: [
@@ -87,6 +88,7 @@ describe('listOwnApprovedFactsForGeneration', () => {
     expect(experience?.recencyDate).toBe('2023-01-01'); // ongoing: end_date null falls back to start_date
     expect(experience?.isOngoing).toBe(true);
     expect(experience?.category).toBe('EXPERIENCE');
+    expect(experience?.updatedAt).toBe('2026-06-01T00:00:00.000Z');
 
     const education = facts.find((f) => f.sourceTable === 'education');
     expect(education?.recencyDate).toBe('2024-05-01'); // graduation_date preferred over start_date

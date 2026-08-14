@@ -94,6 +94,10 @@ export const applicationSchema = z.object({
   externalId: z.string().nullable().default(null),
   autofillSummary: autofillSummarySchema.nullable().default(null),
   unresolvedFields: z.array(unresolvedFieldSummarySchema).nullable().default(null),
+  /** Added in migration 0010 (Phase 5A) — same "missing key on an unmigrated database" reasoning
+   * as the Phase 4C columns above applies here too. Frozen once the application reaches APPLIED
+   * or later — see upsert_application_with_snapshot's snapshot-freeze behavior. */
+  jobSnapshotId: uuidSchema.nullable().default(null),
   createdAt: isoDateTimeSchema,
   updatedAt: isoDateTimeSchema,
 });

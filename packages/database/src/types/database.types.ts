@@ -252,6 +252,7 @@ export interface Database {
           external_id: string | null;
           autofill_summary: Json | null;
           unresolved_fields: Json | null;
+          job_snapshot_id: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -355,7 +356,7 @@ export interface Database {
           generation_run_id: string;
           attempt_number: number;
           ladder: string;
-          field_classification: string;
+          field_classification: string | null;
           provider: string | null;
           model: string | null;
           task_type: string;
@@ -368,6 +369,7 @@ export interface Database {
           output_tokens: number;
           estimated_cost: number | null;
           latency_ms: number | null;
+          prompt_version: string | null;
           created_at: string;
         };
         Insert: Partial<Database['public']['Tables']['ai_usage_events']['Row']> & {
@@ -375,11 +377,105 @@ export interface Database {
           generation_run_id: string;
           attempt_number: number;
           ladder: string;
-          field_classification: string;
           task_type: string;
           outcome: string;
         };
         Update: Partial<Database['public']['Tables']['ai_usage_events']['Row']>;
+        Relationships: [];
+      };
+      job_snapshots: {
+        Row: {
+          id: string;
+          user_id: string;
+          source_job_id: string;
+          company: string;
+          title: string;
+          location: string | null;
+          employment_type: string | null;
+          source_url: string | null;
+          external_id: string | null;
+          description: string | null;
+          required_qualifications: string[];
+          preferred_qualifications: string[];
+          responsibilities: string[];
+          skills: string[];
+          salary_min: number | null;
+          salary_max: number | null;
+          salary_currency: string | null;
+          locations: string[];
+          work_mode: string | null;
+          remote_location_restrictions: string | null;
+          work_authorization_language: string | null;
+          source_type: string | null;
+          content_fingerprint: string;
+          content_truncated: boolean;
+          truncated_fields: string[];
+          captured_at: string;
+          created_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['job_snapshots']['Row']> & {
+          user_id: string;
+          source_job_id: string;
+          company: string;
+          title: string;
+          content_fingerprint: string;
+        };
+        Update: Partial<Database['public']['Tables']['job_snapshots']['Row']>;
+        Relationships: [];
+      };
+      requirement_mapping_runs: {
+        Row: {
+          id: string;
+          user_id: string;
+          job_snapshot_id: string;
+          status: string;
+          provider: string;
+          model: string;
+          prompt_version: string;
+          retrieval_fact_count: number;
+          failure_category: string | null;
+          created_at: string;
+          completed_at: string | null;
+          failed_at: string | null;
+        };
+        Insert: Partial<Database['public']['Tables']['requirement_mapping_runs']['Row']> & {
+          user_id: string;
+          job_snapshot_id: string;
+          status: string;
+          provider: string;
+          model: string;
+          prompt_version: string;
+        };
+        Update: Partial<Database['public']['Tables']['requirement_mapping_runs']['Row']>;
+        Relationships: [];
+      };
+      requirement_evidence_mappings: {
+        Row: {
+          id: string;
+          user_id: string;
+          run_id: string;
+          requirement_text: string;
+          requirement_fingerprint: string;
+          requirement_category: string | null;
+          required_or_preferred: string;
+          relationship: string;
+          matched_facts: Json;
+          explanation: string;
+          confidence: number;
+          requires_user_confirmation: boolean;
+          created_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['requirement_evidence_mappings']['Row']> & {
+          user_id: string;
+          run_id: string;
+          requirement_text: string;
+          requirement_fingerprint: string;
+          required_or_preferred: string;
+          relationship: string;
+          explanation: string;
+          confidence: number;
+        };
+        Update: Partial<Database['public']['Tables']['requirement_evidence_mappings']['Row']>;
         Relationships: [];
       };
     };
@@ -417,6 +513,80 @@ export interface Database {
           created: boolean;
           final_status: string;
           previous_status: string | null;
+        }[];
+      };
+      upsert_application_with_snapshot: {
+        Args: {
+          p_user_id: string;
+          p_job_id: string;
+          p_status: string;
+          p_snapshot_company: string;
+          p_snapshot_title: string;
+          p_snapshot_location: string | null;
+          p_snapshot_employment_type: string | null;
+          p_snapshot_source_url: string | null;
+          p_snapshot_external_id: string | null;
+          p_snapshot_description: string | null;
+          p_snapshot_required_qualifications: string[];
+          p_snapshot_preferred_qualifications: string[];
+          p_snapshot_responsibilities: string[];
+          p_snapshot_skills: string[];
+          p_snapshot_salary_min: number | null;
+          p_snapshot_salary_max: number | null;
+          p_snapshot_salary_currency: string | null;
+          p_snapshot_locations: string[];
+          p_snapshot_work_mode: string | null;
+          p_snapshot_remote_location_restrictions: string | null;
+          p_snapshot_work_authorization_language: string | null;
+          p_snapshot_source_type: string | null;
+          p_snapshot_content_fingerprint: string;
+          p_snapshot_content_truncated: boolean;
+          p_snapshot_truncated_fields: string[];
+          p_location: string | null;
+          p_source_url: string | null;
+          p_canonical_url: string | null;
+          p_ats_provider: string | null;
+          p_external_id: string | null;
+          p_autofill_summary: Json;
+          p_unresolved_fields: Json;
+        };
+        Returns: {
+          application_id: string;
+          created: boolean;
+          final_status: string;
+          previous_status: string | null;
+          job_snapshot_id: string | null;
+          snapshot_frozen: boolean;
+        }[];
+      };
+      create_pending_requirement_mapping_run: {
+        Args: {
+          p_user_id: string;
+          p_job_snapshot_id: string;
+          p_provider: string;
+          p_model: string;
+          p_prompt_version: string;
+          p_retrieval_fact_count: number;
+        };
+        Returns: string;
+      };
+      mark_requirement_mapping_run_failed: {
+        Args: {
+          p_user_id: string;
+          p_run_id: string;
+          p_failure_category: string;
+        };
+        Returns: boolean;
+      };
+      promote_requirement_mapping_run: {
+        Args: {
+          p_user_id: string;
+          p_run_id: string;
+          p_mappings: Json;
+        };
+        Returns: {
+          run_id: string;
+          mapping_count: number;
         }[];
       };
     };

@@ -17,6 +17,13 @@ export interface ApprovedFactForGeneration {
   /** true when the record has a start date but no end date (a current role/project) —
    * scored as maximally recent regardless of how long ago it started. */
   isOngoing: boolean;
+  /** The row's current `updated_at`, at retrieval time. Phase 5A's requirement-mapping pipeline
+   * (packages/ai's generate-requirement-mapping.ts) captures this as server-derived provenance
+   * alongside each matched fact id, reusing the column every fact-source table already
+   * maintains via set_updated_at rather than inventing a separate fact-content fingerprint —
+   * see docs/IMPLEMENTATION_PLAN.md's round-4 addendum §4. Unused by the existing Phase 3
+   * single-field suggestion pipeline. */
+  updatedAt: string;
 }
 
 type CandidateFactRow = Database['public']['Tables']['candidate_facts']['Row'];
@@ -90,6 +97,7 @@ export async function listOwnApprovedFactsForGeneration(
       tags: row.tags ?? [],
       recencyDate: null,
       isOngoing: false,
+      updatedAt: row.updated_at,
     });
   }
 
@@ -102,6 +110,7 @@ export async function listOwnApprovedFactsForGeneration(
       tags: row.tags ?? [],
       recencyDate: row.end_date ?? row.start_date,
       isOngoing: Boolean(row.start_date) && !row.end_date,
+      updatedAt: row.updated_at,
     });
   }
 
@@ -114,6 +123,7 @@ export async function listOwnApprovedFactsForGeneration(
       tags: [],
       recencyDate: row.graduation_date ?? row.start_date,
       isOngoing: Boolean(row.start_date) && !row.graduation_date,
+      updatedAt: row.updated_at,
     });
   }
 
@@ -126,6 +136,7 @@ export async function listOwnApprovedFactsForGeneration(
       tags: row.tags ?? [],
       recencyDate: row.end_date ?? row.start_date,
       isOngoing: Boolean(row.start_date) && !row.end_date,
+      updatedAt: row.updated_at,
     });
   }
 
@@ -138,6 +149,7 @@ export async function listOwnApprovedFactsForGeneration(
       tags: [],
       recencyDate: null,
       isOngoing: false,
+      updatedAt: row.updated_at,
     });
   }
 

@@ -13,6 +13,7 @@ What Career OS protects, and against what:
 | Generated answers                                                     | Fabricated claims presented as factual                   | Deterministic retrieval + Zod contract + rejection gate, `docs/AI_GROUNDING.md`                         |
 | User's browsing / page content                                        | Over-broad extension surveillance                        | `activeTab`-only permission model, click-triggered analysis, `docs/EXTENSION_DESIGN.md`                 |
 | Sensitive form categories (demographic, legal)                        | Accidental auto-completion                               | Structural exclusion — no suggestion is ever generated for these classifications                        |
+| Job posting content (job snapshots, requirement mappings, Phase 5A)   | Prompt injection via untrusted posting text; privileged RPC misuse | Same tagged-untrusted-data posture as `docs/AI_GROUNDING.md`; every Phase 5A write RPC is `service_role`-only, never callable by an authenticated user's own session |
 
 ## 2. Multi-user isolation
 
@@ -26,6 +27,23 @@ What Career OS protects, and against what:
   verified session token on every request.
 - No code path anywhere assumes there is exactly one user or hardcodes an identifier for the
   product owner.
+- **Server-only RPC boundary (Phase 5A)**: `upsert_application_with_snapshot` and every
+  requirement-mapping lifecycle function (`create_pending_requirement_mapping_run`,
+  `mark_requirement_mapping_run_failed`, `promote_requirement_mapping_run`, plus internal
+  helpers) are granted to `service_role` only — `revoke ... from public, anon, authenticated`
+  in migration `0010`. This closed a real confused-deputy gap discovered in the pre-existing
+  `upsert_application_from_extension` (which had been grantable to `authenticated`, trusting a
+  `p_user_id` parameter rather than deriving it from `auth.uid()`): a signed-in user could
+  otherwise call these functions directly via `supabase.rpc(...)` on behalf of any other user
+  whose job/snapshot/run id they could learn or guess, since the functions run with the calling
+  role's effective RLS-bypass state, not with the identity of whichever `p_user_id` they're
+  told to act as. `upsert_application_from_extension` itself received the same grant fix.
+- **Structural (not just RPC-code) ownership** for the three new Phase 5A tables: every
+  parent-child link (`applications.job_snapshot_id → job_snapshots`,
+  `requirement_mapping_runs.job_snapshot_id → job_snapshots`,
+  `requirement_evidence_mappings.run_id → requirement_mapping_runs`) is a composite foreign
+  key over `(user_id, id)`, not a plain `id` reference — a child row naming a parent owned by a
+  different user is rejected by the database itself, not only by application-layer checks.
 
 ## 3. Secrets
 
@@ -58,6 +76,14 @@ support tickets: single application, résumé, generated content, Gmail disconne
 account deletion (cascading via `on delete cascade` from `auth.users`, per
 `docs/DATA_MODEL.md`). Account deletion additionally revokes the Gmail OAuth grant at Google
 before the row cascade completes, so deletion doesn't leave a live external token behind.
+
+`job_snapshots`, `requirement_mapping_runs`, and `requirement_evidence_mappings` (Phase 5A)
+cascade the same way — `user_id references auth.users(id) on delete cascade` — so a full
+account deletion removes them along with everything else. There is no independent, per-row
+deletion path for these three tables in Phase 5A: `job_snapshots` and
+`requirement_evidence_mappings` block all `update`s at the database level (see
+`docs/DATA_MODEL.md`), and deleting a single snapshot or mapping isn't a capability exposed
+anywhere in the product yet — the cascade only ever fires as part of full account deletion.
 
 ## 6. AI-specific risk: fabrication
 

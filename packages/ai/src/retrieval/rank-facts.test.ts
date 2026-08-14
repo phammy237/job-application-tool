@@ -24,6 +24,7 @@ function fact(overrides: Partial<ApprovedFactForGeneration>): ApprovedFactForGen
     tags: ['typescript', 'postgres'],
     recencyDate: '2025-01-01',
     isOngoing: false,
+    updatedAt: '2026-01-01T00:00:00.000Z',
     ...overrides,
   };
 }

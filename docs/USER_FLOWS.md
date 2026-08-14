@@ -78,7 +78,12 @@ false`, `visibleOnPublicProfile = false`. Nothing extracted is usable until step
    URL, ATS provider, a sanitized autofill-progress summary, and which generated answers were
    approved/edited. This creates or updates one `applications` row (`SAVED` or `IN_PROGRESS`
    — see `docs/DATA_MODEL.md` "applications" for how repeated saves are deduplicated) and
-   never changes status to `APPLIED`.
+   never changes status to `APPLIED`. The same save also captures an immutable, versioned
+   snapshot of the posting's content (`docs/DATA_MODEL.md` "job_snapshots," Phase 5A) — cheap,
+   deterministic, no AI call — so the exact posting an application was based on survives even
+   if the listing is later re-analyzed with different content or disappears entirely. Once the
+   application reaches `APPLIED` or later, further saves still capture new snapshots as usual
+   but no longer repoint the application at them — see step 6a below.
 5. User completes any remaining fields manually and submits the application themselves, on
    the employer's own page — entirely outside Career OS's control; Career OS has no way to
    observe or influence that submit action.
@@ -87,6 +92,10 @@ false`, `visibleOnPublicProfile = false`. Nothing extracted is usable until step
    generic manual-status-change control (§6) — either way, an explicit, deliberate user action
    is what sets status to `APPLIED`. It is never inferred from filling, saving, page
    navigation, or detecting a submit button.
+6a. Once `APPLIED`, the application's linked snapshot (step 4) is frozen — an ordinary
+   re-save can never repoint it at a newer posting version, preserving the exact content the
+   application was actually based on. There is no correction/amendment workflow for this in
+   Phase 5A; that's explicitly deferred.
 
 ## 6. Reviewing applications on the dashboard
 
@@ -97,6 +106,15 @@ false`, `visibleOnPublicProfile = false`. Nothing extracted is usable until step
    event timeline.
 3. User can manually change status at any time; manual changes always win over
    automation and are marked as such in the timeline.
+4. If the application has a linked job snapshot (§5 step 4), the detail page shows a
+   "Requirements & evidence" panel. It starts empty — analysis only ever runs when the user
+   clicks **Analyze requirements** (or **Regenerate**, once a result exists); it never runs
+   automatically. Results are grouped `REQUIRED` before `PREFERRED`, each requirement shows a
+   relationship badge (direct/equivalent/inferred/not covered — inferred matches are visibly
+   marked as needing the user's own confirmation), and each cited fact shows whether it's still
+   currently approved, changed since this analysis, no longer approved, or no longer available
+   — never presented as verified once it's gone stale. A failed or rate-limited attempt leaves
+   whatever result already existed untouched.
 
 ## 7. Gmail sync (optional)
 
@@ -119,7 +137,9 @@ Each of the following is a first-class, discoverable action (not "contact suppor
 1. **Delete a single application** — removes the `applications` row and its
    `application_events`/linked `generated_answers` (or the user may choose to keep generated
    answers as standalone profile history — UX decision made in Phase 1/4 design, not this
-   doc).
+   doc). Its linked job snapshot and any requirement-mapping runs are **not** deleted — they're
+   independently user-owned (Phase 5A) and only ever removed via full account deletion below;
+   there's no per-row deletion path for them in Phase 5A.
 2. **Delete a résumé** — removes the file from Storage and the `resumes` row; facts sourced
    from it are flagged (not silently deleted) so the user can decide whether to keep them as
    manually-verified.

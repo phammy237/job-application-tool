@@ -8,4 +8,9 @@
  */
 export { generateSuggestion } from './generate-suggestion';
 export type { GenerateSuggestionParams, GenerateSuggestionResult } from './generate-suggestion';
+export { generateRequirementMapping } from './generate-requirement-mapping';
+export type {
+  GenerateRequirementMappingParams,
+  GenerateRequirementMappingResult,
+} from './generate-requirement-mapping';
 export { NEVER_SUGGEST_CLASSIFICATIONS } from './config';

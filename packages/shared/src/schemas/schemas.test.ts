@@ -164,6 +164,15 @@ describe('applicationSchema', () => {
       expect(result.data.externalId).toBeNull();
       expect(result.data.autofillSummary).toBeNull();
       expect(result.data.unresolvedFields).toBeNull();
+      expect(result.data.jobSnapshotId).toBeNull();
+    }
+  });
+
+  it('defaults jobSnapshotId to null when the key is missing — the shape a database that has not had migration 0010 applied yet returns', () => {
+    const result = applicationSchema.safeParse(baseRow);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.jobSnapshotId).toBeNull();
     }
   });
 });
@@ -426,6 +435,7 @@ describe('aiUsageEventSchema', () => {
       outputTokens: 150,
       estimatedCost: 0.00042,
       latencyMs: 850,
+      promptVersion: null,
       createdAt: '2026-01-01T00:00:00.000Z',
     });
     expect(result.success).toBe(true);
@@ -452,6 +462,7 @@ describe('aiUsageEventSchema', () => {
       outputTokens: 0,
       estimatedCost: 0,
       latencyMs: null,
+      promptVersion: null,
       createdAt: '2026-01-01T00:00:00.000Z',
     });
     expect(result.success).toBe(true);
