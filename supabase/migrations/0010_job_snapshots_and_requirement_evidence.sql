@@ -554,13 +554,13 @@ security invoker
 set search_path = public, pg_temp
 as $$
 declare
-  v_updated boolean;
+  v_row_count int;
 begin
   update public.requirement_mapping_runs
     set status = 'FAILED', failed_at = now(), failure_category = p_failure_category
     where id = p_run_id and user_id = p_user_id and status = 'PENDING';
-  get diagnostics v_updated = row_count;
-  return v_updated > 0;
+  get diagnostics v_row_count = row_count;
+  return v_row_count > 0;
 end;
 $$;
 

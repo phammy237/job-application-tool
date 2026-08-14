@@ -26,6 +26,7 @@ function rowToAiUsageEvent(row: Row): AiUsageEvent {
     outputTokens: row.output_tokens,
     estimatedCost: row.estimated_cost,
     latencyMs: row.latency_ms,
+    promptVersion: 'prompt_version' in row ? row.prompt_version : null,
     createdAt: row.created_at,
   });
 }
@@ -63,6 +64,7 @@ export async function recordAiUsageEvent(
       output_tokens: input.outputTokens,
       estimated_cost: input.estimatedCost,
       latency_ms: input.latencyMs,
+      prompt_version: input.promptVersion,
     })
     .select('*')
     .single();

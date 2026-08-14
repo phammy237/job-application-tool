@@ -435,6 +435,7 @@ describe('aiUsageEventSchema', () => {
       outputTokens: 150,
       estimatedCost: 0.00042,
       latencyMs: 850,
+      promptVersion: null,
       createdAt: '2026-01-01T00:00:00.000Z',
     });
     expect(result.success).toBe(true);
@@ -461,6 +462,7 @@ describe('aiUsageEventSchema', () => {
       outputTokens: 0,
       estimatedCost: 0,
       latencyMs: null,
+      promptVersion: null,
       createdAt: '2026-01-01T00:00:00.000Z',
     });
     expect(result.success).toBe(true);

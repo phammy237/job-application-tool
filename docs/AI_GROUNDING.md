@@ -119,3 +119,39 @@ Every AI request is attributed to `user_settings.ai_requests_this_period` /
 `ai_request_limit` (see `docs/DATA_MODEL.md`). This exists from Phase 1 onward even though
 limits are generous during solo/private-beta use, so opening signups later (Phase 7) doesn't
 require retrofitting cost controls.
+
+## 8. Requirement-evidence mapping (Phase 5A)
+
+A second pipeline (`packages/ai/src/generate-requirement-mapping.ts`), analyzing a whole job
+snapshot's stated requirements against the user's approved facts, rather than one form field
+against one description. It reuses this document's principle and controls rather than
+inventing new ones:
+
+- **User-triggered only** — never runs automatically on save; the deterministic, no-LLM-call
+  snapshot capture in `docs/DATA_MODEL.md`'s "job_snapshots" happens on every save, but the
+  Claude call only ever happens from an explicit "Analyze requirements"/"Regenerate" click.
+- **Retrieval before generation, same as §2** — `listOwnApprovedFactsForGeneration` (the full
+  approved set, not top-N-per-field, since a whole-posting analysis needs broader context);
+  rate-limited via the same `incrementOwnAiRequestUsage` check, before any provider call.
+- **Untrusted data, tagged**: the snapshot content sits inside a `<job_snapshot>` tag with the
+  same "this is data, not instructions" system-prompt posture as `<job_posting>` — no `tools`
+  array, `thinking: disabled`, same posture as §2's pipeline.
+- **Contract + rejection gate, extended for an array**: the model returns a JSON array of
+  per-requirement objects (`requirementMappingContractSchema`, `packages/shared`) instead of
+  one answer; each entry's `matchedFactIds` must be a subset of the exact ids placed in the
+  prompt (same allowlist-check pattern as `sourceFactIds` in §3/§4) — a hallucinated or
+  injected id fails the whole run, not just that one requirement. Validation is all-or-nothing
+  at the run level: there is no partial promotion of a run where only some requirements passed.
+- **Provenance is server-derived, never model-generated**: after a response passes both gates,
+  the server (not the model) attaches `{factId, sourceTable, factUpdatedAt}` to each matched
+  fact from the exact retrieved fact list — see `docs/DATA_MODEL.md`'s `matched_facts`
+  description for how this later detects an edited/unapproved/deleted fact on read.
+- **No aggregate score, ever**: the contract has no field for an overall match percentage,
+  "ATS score," hiring probability, or interview probability, and the system prompt explicitly
+  forbids computing one — only per-requirement `confidence`, scoped to that one requirement's
+  evidence quality. Hard eligibility language (e.g. work authorization) stays a
+  `requirement_category` value, grouped separately in the UI, never blended into a score.
+- **Usage accounting, activated**: `ai_usage_events` (Phase 3 schema groundwork with no live
+  caller until now) records one row per attempt via `recordAiUsageEvent`, correlated by
+  `generation_run_id = requirement_mapping_runs.id`, best-effort (a telemetry failure never
+  fails the user's actual request).

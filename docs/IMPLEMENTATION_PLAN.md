@@ -13,16 +13,15 @@ phase depends on a later phase's output.
   - [x] Phase 4B — Safe autofill engine
   - [x] Phase 4C — Application saving and tracker integration
   - [x] Phase 4D — End-to-end integration and safety verification
+- [x] Phase 5A — Opportunity intelligence foundation: immutable job snapshots, requirement-evidence mapping
 - [ ] Phase 5 — Manual Gmail synchronization, email classification, status matching
 - [ ] Phase 6 — Multi-user beta hardening, privacy controls, testing, deployment
 - [ ] Phase 7 — Optional mypham.space integration, public onboarding, future sharing
 
-**Not yet started, ordering undecided:** an "Opportunity Intelligence Foundation" phase — job-
-posting snapshots, requirement-to-evidence mapping, a consistency firewall, frozen submission
-packets, next actions/deadlines. Scoped (see the proposed Phase 5A boundary at the end of this
-document) but deliberately not implemented, and not yet slotted into the numbered sequence
-above relative to Phase 5's Gmail work — that ordering decision is intentionally left open
-rather than assumed here.
+**Not yet started:** Phase 5B (consistency firewall, frozen submission packets) and Phase 5C
+(next actions/deadlines, dashboard overview) — both explicitly out of scope for 5A, unscoped
+beyond their names, and not yet slotted into the numbered sequence relative to Phase 5's Gmail
+work. That ordering decision is intentionally left open rather than assumed here.
 
 Phase 4A shipped: the popup classifies every detected field into a review state (sensitive /
 unsupported / already-completed / pending-suggestion / ready / suggested / needs-input),
@@ -614,87 +613,83 @@ place from Phase 1). Possibly a `public_slug`-based lookup index on `profiles`.
 
 ---
 
-## Proposed: Opportunity Intelligence Foundation — Phase 5A boundary (NOT implemented)
+## Phase 5A — Opportunity Intelligence Foundation (shipped)
 
-Scoped during Phase 4D planning at the user's request, as the first of three independently
-shippable subphases (5A: snapshot + evidence mapping; 5B: consistency firewall + frozen
-submission packet; 5C: next actions + dashboard integration — 5B/5C intentionally left
-unscoped here). **No code, migration, or UI for this exists yet.** This section is a proposal
-to review, not a commitment — implementation should start in a fresh session or a clean
-branch/worktree, per the same phase-boundary discipline every other phase in this document
-follows (don't start 5A until this proposal itself has been reviewed).
+Went through four rounds of design review before implementation (immutability, RPC-overload
+safety, generation-run lifecycle, fact-provenance versioning, fingerprint correctness, field
+nullability, AI grounding controls; then a security/lifecycle addendum covering RPC
+authorization, internal-helper grants, direct-write RLS exposure, structural ownership, the
+APPLIED-freeze rule, run-lifecycle constraints, `matched_facts` validation, and truncation
+visibility) before any code was written — see the git history on this branch for the full
+review trail. First of three independently shippable subphases (5A here; 5B: consistency
+firewall + frozen submission packet; 5C: next actions + dashboard integration — both
+unscoped, not started).
 
-### Goals
+**Mandatory prerequisite, fixed first**: `upsert_application_from_extension` (Phase 4) was
+grantable to `authenticated` and trusted a `p_user_id` parameter rather than deriving the
+caller's identity from `auth.uid()` — a confused-deputy privilege-escalation path (an
+authenticated user could call it directly via `supabase.rpc(...)` on behalf of any other user
+whose job id they could learn). Repository-wide audit confirmed the only real caller was
+`apps/web/app/api/applications/route.ts` via `createAdminClient()` (service-role) after
+deriving `userId` from a verified bearer token — no legitimate `authenticated`-role caller
+existed. Fixed in migration `0010` by revoking `public`/`anon`/`authenticated` and granting
+`service_role` only; the function's signature and body are otherwise byte-for-byte unchanged.
+The same server-only grant pattern is applied to every new Phase 5A function.
 
-Preserve job-posting content past the point the original listing disappears, and give the
-user an explainable mapping from what a posting asks for to which of their *approved* facts
-actually support it — without ever inventing evidence or treating page content as
-instructions.
+**Shipped**: immutable, versioned job-posting snapshots (`job_snapshots` — see
+`docs/DATA_MODEL.md`), captured automatically and atomically alongside every application save
+via the new `upsert_application_with_snapshot` RPC (a separately-named wrapper, not an
+extension of `upsert_application_from_extension`'s signature — `CREATE OR REPLACE FUNCTION`
+cannot change an existing function's argument list without creating an ambiguous PostgREST
+overload); a frozen snapshot pointer once an application reaches `APPLIED` or later; a
+deterministic, versioned content fingerprint (`"v1:" + sha256hex`, case-preserving, covering
+every stored content field so a fingerprint reuse can never carry stale data); user-triggered
+requirement-evidence mapping (`requirement_mapping_runs` + `requirement_evidence_mappings`),
+grounded exclusively in the user's own approved facts, with server-derived (never
+model-generated) provenance that detects an edited/unapproved/deleted supporting fact on read;
+and a "Requirements & evidence" panel on the application detail page with real loading/empty/
+success/stale-evidence/failure/regenerate states.
 
-### New tables (proposed shape, not final)
+**Database-enforced, not just application-level**: composite foreign keys tie every
+application → snapshot → run → mapping link to `(user_id, id)`, so a cross-user link is
+rejected by the database itself; a `before update` trigger makes `job_snapshots` and
+`requirement_evidence_mappings` genuinely immutable against every role including
+`service_role`, not just against normal clients via RLS; a partial unique index guarantees at
+most one `CURRENT` run per snapshot; CHECK constraints rule out every nonsensical
+status/timestamp combination on a run and enforce the `MISSING`/`INFERRED` relationship
+invariants on a mapping. `job_snapshots`/`requirement_mapping_runs`/
+`requirement_evidence_mappings` deliberately ship with `select`-only RLS for `authenticated` —
+no insert policy, since a direct PostgREST insert would bypass sanitization/fingerprinting/
+contract validation entirely; every write goes through a `service_role`-only function instead.
 
-**`job_snapshots`** — one current sanitized snapshot per `(user_id, job_id)` (versioning
-deferred — see "Explicitly excluded" below), upserted on save the same way `applications`
-already is: `user_id`, `job_id` (`on delete set null`, so the snapshot outlives the `jobs` row
-being re-analyzed or removed — the entire point of this table), `company`, `title`,
-`source_url`, `external_id`, `description` (full normalized text), `required_qualifications
-text[]`, `preferred_qualifications text[]`, `responsibilities text[]`, `salary_min`/
-`salary_max numeric`, `salary_currency text`, `locations text[]`, `work_mode` (`REMOTE,
-HYBRID, ONSITE, UNKNOWN`), `remote_location_restrictions text`,
-`work_authorization_language text` (captured verbatim as data, never treated as instructions
-— see "Security risks"), `captured_at timestamptz`, `source_type` (reuses
-`jobPlatformTypeSchema`), `structured_metadata jsonb`, `content_fingerprint text` (dedup —
-re-saving unchanged content is a no-op, not a new row), `created_at`, `updated_at`.
+**AI grounding** (`packages/ai/src/generate-requirement-mapping.ts`, `docs/AI_GROUNDING.md`
+§8): reuses the Phase 3 pipeline's controls rather than inventing new ones — untrusted-data
+tagging, no `tools`, rate limiting before any provider call, the same allowlist-check pattern
+for cited fact ids, one retry on rejection (never on a hard provider error). New: the
+`ai_usage_events` table (Phase 3 schema groundwork with no live caller before now) gets its
+first real caller; validation is all-or-nothing across the whole array response, so there is
+no partial promotion of a run where only some requirements passed; no aggregate "ATS score" or
+hiring/interview probability is ever computed.
 
-**`requirement_evidence_mappings`** — `user_id`, `job_snapshot_id references job_snapshots(id)
-on delete cascade`, `requirement_text`, `requirement_category`, `required_or_preferred`
-(`REQUIRED`/`PREFERRED`), `relationship` (`DIRECT`/`EQUIVALENT`/`INFERRED`/`MISSING`),
-`matched_fact_ids uuid[]` (validated server-side against `listOwnApprovedFactsForGeneration` —
-the same approved-facts-only allowlist `packages/ai` already enforces, reused rather than
-re-derived), `explanation text`, `confidence numeric(3,2)`,
-`requires_user_confirmation boolean`, `model`/`provider`/`prompt_version text`, `created_at`.
-
-Both tables: `user_id` + RLS + the four standard policies in the migration that creates them,
-per `CLAUDE.md`, plus cross-user isolation tests in the same PR.
-
-### API endpoints (proposed)
-
-- Snapshot capture folded into the existing `POST /api/applications` save flow (or a sibling
-  endpoint if that route is already doing too much) — extending, not duplicating, Phase 4C's
-  save path.
-- `POST /api/job-snapshots/:id/requirements` — triggers requirement extraction + evidence
-  mapping (reuses `packages/ai`'s existing retrieval/ranking, not a new AI pipeline).
-- `GET /api/job-snapshots/:id/requirements` — list mappings for display.
-
-### Security risks
-
-- Page content (the job posting) is untrusted data, never instructions — same posture
-  `docs/AI_GROUNDING.md` already requires for job descriptions; a posting containing
-  prompt-injection-style text must not change extraction/mapping behavior.
-- `matched_fact_ids` must be re-verified server-side as belonging to the authenticated user
-  and `approved_for_applications = true` on every read/write, not trusted from a stored value.
-- `INFERRED` relationships must never auto-promote into an approved candidate fact.
-- No raw HTML, scripts, cookies, or `AUTHENTICATION`-classified content in the snapshot —
-  only the sanitized, structured fields listed above.
-
-### Tests (proposed)
-
-- Cross-user RLS isolation for both new tables.
-- Snapshot dedup/idempotency: same URL saved twice updates, doesn't duplicate; same URL from
-  two different users produces two independent snapshots; same external job ID from different
-  ATS sources doesn't incorrectly merge.
-- Requirement mappings referencing an invalid, foreign, or unapproved fact ID are rejected.
-- `INFERRED` evidence never becomes an approved fact automatically.
-- A requirement with no supporting approved fact produces `MISSING`, never a fabricated match.
-- Fixtures: Greenhouse-style, Lever-style, Workday-style (if the current extractor supports
-  it), and generic HTML — no real employer sites accessed in tests.
+**Verified against the same real, disposable, linked Supabase project used throughout Phase
+4D** — not mocks: 29/29 pgTAP assertions (`supabase/tests/database/
+0017_job_snapshots_and_requirement_evidence.test.sql` — RLS isolation, grant denial for
+`authenticated`/`anon` against every new function and the Phase 4 fix, composite-FK cross-user
+rejection, immutability-trigger firing regardless of role, CHECK/unique-constraint rejection)
+and 25/25 live scenario checks covering the RPC orchestration directly (snapshot create/reuse/
+version, 8-way concurrent identical-content saves producing exactly one row, the APPLIED-freeze
+behavior end-to-end, atomic promotion including rejection of a foreign user's fact and of a
+structurally malformed `matched_facts` entry, run supersession, and `mark_requirement_mapping_run_failed`'s idempotency) — one real bug (a
+`GET DIAGNOSTICS` boolean/integer type mismatch in `mark_requirement_mapping_run_failed`) was
+caught and fixed by this live verification, not by inspection.
 
 ### Explicitly excluded from Phase 5A
 
-- Snapshot **version history** — one current snapshot only; versioning is a later
-  enhancement, not silently dropped scope.
+- Snapshot-history *browsing UI* — the database supports multiple immutable versions per job
+  and retains superseded runs, but there is no UI to browse anything but the current one.
+- Salary, work-mode, remote-location-restriction, and work-authorization-language
+  *extraction* — the columns exist, nullable, unpopulated; no current extractor produces them.
 - The consistency firewall and frozen submission packet (Phase 5B).
 - Next actions/deadlines and the dashboard overview section (Phase 5C).
-- Calling a result an "ATS score," "hiring probability," or similar — hard eligibility stays
-  separate from qualification coverage, per the original request.
-- Any change to the extension's autofill/save/mark-applied flow verified in Phase 4D.
+- Any change to the extension's autofill/save/mark-applied flow verified in Phase 4D — the
+  extension itself was not touched.

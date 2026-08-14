@@ -6,6 +6,7 @@ import { requireUser } from '../../../../lib/auth';
 import { createClient } from '../../../../lib/supabase/server';
 import { changeApplicationStatus, updateApplicationNotes } from '../actions';
 import { DeleteApplicationButton } from '../delete-application-button';
+import { RequirementAnalysisPanel } from '../requirement-analysis-panel';
 import { RevertEventButton } from '../revert-event-button';
 
 export default async function ApplicationDetailPage({
@@ -106,6 +107,10 @@ export default async function ApplicationDetailPage({
           </Button>
         </form>
       </section>
+
+      {application.jobSnapshotId ? (
+        <RequirementAnalysisPanel jobSnapshotId={application.jobSnapshotId} />
+      ) : null}
 
       <section className="space-y-3">
         <h2 className="text-muted-foreground text-sm font-medium">Timeline</h2>

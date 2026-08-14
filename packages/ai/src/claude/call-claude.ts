@@ -1,4 +1,4 @@
-import { MAX_OUTPUT_TOKENS, MODEL_ID } from '../config';
+import { MAX_OUTPUT_TOKENS, MODEL_ID, REQUIREMENT_MAPPING_MAX_OUTPUT_TOKENS } from '../config';
 import { getAnthropicClient } from './client';
 
 /**
@@ -56,6 +56,94 @@ export async function callClaudeForSuggestion(
       messages: [{ role: 'user', content: userText }],
       output_config: {
         format: { type: 'json_schema', schema: GENERATED_ANSWER_JSON_SCHEMA },
+      },
+    });
+
+    if (response.stop_reason === 'refusal') {
+      return { status: 'refusal', category: response.stop_details?.category ?? null };
+    }
+
+    const textBlock = response.content.find((block) => block.type === 'text');
+    if (!textBlock || textBlock.type !== 'text') {
+      return { status: 'provider_error', message: 'No text content in Claude response' };
+    }
+    return { status: 'ok', rawText: textBlock.text };
+  } catch (error) {
+    return {
+      status: 'provider_error',
+      message: error instanceof Error ? error.message : 'Unknown Anthropic API error',
+    };
+  }
+}
+
+/**
+ * Mirrors generatedAnswerContractSchema's JSON Schema mirror above, but for
+ * requirementMappingRunContractSchema (packages/shared) — a JSON array of requirement objects
+ * rather than one answer object.
+ */
+const REQUIREMENT_MAPPING_JSON_SCHEMA = {
+  type: 'array',
+  items: {
+    type: 'object',
+    properties: {
+      requirementText: { type: 'string' },
+      requirementCategory: {
+        type: ['string', 'null'],
+        enum: [
+          'SKILL',
+          'EXPERIENCE',
+          'EDUCATION',
+          'CERTIFICATION',
+          'WORK_AUTHORIZATION',
+          'LOCATION',
+          'LANGUAGE',
+          'OTHER',
+          null,
+        ],
+      },
+      requiredOrPreferred: { type: 'string', enum: ['REQUIRED', 'PREFERRED'] },
+      relationship: { type: 'string', enum: ['DIRECT', 'EQUIVALENT', 'INFERRED', 'MISSING'] },
+      matchedFactIds: { type: 'array', items: { type: 'string' } },
+      explanation: { type: 'string' },
+      confidence: { type: 'number' },
+      requiresUserConfirmation: { type: 'boolean' },
+    },
+    required: [
+      'requirementText',
+      'requirementCategory',
+      'requiredOrPreferred',
+      'relationship',
+      'matchedFactIds',
+      'explanation',
+      'confidence',
+      'requiresUserConfirmation',
+    ],
+    additionalProperties: false,
+  },
+} as const;
+
+/**
+ * Same no-tools/thinking-disabled/schema-constrained posture as callClaudeForSuggestion — the
+ * single biggest blast-radius reducer against prompt injection in the snapshot content
+ * (docs/AI_GROUNDING.md §2/§6, extended by docs/IMPLEMENTATION_PLAN.md's Phase 5A round-4
+ * addendum §7). A separate function rather than a generalized/parameterized one: the two
+ * contracts have different shapes and different output-token budgets, and keeping them
+ * independent means a change to one call shape can never accidentally affect the other's
+ * already-verified behavior.
+ */
+export async function callClaudeForRequirementMapping(
+  systemPrompt: string,
+  userText: string,
+): Promise<CallClaudeResult> {
+  try {
+    const response = await getAnthropicClient().messages.create({
+      model: MODEL_ID,
+      max_tokens: REQUIREMENT_MAPPING_MAX_OUTPUT_TOKENS,
+      thinking: { type: 'disabled' },
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userText }],
+      output_config: {
+        format: { type: 'json_schema', schema: REQUIREMENT_MAPPING_JSON_SCHEMA },
       },
     });
 

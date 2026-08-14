@@ -231,19 +231,25 @@ Indexes: `(user_id)`, `(user_id, source_url)`. RLS: standard.
 | `external_id`        | `text`                                                      | requisition/job ID, when reliably detected — tier-1 dedup key; no current extractor populates this yet                          |
 | `autofill_summary`   | `jsonb`                                                     | counts only — `{approved, filled, skipped, failed, unresolved, manual}`, validated by `autofillSummarySchema`. No per-field content |
 | `unresolved_fields`  | `jsonb`                                                     | sanitized array of `{label, classification, status, reason}` — never a value, never a DOM locator, validated by `unresolvedFieldSummarySchema` |
+| `job_snapshot_id`    | `uuid references job_snapshots(id) on delete set null (job_snapshot_id)` | Phase 5A — points at the immutable posting content captured when this application was last saved; **frozen** (never repointed) once `status` moves past `SAVED`/`IN_PROGRESS`, see "Job snapshots" below |
 
 Indexes: `(user_id)`, `(user_id, status)`, `(user_id, company)`, `(user_id, applied_at desc)`,
-unique partial `(user_id, canonical_url) where canonical_url is not null and external_id is
-null`, unique partial `(user_id, ats_provider, external_id) where external_id is not null`.
+`(job_snapshot_id)`, unique partial `(user_id, canonical_url) where canonical_url is not null
+and external_id is null`, unique partial `(user_id, ats_provider, external_id) where
+external_id is not null`.
 RLS: standard.
 
 ### Extension-save duplicate prevention (`upsert_application_from_extension`, Phase 4C/4D)
 
 The extension's save flow (`POST /api/applications`) never does a plain client-side
-select-then-insert — it calls this `security invoker` Postgres function (pinned
-`search_path`), which atomically finds-or-creates the tracked application using a strict
-preference order, each tier scoped so it can never collapse two genuinely different
-applications:
+select-then-insert — it calls **`upsert_application_with_snapshot`** (Phase 5A, migration
+`0010`), a separately-named wrapper that captures/reuses the immutable job snapshot (see below)
+and then calls this `security invoker` Postgres function verbatim, unchanged, inside the same
+transaction. (A new, separately-named wrapper rather than adding parameters to this function
+in place — `CREATE OR REPLACE FUNCTION` cannot change an existing function's argument list
+without creating an ambiguous PostgREST overload.) `upsert_application_from_extension` itself
+atomically finds-or-creates the tracked application using a strict preference order, each tier
+scoped so it can never collapse two genuinely different applications:
 
 1. **`(user_id, ats_provider, external_id)`** — the strongest signal, when a requisition ID is
    available.
@@ -267,10 +273,172 @@ dedup key. Verified against a real Postgres instance: create, repeated-save-upda
 per-tier separation, 8-way true concurrent saves (both keyed tiers), status non-regression,
 and job-ownership rejection all pass — see `docs/IMPLEMENTATION_PLAN.md` Phase 4D.
 
+**Phase 5A security fix**: `upsert_application_from_extension` is now granted to
+`service_role` only (`revoke ... from public, anon, authenticated`) — previously it was also
+granted to `authenticated`, which meant a signed-in user could call it directly via
+`supabase.rpc(...)` with a `p_user_id` of their choosing; since the function only re-verifies
+"does `p_job_id` belong to `p_user_id`" (not "is the caller actually `p_user_id`"), this was a
+confused-deputy privilege-escalation path against any job whose id an attacker could learn.
+The same server-only grant pattern is applied to every Phase 5A function below.
+
 Approved/edited generated answers are linked to the saved application by updating the
 *existing* `generated_answers` row (`user_decision`, `final_text`, `application_id` —
 `recordOwnGeneratedAnswerDecision`, scoped by `user_id` *and* `job_id`) rather than inserting a
 new row, so repeated saves never duplicate answer-usage records.
+
+### `job_snapshots` (Phase 5A)
+
+Immutable, versioned archive of a job posting's content, captured at save time — the "jobs"
+table is mutable (re-analysis overwrites it), so without this table the exact posting an
+application was based on could silently disappear or change out from under it.
+
+| column                        | type              | notes                                                                      |
+| ------------------------------ | ----------------- | --------------------------------------------------------------------------------- |
+| `id`                           | `uuid pk`          |                                                                             |
+| `user_id`                      | `uuid not null references auth.users(id) on delete cascade` |               |
+| `source_job_id`                | `uuid not null`    | **not a foreign key, deliberately** — lineage only; see "Immutability" below |
+| `company`, `title`             | `text not null`    |                                                                             |
+| `location`, `employment_type`, `source_url`, `external_id`, `description` | `text` |                                                          |
+| `required_qualifications`, `preferred_qualifications`, `responsibilities`, `skills`, `locations` | `text[]` | |
+| `salary_min`, `salary_max`     | `numeric`          | nullable — not currently extracted, see "Field-source honesty" below        |
+| `salary_currency`, `work_mode`, `remote_location_restrictions`, `work_authorization_language`, `source_type` | `text` | all nullable, same reason |
+| `content_fingerprint`          | `text not null`    | `"v1:" + sha256hex` of the canonicalized content — see "Fingerprint" below   |
+| `content_truncated`            | `boolean not null default false` | true if any field was cut down to its storage cap                  |
+| `truncated_fields`             | `text[] not null default '{}'` | which fields, so the UI can show an honest notice, never silently present a truncated posting as complete |
+| `captured_at`, `created_at`    | `timestamptz`      |                                                                             |
+
+Indexes: unique `(user_id, source_job_id, content_fingerprint)` (dedup/versioning key),
+`(user_id)`, `(source_job_id)`.
+
+**Immutability, enforced at the database level, not by convention**: RLS grants `authenticated`
+**select only** — no insert/update/delete policy at all, since a direct insert would bypass
+sanitization/fingerprinting/capture rules entirely. A `before update` trigger
+(`reject_immutable_row_mutation`) unconditionally rejects every update, for *every* role
+including `service_role` — RLS bypass does not bypass triggers. This is also why
+`source_job_id` has no foreign key: `jobs(id) on delete set null` would require the FK
+enforcement mechanism to issue an `UPDATE` against this table when a `jobs` row is deleted,
+which the immutability trigger would reject — removing the FK (keeping the column as plain,
+permanent lineage metadata, `not null` since every real capture path starts from a verified
+job) resolves the conflict entirely rather than special-casing the trigger.
+
+**Fingerprint**: every stored content field (including `source_url`/`external_id` — excluding
+them would let a save with genuinely different values silently reuse an old row) is
+NFC-normalized, whitespace-collapsed (case preserved — "US" and "us" are not the same),
+serialized as a fixed-key-order JSON object, SHA-256'd, and prefixed `"v1:"` so a future
+normalization change can never collide with an old row. A new row is inserted only when the
+fingerprint changes; an unchanged re-save reuses the existing row via
+`(user_id, source_job_id, content_fingerprint)`.
+
+**Field-source honesty**: `salary_*`, `work_mode`, `remote_location_restrictions`, and
+`work_authorization_language` are nullable and currently always `null` — no extractor
+populates them yet. The columns exist so a real extraction source can be wired up later without
+another migration, not because they're already populated.
+
+### `requirement_mapping_runs` (Phase 5A)
+
+One row per requirement-analysis attempt for a snapshot — `provider`/`model`/`prompt_version`
+live here, not duplicated onto every mapping row.
+
+| column                 | type    | notes                                                                    |
+| ----------------------- | ------- | --------------------------------------------------------------------------- |
+| `id`                    | `uuid pk` |                                                                         |
+| `user_id`               | `uuid not null references auth.users(id) on delete cascade` |           |
+| `job_snapshot_id`       | `uuid not null references job_snapshots(id) on delete cascade` (composite, see "Ownership" below) | |
+| `status`                | `text not null` | `PENDING, CURRENT, SUPERSEDED, FAILED`                                 |
+| `provider`, `model`, `prompt_version` | `text not null` |                                                         |
+| `retrieval_fact_count`  | `int not null default 0` |                                                                |
+| `failure_category`      | `text`  | `provider_error, validation_failed, refusal, rate_limited`; only set when `FAILED` |
+| `created_at`, `completed_at`, `failed_at` | `timestamptz` | exact valid combinations enforced by a CHECK constraint, see below |
+
+A CHECK constraint rules out every nonsensical status/timestamp combination (e.g. `PENDING`
+with `completed_at` set, or `SUPERSEDED` without one) at the database level. A **partial
+unique index** on `(job_snapshot_id) where status = 'CURRENT'` enforces at most one current
+run per snapshot — concurrent generation attempts also serialize on a row lock inside
+`promote_requirement_mapping_run` (below), so this index is a second, independent guarantee,
+not the only one. `SUPERSEDED`/`FAILED` runs are retained (not deleted) for audit; only the
+`CURRENT` run is ever surfaced to the UI. RLS: `authenticated` select-only, same reasoning as
+`job_snapshots` — no blanket update-blocking trigger here, though, since this table has a
+genuine, bounded, RPC-mediated status lifecycle (unlike the two immutable tables).
+
+### `requirement_evidence_mappings` (Phase 5A)
+
+Explainable per-requirement evidence, generated by `packages/ai`'s
+`generate-requirement-mapping.ts` — the Phase 5A analog of `generated_answers`, but for "does
+my background cover what this posting asks for" rather than one form field.
+
+| column                    | type    | notes                                                                 |
+| -------------------------- | ------- | -------------------------------------------------------------------------- |
+| `id`                        | `uuid pk` |                                                                       |
+| `user_id`                   | `uuid not null references auth.users(id) on delete cascade` |         |
+| `run_id`                    | `uuid not null references requirement_mapping_runs(id) on delete cascade` (composite) | |
+| `requirement_text`          | `text not null`, ≤500 chars |                                                         |
+| `requirement_fingerprint`   | `text not null` | dedup key within a run — `unique (run_id, requirement_fingerprint)` |
+| `requirement_category`      | `text`  | `SKILL, EXPERIENCE, EDUCATION, CERTIFICATION, WORK_AUTHORIZATION, LOCATION, LANGUAGE, OTHER` |
+| `required_or_preferred`     | `text not null` | `REQUIRED, PREFERRED`                                             |
+| `relationship`              | `text not null` | `DIRECT, EQUIVALENT, INFERRED, MISSING`                           |
+| `matched_facts`             | `jsonb not null default '[]'` | server-derived provenance, never model-generated — see below |
+| `explanation`               | `text not null`, ≤400 chars |                                                         |
+| `confidence`                | `numeric(3,2) not null` |                                                                 |
+| `requires_user_confirmation` | `boolean not null default true` | always `true` for `INFERRED` (CHECK constraint)      |
+
+Two CHECK constraints enforce structural invariants the database, not just the application,
+guarantees: `relationship = 'MISSING'` requires an *empty* `matched_facts`; every other
+relationship requires *at least one*. `relationship = 'INFERRED'` requires
+`requires_user_confirmation = true`. Immutable once written (same `before update` trigger
+pattern as `job_snapshots`) — a run's whole mapping set is inserted once, atomically, and never
+touched again; supersession happens on the *run*, not on individual mapping rows.
+
+**`matched_facts` provenance, not a bare `uuid[]`**: `[{"factId", "sourceTable", "factUpdatedAt"}, ...]`.
+Approved facts live across five heterogeneous tables (`candidate_facts`, `experiences`,
+`education`, `projects`, `skills`) with no common parent to foreign-key against, so — matching
+the precedent `generated_answers.source_fact_ids` already set — integrity is enforced by
+re-verification against live data (at both generation time and read time), not a DB-level FK.
+`(sourceTable, factId)` is always the real compound key; a bare `factId` is never treated as
+globally unique. `factUpdatedAt` reuses each fact table's existing `updated_at` column
+(maintained by the same `set_updated_at` trigger every table already has) as the version
+signal for detecting an edit since generation — deliberately not a new fact-content
+fingerprint. On read, each matched fact resolves to one of four distinct states — `valid`,
+`changed_since_analysis`, `unapproved`, `deleted` — never collapsed into a single boolean;
+fact *content* is never duplicated into this table, only id/table/timestamp.
+
+**Ownership, enforced structurally, not just in RPC code**: `applications.job_snapshot_id`,
+`requirement_mapping_runs.job_snapshot_id`, and
+`requirement_evidence_mappings.run_id` are all **composite foreign keys**
+(`(user_id, job_snapshot_id) references job_snapshots(user_id, id)`, etc. — each parent table
+carries a matching `unique (user_id, id)` constraint to support this). A child row naming a
+parent owned by a different user is rejected by the foreign key itself, not by application
+logic that could have a bug. `applications`' composite FK uses Postgres 15+'s column-scoped
+`on delete set null (job_snapshot_id)` so deleting a snapshot (not a capability this codebase
+exposes today, but the FK is written defensively) nulls only that one column, never
+`applications.user_id`.
+
+**Generation lifecycle**: user-triggered only (`POST /api/job-snapshots/:id/requirements`),
+never automatic on save. `create_pending_requirement_mapping_run` inserts a `PENDING` row
+before the Claude call; a failure calls `mark_requirement_mapping_run_failed` (idempotent — a
+duplicate report returns `false`, not an error) and never touches any mapping row, so a failed
+generation can never disturb the last valid `CURRENT` set. A success calls
+`promote_requirement_mapping_run`, which — inside one transaction — row-locks the snapshot,
+structurally validates every `matched_facts` entry (shape, allowed `sourceTable` values,
+UUID/timestamp validity, live ownership+approval re-check — defense-in-depth beneath the
+app-layer allowlist check `packages/ai` already performed), inserts the new mapping rows,
+supersedes whatever was `CURRENT`, and promotes the new run — all or nothing; there is no
+partial promotion.
+
+**Server-only functions**: `upsert_application_with_snapshot`,
+`create_pending_requirement_mapping_run`, `mark_requirement_mapping_run_failed`,
+`promote_requirement_mapping_run`, and the internal `_upsert_job_snapshot`/
+`_approved_fact_versions` helpers are all granted to `service_role` only (`revoke ... from
+public, anon, authenticated`) — the API routes that call them derive `user_id` from a verified
+session (cookie or extension bearer token) and pass it explicitly; nothing trusts a
+client-supplied id.
+
+**APPLIED snapshot-freezing**: `upsert_application_with_snapshot` only repoints
+`applications.job_snapshot_id` at the newly-captured snapshot when the application's status is
+still `SAVED` or `IN_PROGRESS`. Once it's `APPLIED` (or any later lifecycle state), the
+snapshot is still captured/deduped as usual, but the link is left untouched — an applied
+application's historical record can't be silently repointed at a different posting by an
+ordinary re-save. There is no amendment/correction workflow in Phase 5A; that's explicitly
+deferred to Phase 5B.
 
 ## `application_events`
 
@@ -432,3 +600,14 @@ create policy "delete own applications" on applications
 `packages/database` wraps every query so `user_id` is never taken from client input — it is
 always read from the verified session server-side, so RLS and the application-layer check
 agree by construction rather than by convention.
+
+**Deliberate exception (Phase 5A)**: `job_snapshots`, `requirement_mapping_runs`, and
+`requirement_evidence_mappings` ship with `select`-only RLS for `authenticated` — no
+`insert`/`update`/`delete` policy. All writes to these three tables happen exclusively through
+server-only Postgres functions (see "Server-only functions" above), which are granted to
+`service_role` only and bypass RLS entirely as a role property, so an RLS write policy for
+`authenticated` was never actually required for them to function — keeping one would only have
+opened a direct-PostgREST-write bypass around sanitization/fingerprinting/contract validation.
+`job_snapshots` and `requirement_evidence_mappings` additionally have a `before update` trigger
+blocking every update unconditionally, for every role — the true immutability guarantee, since
+RLS alone can't stop `service_role`.

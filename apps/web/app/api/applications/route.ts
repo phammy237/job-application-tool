@@ -4,9 +4,15 @@ import {
   getOwnJob,
   recordApplicationEvent,
   recordOwnGeneratedAnswerDecision,
-  upsertApplicationFromExtension,
+  upsertApplicationWithSnapshot,
 } from '@career-os/database';
-import { canonicalizeUrl, saveApplicationRequestSchema, uuidSchema } from '@career-os/shared';
+import {
+  canonicalizeUrl,
+  computeJobSnapshotFingerprint,
+  saveApplicationRequestSchema,
+  sanitizeJobSnapshotInput,
+  uuidSchema,
+} from '@career-os/shared';
 import { getUserIdFromExtensionToken } from '../../../lib/extension-auth';
 import { createAdminClient } from '../../../lib/supabase/admin';
 
@@ -62,14 +68,16 @@ export async function GET(request: Request) {
 }
 
 /**
- * Creates or updates the tracked application for a job (docs/IMPLEMENTATION_PLAN.md Phase 4C).
- * company/title/location/sourceUrl are read from the caller's own already-validated `jobs` row,
- * never from the request body — the extension only supplies jobId, status (SAVED/IN_PROGRESS
- * only; APPLIED is a separate endpoint), the sanitized autofill summary/unresolved-field list,
- * and references to generated_answers rows to mark decided. All matching/atomicity/status-
- * regression-guarding logic lives in upsert_application_from_extension
- * (supabase/migrations/0008_applications_extension_fields.sql); this route only validates,
- * derives the canonical URL, calls it, and links the decided answers afterward.
+ * Creates or updates the tracked application for a job, and captures an immutable job_snapshot
+ * alongside it (docs/IMPLEMENTATION_PLAN.md Phase 4C + Phase 5A). company/title/location/
+ * sourceUrl are read from the caller's own already-validated `jobs` row, never from the request
+ * body — the extension only supplies jobId, status (SAVED/IN_PROGRESS only; APPLIED is a separate
+ * endpoint), the sanitized autofill summary/unresolved-field list, and references to
+ * generated_answers rows to mark decided. All matching/atomicity/status-regression-guarding/
+ * snapshot-capture/APPLIED-freeze logic lives in upsert_application_with_snapshot
+ * (supabase/migrations/0010_job_snapshots_and_requirement_evidence.sql); this route only
+ * validates, sanitizes + fingerprints the snapshot content, derives the canonical URL, calls it,
+ * and links the decided answers afterward.
  */
 export async function POST(request: Request) {
   const headers = corsHeaders(request.headers.get('origin'));
@@ -96,12 +104,44 @@ export async function POST(request: Request) {
     );
   }
 
-  const result = await upsertApplicationFromExtension(supabase, userId, {
-    jobId: job.id,
+  // Salary/workMode/remoteLocationRestrictions/workAuthorizationLanguage/structured externalId
+  // are always null here — no current extractor populates them (docs/IMPLEMENTATION_PLAN.md's
+  // Phase 5A field-source audit); the columns exist, nullable, ready for a real extraction
+  // source later without another migration.
+  const { sanitized, contentTruncated, truncatedFields } = sanitizeJobSnapshotInput({
     company: job.company,
     title: job.title,
     location: job.location,
+    employmentType: job.employmentType,
+    sourceUrl: job.sourceUrl,
+    externalId: null,
+    description: job.description,
+    requiredQualifications: job.qualifications,
+    preferredQualifications: job.preferredQualifications,
+    responsibilities: job.responsibilities,
+    skills: job.skills,
+    salaryMin: null,
+    salaryMax: null,
+    salaryCurrency: null,
+    locations: job.location ? [job.location] : [],
+    workMode: null,
+    remoteLocationRestrictions: null,
+    workAuthorizationLanguage: null,
+    sourceType: job.platformType,
+  });
+  const contentFingerprint = await computeJobSnapshotFingerprint(sanitized, {
+    contentTruncated,
+    truncatedFields,
+  });
+
+  const result = await upsertApplicationWithSnapshot(supabase, userId, {
+    jobId: job.id,
     status: parsed.data.status,
+    snapshot: sanitized,
+    snapshotContentFingerprint: contentFingerprint,
+    snapshotContentTruncated: contentTruncated,
+    snapshotTruncatedFields: truncatedFields,
+    location: job.location,
     sourceUrl: job.sourceUrl,
     canonicalUrl: canonicalizeUrl(job.sourceUrl),
     atsProvider: job.platformType,
