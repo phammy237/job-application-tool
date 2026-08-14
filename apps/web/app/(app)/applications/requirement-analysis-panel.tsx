@@ -41,7 +41,18 @@ const VALIDITY_LABEL: Record<string, string> = {
  * fired on save. Every state below is fully wired to the real GET/POST /api/job-snapshots/:id/
  * requirements endpoints, not a placeholder.
  */
-export function RequirementAnalysisPanel({ jobSnapshotId }: { jobSnapshotId: string }) {
+export function RequirementAnalysisPanel({
+  jobSnapshotId,
+  contentTruncated = false,
+  truncatedFields = [],
+}: {
+  jobSnapshotId: string;
+  /** docs/IMPLEMENTATION_PLAN.md round-4 addendum §8 — the captured posting was too long to
+   * store in full. Shown as an honest notice, never silently presented as the complete
+   * posting. */
+  contentTruncated?: boolean;
+  truncatedFields?: string[];
+}) {
   const [load, setLoad] = useState<LoadState>({ status: 'loading' });
   const [generation, setGeneration] = useState<GenerationState>({ status: 'idle' });
 
@@ -105,6 +116,13 @@ export function RequirementAnalysisPanel({ jobSnapshotId }: { jobSnapshotId: str
           {isGenerating ? 'Analyzing…' : hasRun ? 'Regenerate' : 'Analyze requirements'}
         </Button>
       </div>
+
+      {contentTruncated ? (
+        <p className="text-muted-foreground text-xs">
+          This posting was too long to store in full — showing a truncated version
+          {truncatedFields.length > 0 ? ` (${truncatedFields.join(', ')})` : ''}.
+        </p>
+      ) : null}
 
       {generation.status === 'insufficient_facts' ? (
         <p className="text-muted-foreground text-sm">

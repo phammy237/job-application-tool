@@ -7,6 +7,12 @@ import { defineConfig } from 'vitest/config';
  * test/expect globals, which fail outside `playwright test`.
  */
 export default defineConfig({
+  // tsconfig.json sets "jsx": "preserve" for Next.js's own SWC compiler to handle — outside
+  // Next's build pipeline, Vitest's esbuild transform needs to be told explicitly to use the
+  // automatic JSX runtime, or component test files (*.test.tsx) fail with "React is not
+  // defined" (esbuild otherwise falls back to the classic transform, which requires React in
+  // scope even though this codebase never imports it manually).
+  esbuild: { jsx: 'automatic' },
   test: {
     exclude: ['node_modules/**', '.next/**', 'e2e/**'],
   },
