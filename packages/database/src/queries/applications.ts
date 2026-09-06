@@ -3,6 +3,7 @@ import {
   autofillSummarySchema,
   unresolvedFieldSummarySchema,
   type Application,
+  type ApplicationEventSource,
   type ApplicationInput,
   type ApplicationStatus,
   type AutofillSummary,
@@ -186,11 +187,19 @@ export async function updateOwnApplication(
  * used by the (future) Gmail sync path, which records its own events directly so it can
  * attach an email_signal_id. See docs/DATA_MODEL.md "application_events".
  */
+/**
+ * `source`/`emailSignalId` default to the manual-edit case (`USER`, no signal) — every existing
+ * call site keeps its current behavior unchanged. Gmail sync (both the auto-applied path in
+ * packages/email's sync.ts and the user-confirmed path in confirmOwnEmailSignal) passes
+ * `source: 'GMAIL_SYNC'` and its `emailSignalId` so the resulting application_events row is
+ * undoable via the existing revertApplicationEvent/RevertEventButton mechanism with no new code.
+ */
 export async function changeOwnApplicationStatus(
   supabase: CareerOsSupabaseClient,
   userId: string,
   id: string,
   toStatus: ApplicationStatus,
+  options?: { source?: ApplicationEventSource; emailSignalId?: string | null },
 ): Promise<Application> {
   const current = await getOwnApplication(supabase, userId, id);
   if (!current) {
@@ -213,7 +222,8 @@ export async function changeOwnApplicationStatus(
     eventType: 'STATUS_CHANGE',
     fromStatus: current.status,
     toStatus,
-    source: 'USER',
+    source: options?.source ?? 'USER',
+    emailSignalId: options?.emailSignalId ?? null,
   });
 
   return application;

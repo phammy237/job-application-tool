@@ -1,4 +1,4 @@
-import { getOwnApplication, listApplicationEvents } from '@career-os/database';
+import { getOwnApplication, getOwnJobSnapshot, listApplicationEvents } from '@career-os/database';
 import { APPLICATION_STATUSES } from '@career-os/shared';
 import { Button, Label, Select, StatusBadge, Textarea } from '@career-os/ui';
 import { notFound } from 'next/navigation';
@@ -23,6 +23,9 @@ export default async function ApplicationDetailPage({
     notFound();
   }
   const events = await listApplicationEvents(supabase, user.id, id);
+  const jobSnapshot = application.jobSnapshotId
+    ? await getOwnJobSnapshot(supabase, user.id, application.jobSnapshotId)
+    : null;
 
   return (
     <div className="max-w-2xl space-y-8">
@@ -109,7 +112,11 @@ export default async function ApplicationDetailPage({
       </section>
 
       {application.jobSnapshotId ? (
-        <RequirementAnalysisPanel jobSnapshotId={application.jobSnapshotId} />
+        <RequirementAnalysisPanel
+          jobSnapshotId={application.jobSnapshotId}
+          contentTruncated={jobSnapshot?.contentTruncated ?? false}
+          truncatedFields={jobSnapshot?.truncatedFields ?? []}
+        />
       ) : null}
 
       <section className="space-y-3">

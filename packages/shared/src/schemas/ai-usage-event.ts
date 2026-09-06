@@ -45,8 +45,14 @@ export type AiUsageEventEscalationReason = z.infer<typeof aiUsageEventEscalation
 
 /** 'requirement_mapping' added in migration 0010 (Phase 5A) — packages/ai's
  * generate-requirement-mapping.ts is this table's first real caller (generate-suggestion.ts still
- * has none — see the schema doc comment below). */
-export const aiUsageEventTaskTypeSchema = z.enum(['field_suggestion', 'requirement_mapping']);
+ * has none — see the schema doc comment below). 'email_classification' added in migration 0012
+ * (Phase 5) for packages/ai's generate-email-classification.ts, the Claude fallback used only for
+ * messages the deterministic classifier in packages/email can't confidently resolve. */
+export const aiUsageEventTaskTypeSchema = z.enum([
+  'field_suggestion',
+  'requirement_mapping',
+  'email_classification',
+]);
 export type AiUsageEventTaskType = z.infer<typeof aiUsageEventTaskTypeSchema>;
 
 /**

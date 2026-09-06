@@ -518,8 +518,11 @@ Indexes: `(user_id)`, unique `(token_hash)`. RLS: standard.
 | `scopes`                  | `text[] not null default '{}'`                              |                                                       |
 | `status`                  | `text not null default 'ACTIVE'`                            | `ACTIVE, DISCONNECTED, ERROR`                         |
 | `last_synced_at`          | `timestamptz`                                               |                                                       |
+| `created_at`              | `timestamptz not null default now()`                        |                                                       |
+| `updated_at`              | `timestamptz not null default now()`                        | tracks `status` transitions (e.g. a failed refresh moving to `ERROR`) |
 
-Unique: `(user_id, email_address)`. Indexes: `(user_id)`. RLS: standard.
+Unique: `(user_id, email_address)`, `(user_id, id)` (lets `email_signals` reference this table via
+a composite FK — see below). Indexes: `(user_id)`. RLS: standard.
 
 ## `email_signals`
 
@@ -529,7 +532,7 @@ Deliberately minimal — never full email bodies (see `docs/EMAIL_INTEGRATION.md
 | ------------------------ | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
 | `id`                     | `uuid pk`                                                          |                                                                                        |
 | `user_id`                | `uuid not null references auth.users(id) on delete cascade`        |                                                                                        |
-| `email_connection_id`    | `uuid not null references email_connections(id) on delete cascade` |                                                                                        |
+| `email_connection_id`    | `uuid not null`                                                    | composite FK `(user_id, email_connection_id) references email_connections(user_id, id) on delete cascade` — never a plain `id`-only reference, so a cross-user link is rejected by the database itself |
 | `provider_message_id`    | `text not null`                                                    | for dedup                                                                              |
 | `sender`                 | `text`                                                             |                                                                                        |
 | `sender_domain`          | `text`                                                             |                                                                                        |
@@ -539,6 +542,7 @@ Deliberately minimal — never full email bodies (see `docs/EMAIL_INTEGRATION.md
 | `classification`         | `text`                                                             | `APPLICATION_RECEIVED, ASSESSMENT, INTERVIEW, ACTION_REQUIRED, OFFER, REJECTED, OTHER` |
 | `confidence`             | `numeric(3,2)`                                                     |                                                                                        |
 | `evidence`               | `text`                                                             | short snippet/reason, not the full email                                               |
+| `confirmation_status`    | `text not null default 'PENDING'`                                  | `PENDING, CONFIRMED, DECLINED, AUTO_APPLIED, NOT_APPLICABLE` — tracks whether a below-threshold match has been reviewed, so a declined suggestion never resurfaces identically on a later sync. Same role as `generated_answers.user_decision`. `AUTO_APPLIED` is set at insert time for matches meeting the 0.85 auto-apply threshold (already written to `application_events`); `NOT_APPLICABLE` for a zero-match or `OTHER`-classified message. |
 | `processed_at`           | `timestamptz not null default now()`                               |                                                                                        |
 
 Unique: `(email_connection_id, provider_message_id)` — the dedup constraint referenced in

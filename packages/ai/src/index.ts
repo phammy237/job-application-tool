@@ -13,4 +13,6 @@ export type {
   GenerateRequirementMappingParams,
   GenerateRequirementMappingResult,
 } from './generate-requirement-mapping';
+export { classifyEmail } from './generate-email-classification';
+export type { ClassifyEmailParams, ClassifyEmailResult } from './generate-email-classification';
 export { NEVER_SUGGEST_CLASSIFICATIONS } from './config';

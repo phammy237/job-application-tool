@@ -24,4 +24,7 @@ export * from './queries/ai-usage-events';
 export * from './queries/job-snapshots';
 export * from './queries/requirement-mapping-runs';
 export * from './queries/requirement-evidence-mappings';
+export * from './queries/email-connections';
+export * from './queries/email-signals';
 export * from './crypto/extension-token';
+export * from './crypto/token-encryption';
