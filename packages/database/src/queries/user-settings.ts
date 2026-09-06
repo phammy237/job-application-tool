@@ -55,6 +55,26 @@ export async function getOrCreateOwnUserSettings(
 }
 
 /**
+ * Flips the per-user Gmail opt-in flag — set true by the OAuth callback on a successful connect
+ * (connecting Gmail *is* the opt-in action, per docs/USER_FLOWS.md §7; there is no separate
+ * settings toggle a user flips before connecting) and reset to false on disconnect. Distinct
+ * from the global `gmail_integration_enabled` feature flag, which is a kill switch independent
+ * of any single user's choice.
+ */
+export async function updateOwnGmailIntegrationEnabled(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+  enabled: boolean,
+): Promise<void> {
+  await getOrCreateOwnUserSettings(supabase, userId);
+  const { error } = await supabase
+    .from('user_settings')
+    .update({ gmail_integration_enabled: enabled })
+    .eq('user_id', userId);
+  assertNoError(error, 'updateOwnGmailIntegrationEnabled');
+}
+
+/**
  * Atomically checks-and-increments the caller's AI request usage via the
  * increment_ai_request_usage Postgres function (supabase/migrations/
  * 0004_increment_ai_request_usage.sql), which row-locks the user_settings row for the

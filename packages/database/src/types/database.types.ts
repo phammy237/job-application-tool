@@ -478,6 +478,52 @@ export interface Database {
         Update: Partial<Database['public']['Tables']['requirement_evidence_mappings']['Row']>;
         Relationships: [];
       };
+      email_connections: {
+        Row: {
+          id: string;
+          user_id: string;
+          provider: string;
+          email_address: string;
+          encrypted_refresh_token: string;
+          scopes: string[];
+          status: string;
+          last_synced_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['email_connections']['Row']> & {
+          user_id: string;
+          email_address: string;
+          encrypted_refresh_token: string;
+        };
+        Update: Partial<Database['public']['Tables']['email_connections']['Row']>;
+        Relationships: [];
+      };
+      email_signals: {
+        Row: {
+          id: string;
+          user_id: string;
+          email_connection_id: string;
+          provider_message_id: string;
+          sender: string | null;
+          sender_domain: string | null;
+          subject: string | null;
+          received_at: string | null;
+          matched_application_id: string | null;
+          classification: string | null;
+          confidence: number | null;
+          evidence: string | null;
+          confirmation_status: string;
+          processed_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['email_signals']['Row']> & {
+          user_id: string;
+          email_connection_id: string;
+          provider_message_id: string;
+        };
+        Update: Partial<Database['public']['Tables']['email_signals']['Row']>;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: {

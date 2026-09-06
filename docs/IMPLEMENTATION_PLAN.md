@@ -3,7 +3,7 @@
 This plan is deliberately sequential — each phase produces a working, testable slice, and no
 phase depends on a later phase's output.
 
-## Status (updated 2026-08-12)
+## Status (updated 2026-09-06)
 
 - [x] Phase 1 — Repository setup, authentication, database, candidate profile, manual tracker
 - [x] Phase 2 — Chrome extension shell, page extraction, generic form-field detection
@@ -14,7 +14,8 @@ phase depends on a later phase's output.
   - [x] Phase 4C — Application saving and tracker integration
   - [x] Phase 4D — End-to-end integration and safety verification
 - [x] Phase 5A — Opportunity intelligence foundation: immutable job snapshots, requirement-evidence mapping
-- [ ] Phase 5 — Manual Gmail synchronization, email classification, status matching
+- [x] Phase 5 — Manual Gmail synchronization, email classification, status matching (implemented;
+  real-database/live-OAuth verification still pending, see "Phase 5 verification status" below)
 - [ ] Phase 6 — Multi-user beta hardening, privacy controls, testing, deployment
 - [ ] Phase 7 — Optional mypham.space integration, public onboarding, future sharing
 
@@ -146,6 +147,50 @@ reproduced root cause rather than an assumed one.** It does not exercise the ext
 save/autofill code paths directly (no extension-level browser-automation harness exists in this
 repo yet); those paths are covered instead by the real-database RPC verification above plus the
 unit/integration suite (271+ tests, see the Phase 4D report for the exact final count).
+
+**Phase 5 shipped**: server-side Google OAuth (`packages/email`), AES-256-GCM refresh-token
+encryption (`packages/database/src/crypto/token-encryption.ts`, resolving the encryption-key
+question `docs/SECURITY_AND_PRIVACY.md` §12 had left open in favor of an application-level key
+over Supabase Vault), manual-only Gmail sync capped at 25 messages per click (no background jobs),
+a deterministic keyword classifier tried first (`packages/email/src/deterministic-classifier.ts`)
+with a Claude fallback for ambiguous messages only (`packages/ai/src/generate-email-classification.ts`,
+reusing the Phase 3/5A pipeline's rate-limiting, untrusted-content tagging, and rejection-gate
+conventions), and a weighted company/sender-domain/title matcher (`packages/email/src/matcher.ts`)
+against the user's tracked applications. High-confidence matches (`combinedConfidence >= 0.85`,
+never ambiguous) write directly to `application_events` with `source = 'GMAIL_SYNC'` and are
+undoable through the existing `revertApplicationEvent`/`RevertEventButton` mechanism with zero new
+UI code; below-threshold matches sit in a new `/settings` confirmation queue
+(`PATCH`-free — `POST /api/email-signals/:id/confirm`) until the user explicitly confirms or
+declines. New `email_connections`/`email_signals` tables (migration `0012`) ship with the standard
+four-policy RLS pattern (no service-role RPC boundary needed here, unlike Phase 5A — every write
+goes through a normal RLS-scoped web-session client since the extension is never involved), a
+composite `(user_id, id)` FK from `email_signals` to `email_connections`, and a `confirmation_status`
+column added beyond `docs/DATA_MODEL.md`'s original spec (documented there now) so a declined
+low-confidence match never resurfaces identically on a later sync. Connecting Gmail is itself the
+per-user opt-in (`user_settings.gmail_integration_enabled` flips true in the OAuth callback, false
+on disconnect) — the connect/callback routes gate only on the global `gmail_integration_enabled`
+feature flag, since gating them on the per-user flag too would make it impossible to ever opt in.
+
+**Verification status — honest, not rounded up.** Every touched package typechecks clean and the
+full unit suite passes (395 tests across all workspaces, 19 new: 13 deterministic-classifier
+fixture cases, 6 matcher scenarios covering clean/zero/ambiguous/domain-learned matches, plus 7
+`classifyEmail` pipeline tests and 6 token-encryption round-trip/tamper-detection tests already
+counted in `packages/ai`/`packages/database`'s totals), and `next lint` passes with zero warnings.
+What is **not** verified in this environment: the `0012` migration and its pgTAP suite
+(`supabase/tests/database/0018_email_connections_and_signals.test.sql`) have not been run against
+a real Postgres instance — this sandbox has neither Docker nor Podman, so `supabase start`/
+`supabase test db` cannot execute here, unlike Phase 4D/5A's verification which used a real
+disposable linked Supabase project. The SQL was written by directly mirroring `0001_init.sql`'s
+and `0010`'s exact patterns (table shape, RLS policies, composite FK, constraint-drop-and-recreate
+for the `ai_usage_events.task_type` check) rather than invented from scratch, but that is
+consistency with precedent, not proof it executes correctly. Likewise, no real Google OAuth
+client or test Gmail account was exercised end-to-end — the OAuth/Gmail-API request shapes
+(`packages/email/src/oauth.ts`, `gmail-client.ts`) were written directly against Google's
+documented REST contracts but never called against a live endpoint. Both gaps should be closed
+before this phase is exercised by a real user: run `supabase db push` (or `db reset`) plus
+`supabase test db` against a disposable linked project, and complete one real Connect → Sync →
+Confirm → Disconnect pass with a test Gmail account added to the OAuth consent screen's test-user
+list per `docs/EMAIL_INTEGRATION.md` §6.
 
 Update this checklist when a phase's definition of done is met and the next one starts —
 this is the single source of truth for "what phase are we on," so it needs to stay current,

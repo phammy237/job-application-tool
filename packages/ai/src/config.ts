@@ -44,3 +44,15 @@ export const REQUIREMENT_MAPPING_MAX_OUTPUT_TOKENS = 8192;
  * every run (requirement_mapping_runs.prompt_version) and every ai_usage_events row so past
  * generations stay attributable to the prompt that actually produced them. */
 export const REQUIREMENT_MAPPING_PROMPT_VERSION = 'requirement-evidence-v1';
+
+/**
+ * Phase 5 email-classification fallback (packages/ai/src/generate-email-classification.ts) —
+ * only called for messages packages/email's deterministic rules can't confidently resolve. A
+ * short, single-object structured-JSON response, so a small output-token budget is enough.
+ * EMAIL_SNIPPET_CHAR_CAP bounds worst-case injected content volume placed in the prompt, same
+ * pattern as JOB_DESCRIPTION_CHAR_CAP — email content is a stronger prompt-injection vector than
+ * a job posting (a sender fully controls text landing directly in the user's inbox).
+ */
+export const EMAIL_CLASSIFICATION_MAX_OUTPUT_TOKENS = 512;
+export const EMAIL_CLASSIFICATION_PROMPT_VERSION = 'email-classification-v1';
+export const EMAIL_SNIPPET_CHAR_CAP = 1000;

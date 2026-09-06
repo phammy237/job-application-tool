@@ -1,4 +1,9 @@
-import { MAX_OUTPUT_TOKENS, MODEL_ID, REQUIREMENT_MAPPING_MAX_OUTPUT_TOKENS } from '../config';
+import {
+  EMAIL_CLASSIFICATION_MAX_OUTPUT_TOKENS,
+  MAX_OUTPUT_TOKENS,
+  MODEL_ID,
+  REQUIREMENT_MAPPING_MAX_OUTPUT_TOKENS,
+} from '../config';
 import { getAnthropicClient } from './client';
 
 /**
@@ -144,6 +149,74 @@ export async function callClaudeForRequirementMapping(
       messages: [{ role: 'user', content: userText }],
       output_config: {
         format: { type: 'json_schema', schema: REQUIREMENT_MAPPING_JSON_SCHEMA },
+      },
+    });
+
+    if (response.stop_reason === 'refusal') {
+      return { status: 'refusal', category: response.stop_details?.category ?? null };
+    }
+
+    const textBlock = response.content.find((block) => block.type === 'text');
+    if (!textBlock || textBlock.type !== 'text') {
+      return { status: 'provider_error', message: 'No text content in Claude response' };
+    }
+    return { status: 'ok', rawText: textBlock.text };
+  } catch (error) {
+    return {
+      status: 'provider_error',
+      message: error instanceof Error ? error.message : 'Unknown Anthropic API error',
+    };
+  }
+}
+
+/**
+ * Mirrors emailClassificationContractSchema (packages/shared) — a single small object, unlike
+ * the array-shaped requirement-mapping contract.
+ */
+const EMAIL_CLASSIFICATION_JSON_SCHEMA = {
+  type: 'object',
+  properties: {
+    classification: {
+      type: 'string',
+      enum: [
+        'APPLICATION_RECEIVED',
+        'ASSESSMENT',
+        'INTERVIEW',
+        'ACTION_REQUIRED',
+        'OFFER',
+        'REJECTED',
+        'OTHER',
+      ],
+    },
+    confidence: { type: 'number' },
+    evidence: { type: 'string' },
+  },
+  required: ['classification', 'confidence', 'evidence'],
+  additionalProperties: false,
+} as const;
+
+/**
+ * Same no-tools/thinking-disabled/schema-constrained posture as the other two call* functions —
+ * the single biggest blast-radius reducer against prompt injection, which matters even more here
+ * since the untrusted content is a real third-party-authored email rather than a job posting (see
+ * build-email-classification-system-prompt.ts). A separate function rather than a
+ * generalized/parameterized one, same rationale as callClaudeForRequirementMapping's doc comment:
+ * each contract has its own shape and output-token budget, kept independent so a change to one
+ * call can never accidentally affect the others' already-verified behavior.
+ */
+export async function callClaudeForEmailClassification(
+  systemPrompt: string,
+  userText: string,
+): Promise<CallClaudeResult> {
+  try {
+    const response = await getAnthropicClient().messages.create({
+      model: MODEL_ID,
+      max_tokens: EMAIL_CLASSIFICATION_MAX_OUTPUT_TOKENS,
+      thinking: { type: 'disabled' },
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userText }],
+      output_config: {
+        format: { type: 'json_schema', schema: EMAIL_CLASSIFICATION_JSON_SCHEMA },
       },
     });
 
