@@ -14,8 +14,9 @@ phase depends on a later phase's output.
   - [x] Phase 4C — Application saving and tracker integration
   - [x] Phase 4D — End-to-end integration and safety verification
 - [x] Phase 5A — Opportunity intelligence foundation: immutable job snapshots, requirement-evidence mapping
-- [x] Phase 5 — Manual Gmail synchronization, email classification, status matching (implemented;
-  real-database/live-OAuth verification still pending, see "Phase 5 verification status" below)
+- [x] Phase 5 — Manual Gmail synchronization, email classification, status matching (migration +
+  pgTAP verified against a real linked Supabase project; live-OAuth/test-Gmail-account pass still
+  pending, see "Verification status" below)
 - [ ] Phase 6 — Multi-user beta hardening, privacy controls, testing, deployment
 - [ ] Phase 7 — Optional mypham.space integration, public onboarding, future sharing
 
@@ -176,21 +177,29 @@ full unit suite passes (395 tests across all workspaces, 19 new: 13 deterministi
 fixture cases, 6 matcher scenarios covering clean/zero/ambiguous/domain-learned matches, plus 7
 `classifyEmail` pipeline tests and 6 token-encryption round-trip/tamper-detection tests already
 counted in `packages/ai`/`packages/database`'s totals), and `next lint` passes with zero warnings.
-What is **not** verified in this environment: the `0012` migration and its pgTAP suite
-(`supabase/tests/database/0018_email_connections_and_signals.test.sql`) have not been run against
-a real Postgres instance — this sandbox has neither Docker nor Podman, so `supabase start`/
-`supabase test db` cannot execute here, unlike Phase 4D/5A's verification which used a real
-disposable linked Supabase project. The SQL was written by directly mirroring `0001_init.sql`'s
-and `0010`'s exact patterns (table shape, RLS policies, composite FK, constraint-drop-and-recreate
-for the `ai_usage_events.task_type` check) rather than invented from scratch, but that is
-consistency with precedent, not proof it executes correctly. Likewise, no real Google OAuth
-client or test Gmail account was exercised end-to-end — the OAuth/Gmail-API request shapes
-(`packages/email/src/oauth.ts`, `gmail-client.ts`) were written directly against Google's
-documented REST contracts but never called against a live endpoint. Both gaps should be closed
-before this phase is exercised by a real user: run `supabase db push` (or `db reset`) plus
-`supabase test db` against a disposable linked project, and complete one real Connect → Sync →
-Confirm → Disconnect pass with a test Gmail account added to the OAuth consent screen's test-user
-list per `docs/EMAIL_INTEGRATION.md` §6.
+
+Migration `0012` was pushed to and its pgTAP suite verified against the same real, previously-
+paused (restored for this session), linked Supabase project used in Phase 4D/5A's verification —
+`supabase db push --linked` applied cleanly, and 13/13 assertions in `supabase/tests/database/
+0018_email_connections_and_signals.test.sql` passed (`1..13`, all `ok`): cross-user RLS isolation
+on both new tables, both unique constraints (`(user_id, email_address)` and `(email_connection_id,
+provider_message_id)`), the composite `(user_id, email_connection_id)` FK rejecting a cross-owner
+connection reference, `application_events.email_signal_id` correctly nulling on the referenced
+signal's deletion, and `ai_usage_events` accepting `'email_classification'` as a `task_type`. This
+sandbox has neither Docker nor Podman, so `supabase test db`'s normal runner couldn't execute
+directly; the suite was instead run via `supabase db query --linked --file`, which only surfaces a
+final statement's result set, so every `is`/`throws_ok` call was captured into a session-local
+temp table and selected back as one result — the test file itself was not modified, only how its
+output was observed. The verification ran inside a `begin ... rollback` transaction (the test
+file's own structure), so no test data persists in the real database.
+
+What remains **not** verified: no real Google OAuth client or test Gmail account was exercised
+end-to-end — the OAuth/Gmail-API request shapes (`packages/email/src/oauth.ts`, `gmail-client.ts`)
+were written directly against Google's documented REST contracts but never called against a live
+endpoint, since that requires a real `GOOGLE_OAUTH_CLIENT_ID`/`SECRET` pair and a test Gmail
+account added to the consent screen's test-user list — neither exists in this environment. Before
+a real user exercises this phase: complete one real Connect → Sync → Confirm → Disconnect pass
+with a test Gmail account, per `docs/EMAIL_INTEGRATION.md` §6.
 
 Update this checklist when a phase's definition of done is met and the next one starts —
 this is the single source of truth for "what phase are we on," so it needs to stay current,
