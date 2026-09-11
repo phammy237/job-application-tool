@@ -1,13 +1,19 @@
-import { getOwnApplication, getOwnJobSnapshot, listApplicationEvents } from '@career-os/database';
-import { APPLICATION_STATUSES } from '@career-os/shared';
+import {
+  getOwnApplication,
+  getOwnJobSnapshot,
+  listApplicationEvents,
+} from '@career-os/database';
+import { CREATABLE_APPLICATION_STATUSES } from '@career-os/shared';
 import { Button, Label, Select, StatusBadge, Textarea } from '@career-os/ui';
 import { notFound } from 'next/navigation';
 import { requireUser } from '../../../../lib/auth';
 import { createClient } from '../../../../lib/supabase/server';
 import { changeApplicationStatus, updateApplicationNotes } from '../actions';
 import { DeleteApplicationButton } from '../delete-application-button';
+import { MarkAppliedPanel } from '../mark-applied-panel';
 import { RequirementAnalysisPanel } from '../requirement-analysis-panel';
 import { RevertEventButton } from '../revert-event-button';
+import { SubmissionPacketSection } from '../submission-packet-section';
 
 export default async function ApplicationDetailPage({
   params,
@@ -71,8 +77,11 @@ export default async function ApplicationDetailPage({
         </section>
       ) : null}
 
-      <section className="space-y-2">
+      <section className="space-y-3">
         <h2 className="text-muted-foreground text-sm font-medium">Status</h2>
+        {/* APPLIED is deliberately excluded from this generic control — it has its own dedicated
+            review flow below (docs/IMPLEMENTATION_PLAN.md Phase 5B.2H), since reaching APPLIED may
+            require reviewing and acknowledging consistency findings first. */}
         <form
           action={changeApplicationStatus.bind(null, application.id)}
           className="flex items-center gap-3"
@@ -83,10 +92,15 @@ export default async function ApplicationDetailPage({
           <Select
             id="status-select"
             name="status"
-            defaultValue={application.status}
+            defaultValue={
+              application.status === 'APPLIED' ? 'APPLIED' : application.status
+            }
             className="max-w-xs"
           >
-            {APPLICATION_STATUSES.map((status) => (
+            {application.status === 'APPLIED' ? (
+              <option value="APPLIED">APPLIED</option>
+            ) : null}
+            {CREATABLE_APPLICATION_STATUSES.map((status) => (
               <option key={status} value={status}>
                 {status}
               </option>
@@ -96,6 +110,10 @@ export default async function ApplicationDetailPage({
             Update status
           </Button>
         </form>
+
+        {application.status !== 'APPLIED' ? (
+          <MarkAppliedPanel applicationId={application.id} />
+        ) : null}
       </section>
 
       <section className="space-y-2">
@@ -116,6 +134,14 @@ export default async function ApplicationDetailPage({
           jobSnapshotId={application.jobSnapshotId}
           contentTruncated={jobSnapshot?.contentTruncated ?? false}
           truncatedFields={jobSnapshot?.truncatedFields ?? []}
+        />
+      ) : null}
+
+      {application.status === 'APPLIED' ? (
+        <SubmissionPacketSection
+          supabase={supabase}
+          userId={user.id}
+          applicationId={application.id}
         />
       ) : null}
 

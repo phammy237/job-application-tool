@@ -94,9 +94,13 @@ only → user reviews/edits/approves/skips each suggestion → extension fills o
 fields → user saves the opportunity to the dashboard (tracked as `SAVED` or `IN_PROGRESS` —
 this can happen before, during, or after filling, and repeated saves update the same tracked
 application rather than duplicating it) → user submits manually on the employer's own site,
-outside Career OS's control → user explicitly clicks **Mark as Applied** and confirms, which is
-the *only* action that ever changes the tracked status to `APPLIED` → optional Gmail sync
-proposes timeline updates for confirmation from there.
+outside Career OS's control → user explicitly clicks **Mark as Applied** and confirms — first
+passing a deterministic consistency check (Phase 5B.2: a contradiction between two of the
+application's own answers blocks outright; a difference between an answer and stored profile/
+evidence requires explicit per-finding acknowledgement, never pre-checked) — which is the _only_
+action that ever changes the tracked status to `APPLIED`, and which atomically creates one
+immutable historical record of what was actually submitted (Phase 5B.1's "submission packet") →
+optional Gmail sync proposes timeline updates for confirmation from there.
 
 Saving, autofilling, or completing every field never implies submission or `APPLIED` status —
 those are two independently human-triggered signals (the actual submit click happens on the

@@ -16,6 +16,10 @@ import { DatabaseError, assertNoError, unwrapRow } from '../errors';
 import type { Database, Json } from '../types/database.types';
 import type { CareerOsSupabaseClient } from '../types/client';
 import { recordApplicationEvent } from './application-events';
+import {
+  enforceConsistencyGate,
+  evaluateOwnConsistencyFindingsForAnswers,
+} from './consistency';
 import { listOwnGeneratedAnswersForApplication } from './generated-answers';
 import { getCurrentOwnRequirementMappingRun } from './requirement-mapping-runs';
 import { markApplicationAppliedAtomic } from './submission-packets';
@@ -463,35 +467,52 @@ export async function upsertApplicationWithSnapshot(
   };
 }
 
+export interface MarkOwnApplicationAppliedOptions {
+  /** Finding ids the caller has already shown the user and had them explicitly acknowledge —
+   * only ever consulted for WARNING-severity findings; a BLOCKING finding can never be satisfied
+   * this way no matter what is passed here (docs/IMPLEMENTATION_PLAN.md Phase 5B.2F). Ignored
+   * entirely on the idempotent-already-APPLIED path, since nothing is being (re-)submitted there. */
+  acknowledgedFindingIds?: string[];
+}
+
 /**
  * The one canonical operation for transitioning an application to APPLIED
- * (docs/IMPLEMENTATION_PLAN.md Phase 5B.0/5B.1) — the extension's PATCH /api/applications/:id/
- * mark-applied route and the dashboard's status-change action both call this exclusively;
- * neither implements any part of this transition's semantics itself. A separate, explicit
- * action from saving/filling (docs/IMPLEMENTATION_PLAN.md Phase 4C: "never infer APPLIED from
- * filling or detecting a submit button") — this function only ever runs from a real user click,
- * never automatically.
+ * (docs/IMPLEMENTATION_PLAN.md Phase 5B.0/5B.1/5B.2) — the extension's PATCH /api/applications/:id/
+ * mark-applied route and the dashboard's mark-applied action both call this exclusively; neither
+ * implements any part of this transition's semantics itself. A separate, explicit action from
+ * saving/filling (docs/IMPLEMENTATION_PLAN.md Phase 4C: "never infer APPLIED from filling or
+ * detecting a submit button") — this function only ever runs from a real user click, never
+ * automatically.
  *
  * As of Phase 5B.1 the actual transition — ownership check, `applied_at` preservation, at-most-
  * once submission-packet creation, status/pointer update, and conditional event recording — is
  * one atomic Postgres transaction (`mark_application_applied`, migration 0013), not a sequence of
- * separate client calls; this function's job is only to gather the trusted, already-persisted
- * content that goes *into* a newly-created packet and hand it to that RPC. `applied_at` still
- * represents when the application was *originally* submitted: the RPC sets it only the first time
- * (when still null) and preserves it on every later call, covering repeated mark-applied while
- * already APPLIED, APPLIED moving to a later status and back, and re-invoking this function after
- * such a round-trip. A `STATUS_CHANGE` event is only recorded on a real transition, matching the
- * existing "don't spam identical transitions" precedent in POST /api/applications.
+ * separate client calls; this function's job is to gather the trusted, already-persisted content
+ * that goes *into* a newly-created packet and hand it to that RPC. `applied_at` still represents
+ * when the application was *originally* submitted: the RPC sets it only the first time (when
+ * still null) and preserves it on every later call.
+ *
+ * As of Phase 5B.2, every real transition attempt (current status is not already APPLIED) is
+ * additionally gated by the deterministic consistency firewall: findings are recomputed here,
+ * authoritatively, from scratch — never trusted from an earlier GET /consistency-check or from
+ * anything the caller sends — via `enforceConsistencyGate`. A BLOCKING finding always throws
+ * `ConsistencyCheckFailedError` before any write is attempted; an unacknowledged WARNING finding
+ * does too. Only findings/acknowledgements that survive this gate are ever frozen into a newly-
+ * created packet — a reused packet (case 4: transitioning back into APPLIED) is never mutated
+ * with a later evaluation's findings, even though the gate still runs to decide whether *this*
+ * transition may proceed at all.
  *
  * A legacy application already APPLIED before Phase 5B.1 shipped has no packet and never gets one
  * fabricated from today's data on a repeated call (docs/IMPLEMENTATION_PLAN.md Phase 5B.1G) — the
  * RPC's own already-APPLIED branch is a pure no-op, so this function skips assembling any packet
- * content at all in that case rather than computing it and discarding it.
+ * content, and skips the consistency gate entirely, in that case (there is nothing new being
+ * submitted to check).
  */
 export async function markOwnApplicationApplied(
   supabase: CareerOsSupabaseClient,
   userId: string,
   id: string,
+  options: MarkOwnApplicationAppliedOptions = {},
 ): Promise<Application> {
   const current = await getOwnApplication(supabase, userId, id);
   if (!current) {
@@ -502,7 +523,8 @@ export async function markOwnApplicationApplied(
 
   if (current.status === 'APPLIED') {
     // Idempotent no-op — the RPC returns current state safely without touching anything. See the
-    // doc comment above: never assemble or freeze packet content for this case.
+    // doc comment above: never assemble or freeze packet content, and never run the consistency
+    // gate, for this case — nothing new is being submitted.
     await markApplicationAppliedAtomic(supabase, userId, id, {
       answersSnapshot: [] as unknown as Json,
       autofillSummary: null,
@@ -536,6 +558,18 @@ export async function markOwnApplicationApplied(
     confidence: a.confidence,
   }));
 
+  // Authoritative gate — recomputed now, from this same already-fetched generatedAnswers list,
+  // never trusted from the caller. Throws before any write below is ever attempted.
+  const findings = await evaluateOwnConsistencyFindingsForAnswers(
+    supabase,
+    userId,
+    generatedAnswers,
+  );
+  const consistencyAcknowledgements = enforceConsistencyGate(
+    findings,
+    options.acknowledgedFindingIds ?? [],
+  );
+
   const requirementMappingRun = current.jobSnapshotId
     ? await getCurrentOwnRequirementMappingRun(supabase, userId, current.jobSnapshotId)
     : null;
@@ -548,16 +582,16 @@ export async function markOwnApplicationApplied(
     answersSnapshot,
     autofillSummary: current.autofillSummary,
     unresolvedFields: current.unresolvedFields,
-    consistencyFindings: [],
-    consistencyAcknowledgements: [],
+    consistencyFindings: findings,
+    consistencyAcknowledgements,
   });
 
   await markApplicationAppliedAtomic(supabase, userId, id, {
     answersSnapshot: answersSnapshot as unknown as Json,
     autofillSummary: current.autofillSummary as unknown as Json | null,
     unresolvedFields: current.unresolvedFields as unknown as Json | null,
-    consistencyFindings: [] as unknown as Json,
-    consistencyAcknowledgements: [] as unknown as Json,
+    consistencyFindings: findings as unknown as Json,
+    consistencyAcknowledgements: consistencyAcknowledgements as unknown as Json,
     jobSnapshotId: current.jobSnapshotId,
     resumeId: current.resumeId,
     requirementMappingRunId: requirementMappingRun?.id ?? null,

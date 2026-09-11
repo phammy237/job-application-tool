@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   listOwnGeneratedAnswersForApplication: vi.fn(),
   getCurrentOwnRequirementMappingRun: vi.fn(),
   markApplicationAppliedAtomic: vi.fn(),
+  evaluateOwnConsistencyFindingsForAnswers: vi.fn(),
 }));
 
 vi.mock('./generated-answers', () => ({
@@ -22,6 +23,17 @@ vi.mock('./requirement-mapping-runs', () => ({
 vi.mock('./submission-packets', () => ({
   markApplicationAppliedAtomic: mocks.markApplicationAppliedAtomic,
 }));
+// Only the trusted-input assembly is mocked (controls which findings come back); the real,
+// pure enforceConsistencyGate is exercised as-is, so these orchestration tests also prove the
+// real gate logic actually runs — not just that something claiming to be it was called.
+vi.mock('./consistency', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./consistency')>();
+  return {
+    ...actual,
+    evaluateOwnConsistencyFindingsForAnswers:
+      mocks.evaluateOwnConsistencyFindingsForAnswers,
+  };
+});
 
 const {
   changeOwnApplicationStatus,
@@ -374,6 +386,7 @@ describe('markOwnApplicationApplied', () => {
     mocks.listOwnGeneratedAnswersForApplication.mockReset();
     mocks.getCurrentOwnRequirementMappingRun.mockReset();
     mocks.markApplicationAppliedAtomic.mockReset();
+    mocks.evaluateOwnConsistencyFindingsForAnswers.mockReset().mockResolvedValue([]);
   });
 
   /** getOwnApplication is called twice on a real transition (before, to read current state; and
@@ -565,6 +578,127 @@ describe('markOwnApplicationApplied', () => {
     ).rejects.toThrow(/not found or not owned/);
     expect(mocks.listOwnGeneratedAnswersForApplication).not.toHaveBeenCalled();
     expect(mocks.markApplicationAppliedAtomic).not.toHaveBeenCalled();
+  });
+
+  describe('the consistency gate (Phase 5B.2)', () => {
+    const BLOCKING_FINDING = {
+      id: 'blocking-1',
+      ruleId: 'ELIGIBILITY_SELF_CONTRADICTION' as const,
+      severity: 'BLOCKING' as const,
+      fieldALabel: 'A',
+      fieldASource: 'GENERATED_ANSWER' as const,
+      fieldAValue: 'Yes',
+      fieldBLabel: 'B',
+      fieldBSource: 'GENERATED_ANSWER' as const,
+      fieldBValue: 'No',
+      description: 'Contradiction',
+    };
+    const WARNING_FINDING = {
+      id: 'warning-1',
+      ruleId: 'GPA_MISMATCH' as const,
+      severity: 'WARNING' as const,
+      fieldALabel: 'GPA',
+      fieldASource: 'GENERATED_ANSWER' as const,
+      fieldAValue: '3.2',
+      fieldBLabel: 'GPA',
+      fieldBSource: 'PROFILE_EDUCATION' as const,
+      fieldBValue: '3.9',
+      description: 'Mismatch',
+    };
+
+    it('rejects a real transition when a BLOCKING finding exists, even if its id is passed as an acknowledgement', async () => {
+      const { supabase } = mockApplicationReads([{ ...BASE_ROW, status: 'IN_PROGRESS' }]);
+      mocks.listOwnGeneratedAnswersForApplication.mockResolvedValue([]);
+      mocks.evaluateOwnConsistencyFindingsForAnswers.mockResolvedValue([
+        BLOCKING_FINDING,
+      ]);
+
+      await expect(
+        markOwnApplicationApplied(supabase, USER_ID, APPLICATION_ID, {
+          acknowledgedFindingIds: [BLOCKING_FINDING.id],
+        }),
+      ).rejects.toMatchObject({
+        name: 'ConsistencyCheckFailedError',
+        reason: 'blocking_findings',
+      });
+      expect(mocks.markApplicationAppliedAtomic).not.toHaveBeenCalled();
+    });
+
+    it('rejects a real transition when a WARNING finding is not acknowledged', async () => {
+      const { supabase } = mockApplicationReads([{ ...BASE_ROW, status: 'IN_PROGRESS' }]);
+      mocks.listOwnGeneratedAnswersForApplication.mockResolvedValue([]);
+      mocks.evaluateOwnConsistencyFindingsForAnswers.mockResolvedValue([WARNING_FINDING]);
+
+      await expect(
+        markOwnApplicationApplied(supabase, USER_ID, APPLICATION_ID),
+      ).rejects.toMatchObject({
+        name: 'ConsistencyCheckFailedError',
+        reason: 'unacknowledged_warnings',
+      });
+      expect(mocks.markApplicationAppliedAtomic).not.toHaveBeenCalled();
+    });
+
+    it('a stale or invented acknowledgement id does not satisfy a real current warning', async () => {
+      const { supabase } = mockApplicationReads([{ ...BASE_ROW, status: 'IN_PROGRESS' }]);
+      mocks.listOwnGeneratedAnswersForApplication.mockResolvedValue([]);
+      mocks.evaluateOwnConsistencyFindingsForAnswers.mockResolvedValue([WARNING_FINDING]);
+
+      await expect(
+        markOwnApplicationApplied(supabase, USER_ID, APPLICATION_ID, {
+          acknowledgedFindingIds: ['some-other-stale-or-invented-id'],
+        }),
+      ).rejects.toMatchObject({ reason: 'unacknowledged_warnings' });
+      expect(mocks.markApplicationAppliedAtomic).not.toHaveBeenCalled();
+    });
+
+    it('succeeds and freezes an acknowledgement record when the WARNING finding is acknowledged by its real id', async () => {
+      const { supabase } = mockApplicationReads([
+        { ...BASE_ROW, status: 'IN_PROGRESS' },
+        { ...BASE_ROW, status: 'APPLIED' },
+      ]);
+      mocks.listOwnGeneratedAnswersForApplication.mockResolvedValue([]);
+      mocks.evaluateOwnConsistencyFindingsForAnswers.mockResolvedValue([WARNING_FINDING]);
+      mocks.markApplicationAppliedAtomic.mockResolvedValue({
+        applicationId: APPLICATION_ID,
+        status: 'APPLIED',
+        appliedAt: '2026-06-01T00:00:00.000Z',
+        previousStatus: 'IN_PROGRESS',
+        submissionPacketId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+        packetCreated: true,
+      });
+
+      await markOwnApplicationApplied(supabase, USER_ID, APPLICATION_ID, {
+        acknowledgedFindingIds: [WARNING_FINDING.id],
+      });
+
+      expect(mocks.markApplicationAppliedAtomic).toHaveBeenCalledWith(
+        supabase,
+        USER_ID,
+        APPLICATION_ID,
+        expect.objectContaining({
+          consistencyFindings: [WARNING_FINDING],
+          consistencyAcknowledgements: [
+            expect.objectContaining({ findingId: WARNING_FINDING.id }),
+          ],
+        }),
+      );
+    });
+
+    it('never runs the gate on the idempotent already-APPLIED path', async () => {
+      const { supabase } = mockApplicationReads([{ ...BASE_ROW, status: 'APPLIED' }]);
+      mocks.markApplicationAppliedAtomic.mockResolvedValue({
+        applicationId: APPLICATION_ID,
+        status: 'APPLIED',
+        appliedAt: '2026-01-01T00:00:00.000Z',
+        previousStatus: 'APPLIED',
+        submissionPacketId: null,
+        packetCreated: false,
+      });
+
+      await markOwnApplicationApplied(supabase, USER_ID, APPLICATION_ID);
+
+      expect(mocks.evaluateOwnConsistencyFindingsForAnswers).not.toHaveBeenCalled();
+    });
   });
 });
 

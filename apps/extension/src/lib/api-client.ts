@@ -1,8 +1,12 @@
 import {
+  consistencyBlockedResponseSchema,
+  consistencyCheckResponseSchema,
   generateSuggestionResponseSchema,
   saveApplicationResponseSchema,
   trackedApplicationResponseSchema,
   type AutofillSummary,
+  type ConsistencyBlockedResponse,
+  type ConsistencyCheckResponse,
   type FieldClassification,
   type GenerateSuggestionResponse,
   type JobExtractionPayload,
@@ -21,7 +25,8 @@ type AnsweredField = SaveApplicationRequest['answeredFields'][number];
  * to any other backend — no Supabase/Claude/Gmail credentials live here (see .eslintrc.json's
  * no-restricted-imports rule banning @career-os/database/ai/email from this package).
  */
-export const API_BASE_URL = import.meta.env.VITE_CAREER_OS_API_URL ?? 'https://apply.mypham.space';
+export const API_BASE_URL =
+  import.meta.env.VITE_CAREER_OS_API_URL ?? 'https://apply.mypham.space';
 
 class NotConnectedError extends Error {
   constructor() {
@@ -93,15 +98,23 @@ export async function requestSuggestion(
   if (!res.ok) {
     const body: unknown = await res.json().catch(() => null);
     const message =
-      body && typeof body === 'object' && 'error' in body && typeof body.error === 'string'
+      body &&
+      typeof body === 'object' &&
+      'error' in body &&
+      typeof body.error === 'string'
         ? body.error
         : `Request failed (status ${res.status}).`;
     return { status: 'provider_error', message };
   }
 
-  const parsed = generateSuggestionResponseSchema.safeParse(await res.json().catch(() => null));
+  const parsed = generateSuggestionResponseSchema.safeParse(
+    await res.json().catch(() => null),
+  );
   if (!parsed.success) {
-    return { status: 'provider_error', message: 'Unexpected response shape from the suggestions API.' };
+    return {
+      status: 'provider_error',
+      message: 'Unexpected response shape from the suggestions API.',
+    };
   }
   return parsed.data;
 }
@@ -112,13 +125,20 @@ export async function requestSuggestion(
  * not a blocking check, so a transient failure here shouldn't prevent the rest of the popup
  * from working.
  */
-export async function getTrackedApplication(jobId: string): Promise<TrackedApplicationResponse['application']> {
+export async function getTrackedApplication(
+  jobId: string,
+): Promise<TrackedApplicationResponse['application']> {
   try {
-    const res = await authorizedFetch(`/api/applications?jobId=${encodeURIComponent(jobId)}`, {
-      method: 'GET',
-    });
+    const res = await authorizedFetch(
+      `/api/applications?jobId=${encodeURIComponent(jobId)}`,
+      {
+        method: 'GET',
+      },
+    );
     if (!res.ok) return null;
-    const parsed = trackedApplicationResponseSchema.safeParse(await res.json().catch(() => null));
+    const parsed = trackedApplicationResponseSchema.safeParse(
+      await res.json().catch(() => null),
+    );
     return parsed.success ? parsed.data.application : null;
   } catch {
     return null;
@@ -152,36 +172,94 @@ export async function saveApplication(input: {
   if (!res.ok) {
     const body: unknown = await res.json().catch(() => null);
     const message =
-      body && typeof body === 'object' && 'error' in body && typeof body.error === 'string'
+      body &&
+      typeof body === 'object' &&
+      'error' in body &&
+      typeof body.error === 'string'
         ? body.error
         : `Request failed (status ${res.status}).`;
     return { status: 'error', message };
   }
 
-  const parsed = saveApplicationResponseSchema.safeParse(await res.json().catch(() => null));
+  const parsed = saveApplicationResponseSchema.safeParse(
+    await res.json().catch(() => null),
+  );
   if (!parsed.success) {
     return { status: 'error', message: 'Unexpected response shape from the save API.' };
   }
   return { status: 'ok', result: parsed.data };
 }
 
+/**
+ * Advisory-only (docs/IMPLEMENTATION_PLAN.md Phase 5B.2I) — read fresh right before showing the
+ * mark-applied confirm step, never cached, never trusted as authoritative; the PATCH mark-applied
+ * call below re-verifies everything server-side regardless of what this returned. Returns an
+ * empty findings list on any error so a transient failure here degrades to "proceed with the
+ * ordinary confirm," never blocks the user from even trying.
+ */
+export async function checkConsistency(
+  applicationId: string,
+): Promise<ConsistencyCheckResponse> {
+  try {
+    const res = await authorizedFetch(
+      `/api/applications/${applicationId}/consistency-check`,
+      {
+        method: 'GET',
+      },
+    );
+    if (!res.ok) return { findings: [], blockingCount: 0, warningCount: 0 };
+    const parsed = consistencyCheckResponseSchema.safeParse(
+      await res.json().catch(() => null),
+    );
+    return parsed.success
+      ? parsed.data
+      : { findings: [], blockingCount: 0, warningCount: 0 };
+  } catch {
+    return { findings: [], blockingCount: 0, warningCount: 0 };
+  }
+}
+
 export type MarkAppliedOutcome =
   | { status: 'ok'; appliedAt: string }
+  | { status: 'consistency_check_failed'; result: ConsistencyBlockedResponse }
   | { status: 'not_found' }
   | { status: 'error'; message: string };
 
-/** The extension's only path to APPLIED — a separate, explicit action from saving (see
- * apps/web/app/api/applications/[id]/mark-applied/route.ts). */
-export async function markApplied(applicationId: string): Promise<MarkAppliedOutcome> {
+/**
+ * The extension's only path to APPLIED — a separate, explicit action from saving (see
+ * apps/web/app/api/applications/[id]/mark-applied/route.ts). `acknowledgedFindingIds` carries
+ * only the ids of WARNING findings the popup already showed the user and had them explicitly
+ * check — this route never trusts findings/severity/values from the client; the server
+ * recomputes the whole gate itself (docs/IMPLEMENTATION_PLAN.md Phase 5B.2F).
+ */
+export async function markApplied(
+  applicationId: string,
+  acknowledgedFindingIds: string[] = [],
+): Promise<MarkAppliedOutcome> {
   const res = await authorizedFetch(`/api/applications/${applicationId}/mark-applied`, {
     method: 'PATCH',
+    body: JSON.stringify({ acknowledgedFindingIds }),
   });
 
   if (res.status === 404) return { status: 'not_found' };
+  if (res.status === 409) {
+    const parsed = consistencyBlockedResponseSchema.safeParse(
+      await res.json().catch(() => null),
+    );
+    if (parsed.success)
+      return { status: 'consistency_check_failed', result: parsed.data };
+    return {
+      status: 'error',
+      message: 'Unexpected response shape from the mark-applied API.',
+    };
+  }
   if (!res.ok) {
     const body: unknown = await res.json().catch(() => null);
     const message =
-      body && typeof body === 'object' && 'error' in body && typeof body.error === 'string'
+      body &&
+      typeof body === 'object' &&
+      'error' in body &&
+      typeof body.error === 'string'
         ? body.error
         : `Request failed (status ${res.status}).`;
     return { status: 'error', message };
@@ -189,7 +267,10 @@ export async function markApplied(applicationId: string): Promise<MarkAppliedOut
 
   const body = (await res.json().catch(() => null)) as { appliedAt?: unknown } | null;
   if (!body || typeof body.appliedAt !== 'string') {
-    return { status: 'error', message: 'Unexpected response shape from the mark-applied API.' };
+    return {
+      status: 'error',
+      message: 'Unexpected response shape from the mark-applied API.',
+    };
   }
   return { status: 'ok', appliedAt: body.appliedAt };
 }

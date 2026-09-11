@@ -87,15 +87,26 @@ false`, `visibleOnPublicProfile = false`. Nothing extracted is usable until step
 5. User completes any remaining fields manually and submits the application themselves, on
    the employer's own page — entirely outside Career OS's control; Career OS has no way to
    observe or influence that submit action.
-6. User explicitly clicks **Mark as Applied** in the popup (a dedicated action with its own
-   inline confirm step), or selects `APPLIED` from the status dropdown on the dashboard's
-   generic manual-status-change control (§6) — either way, an explicit, deliberate user action
-   is what sets status to `APPLIED`. It is never inferred from filling, saving, page
-   navigation, or detecting a submit button.
-6a. Once `APPLIED`, the application's linked snapshot (step 4) is frozen — an ordinary
+6. User explicitly clicks **Mark as Applied** in the popup, or the dashboard's dedicated
+   equivalent (`docs/IMPLEMENTATION_PLAN.md` Phase 5B.2 — the generic status dropdown no longer
+   offers `APPLIED` at all) — either way, an explicit, deliberate user action is what sets status
+   to `APPLIED`. It is never inferred from filling, saving, page navigation, or detecting a submit
+   button. Confirming first runs an advisory deterministic consistency check (Phase 5B.2): a
+   clean result proceeds straight through unchanged from earlier phases; a contradiction between
+   two of this application's own answers (e.g. two opposite eligibility answers) blocks outright
+   with no way to acknowledge past it — the underlying answer must be fixed first; a difference
+   between an answer and stored profile/evidence (e.g. a GPA or graduation date mismatch) is
+   shown for explicit, per-finding acknowledgement, never pre-checked, never blocking. The final
+   click is still re-verified authoritatively server-side regardless of what the advisory check
+   showed.
+   6a. Once `APPLIED`, the application's linked snapshot (step 4) is frozen — an ordinary
    re-save can never repoint it at a newer posting version, preserving the exact content the
    application was actually based on. There is no correction/amendment workflow for this in
-   Phase 5A; that's explicitly deferred.
+   Phase 5A; that's explicitly deferred. As of Phase 5B.1, this same moment also creates one
+   immutable submission packet — see `docs/DATA_MODEL.md` "submission_packets" — capturing the
+   reviewed answers, autofill summary, and any consistency findings/acknowledgements exactly as
+   they stood at that instant; a legacy application already `APPLIED` before Phase 5B.1 shipped
+   has no packet and never gets one fabricated from later data.
 
 ## 6. Reviewing applications on the dashboard
 

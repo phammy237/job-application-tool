@@ -71,8 +71,13 @@ export function App() {
             status={tracker.status}
             errorMessage={tracker.errorMessage}
             lastSavedAt={tracker.lastSavedAt}
+            reviewFindings={tracker.reviewFindings}
+            acknowledgedIds={tracker.acknowledgedIds}
             onSave={() => void tracker.save(review.fields, autofill.results)}
-            onMarkApplied={() => void tracker.markAsApplied()}
+            onStartMarkApplied={() => void tracker.startMarkAsApplied()}
+            onConfirmMarkApplied={() => void tracker.confirmMarkAsApplied()}
+            onToggleAcknowledgement={tracker.toggleAcknowledgement}
+            onCancelReview={tracker.cancelReview}
           />
         </>
       ) : null}

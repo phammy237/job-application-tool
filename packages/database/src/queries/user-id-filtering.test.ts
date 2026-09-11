@@ -16,8 +16,16 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
  * feature_flags is exempt — it is not a user-owned table (docs/DATA_MODEL.md). Co-located
  * *.test.ts files are exempt too — they exercise a query module's own user_id filtering with a
  * fake client rather than containing a `.eq('user_id', ...)` call themselves.
+ *
+ * consistency.ts (Phase 5B.2) is exempt for a different, still-narrow reason: it issues no
+ * direct table query of its own at all — it is a pure orchestrator that composes
+ * already-independently-scoped functions from other files in this directory
+ * (listOwnGeneratedAnswersForApplication, listOwnEducation, listOwnExperiences, getOwnProfile),
+ * each of which is itself covered by this same test. There is nothing for a literal
+ * `.eq('user_id', ...)` pattern to match here without adding a redundant, unused filter just to
+ * satisfy this scan.
  */
-const EXEMPT_FILES = new Set(['feature-flags.ts']);
+const EXEMPT_FILES = new Set(['feature-flags.ts', 'consistency.ts']);
 
 describe('every user-scoped query filters by user_id explicitly', () => {
   const queriesDir = __dirname;

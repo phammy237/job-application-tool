@@ -21,20 +21,19 @@ phase depends on a later phase's output.
       plumbing for 5B.1/5B.2, no schema change — see "Phase 5B.0" below)
 - [x] Phase 5B.1 — Frozen submission packets + the atomic canonical APPLIED transition (migration
       0013, pgTAP-verified live against the linked Supabase project — see "Phase 5B.1" below)
+- [x] Phase 5B.2 — Deterministic consistency firewall, wired into the canonical transition's gate,
+      dashboard + extension review UI (see "Phase 5B.2" below)
 - [ ] Phase 6 — Multi-user beta hardening, privacy controls, testing, deployment
 - [ ] Phase 7 — Optional mypham.space integration, public onboarding, future sharing
 
-**Not yet started:** Phase 5B.2 onward (the deterministic consistency firewall, the explicit
-AI-assisted unsupported-claim check, and the historical submission viewer) and Phase 5C (next
+**Not yet started:** Phase 5B.3 (explicit AI-assisted unsupported-claim check) and Phase 5C (next
 actions/deadlines, dashboard overview) — both explicitly out of scope for 5A, unscoped beyond
 their names, and not yet slotted into the numbered sequence relative to Phase 5's Gmail work.
-That ordering decision is intentionally left open rather than assumed here. Phase 5B.1 (this
-update) ships the immutable packet and the atomic transition it attaches to — **no consistency
-findings/acknowledgements are computed or gated on yet** (`mark_application_applied` accepts
-them as parameters and freezes whatever it's given, but every caller today always passes empty
-arrays — the deterministic rule engine that would populate them is Phase 5B.2's job), **no
-consistency-check endpoint, no AI unsupported-claim checking, no "what you submitted" viewer, and
-no résumé selection exist yet.** Those remain fully unimplemented, per the staged 5B plan.
+That ordering decision is intentionally left open rather than assumed here. Phase 5B.4 (the
+historical submission viewer) has a working first version already, built alongside 5B.1/5B.2's UI
+work rather than as a separately-staged slice — see "Phase 5B.2" below for what shipped and what
+is still explicitly deferred to a dedicated 5B.4 pass. **No AI-assisted unsupported-claim
+checking exists yet** — every finding today is purely deterministic.
 
 Phase 4A shipped: the popup classifies every detected field into a review state (sensitive /
 unsupported / already-completed / pending-suggestion / ready / suggested / needs-input),
@@ -1219,3 +1218,229 @@ this same commit's tree for Phase 5B.2 to wire up next, but nothing calls it yet
 built: the consistency-check endpoint, the mark-applied gate/acknowledgement flow, any dashboard
 or extension UI for warnings/blockers, AI-assisted unsupported-claim checking, the "what you
 submitted" viewer, and résumé-version selection.
+
+---
+
+## Phase 5B.2 — Deterministic consistency firewall
+
+**Goal**: before a _new_ canonical submission is marked APPLIED, detect meaningful
+contradictions between the persisted application answers and trusted persisted candidate/
+profile/evidence data — without turning ordinary wording differences into errors. BLOCKING:
+two current answers inside the same application are structurally contradictory and cannot both
+be true. WARNING: an answer differs from stored profile/evidence, where either side might
+legitimately be stale or intentionally different. Warnings can be acknowledged; BLOCKING
+findings cannot.
+
+### Rule engine (`packages/shared/src/lib/consistency-rules.ts`, shipped in the 5B.1 commit, wired
+
+up here)
+
+Pure, deterministic, no database/network/Claude/embeddings access — a plain function of its
+arguments. Deterministic finding ids (`computeFindingId`, a non-cryptographic FNV-1a hash of the
+rule id + normalized comparison identity — never `randomUUID()`) so an acknowledgement collected
+from an earlier `GET /consistency-check` still matches the identical finding recomputed a moment
+later at the authoritative `PATCH /mark-applied`, as long as nothing actually changed.
+
+**Rules implemented** (all WARNING unless noted):
+
+- `GRADUATION_DATE_MISMATCH` / `GPA_MISMATCH` — only when **exactly one** approved education
+  record exists (never fuzzy-selects between several); dates compared at month granularity via
+  `extractMonthYear` (recognizes "May 2028"/"05/2028"/"2028-05"/"2028-05-01" as equal; a bare
+  year is ambiguous and never extracted); GPA requires an explicit decimal point to be extracted
+  at all ("4" alone is too ambiguous — years of experience, a 1-5 rating, etc. are equally
+  plausible readings).
+- `EMPLOYMENT_DATE_MISMATCH` / `JOB_TITLE_COMPANY_MISMATCH` — only when **exactly one** approved
+  experience record exists, and only for a field whose own label names what it's asking for
+  ("company"/"employer", "title"/"position" — deliberately excludes a looser word like "role",
+  which is as likely to be a narrative free-response prompt as a structured title field). Company
+  names normalize through `normalizeCompanyName` (strips Inc/LLC/Corp/etc. and punctuation) with
+  containment treated as equivalence — "Deloitte" and "Deloitte LLP" never mismatch.
+- `ELIGIBILITY_SELF_CONTRADICTION` (**BLOCKING**) / `ELIGIBILITY_PROFILE_MISMATCH` (WARNING) —
+  "question identity" is never inferred from label text or token overlap (no fuzzy semantic
+  guess): two answers are only ever compared for self-contradiction when they share the exact
+  same, already-trustworthy `fieldClassification` (`WORK_AUTHORIZATION` or `RELOCATION`), which
+  Career OS already assigns deterministically at field-detection time — a structural proxy for
+  "these are the same kind of eligibility question," not a guess. Polarity extraction
+  (`extractYesNoPolarity`) is deliberately narrow: only a bare "yes"/"no" or a sentence's first
+  word — never an attempt to parse "I do not require sponsorship"-style double-negative phrasing,
+  since a wrong guess there would be a BLOCKING-severity mistake. Everything else resolves to
+  `UNKNOWN`, which never produces a finding. A self-contradiction inside the one application
+  takes priority over a profile-mismatch check for the same classification (reporting both would
+  be noise once the BLOCKING finding already exists).
+- `RELOCATION_MISMATCH` is folded into `ELIGIBILITY_PROFILE_MISMATCH` above rather than a
+  separate rule id — `profiles.relocationPreference` is a real, trustworthy stored field, so it
+  gets the identical conservative polarity-comparison treatment as work authorization, not a
+  bespoke rule.
+- `UNSUPPORTED_CLAIM` is reserved in the shared enum (`consistencyRuleIdSchema`) but **not
+  implemented as a deterministic rule** — free-text "does this claim have evidence" support-
+  checking needs semantic judgment a keyword heuristic can't safely provide; it's Phase 5B.3's
+  job, explicitly AI-assisted and always WARNING (`AI_ASSISTED_RULE_IDS`), never BLOCKING.
+
+44 unit tests per rule/helper (definite positive, definite negative/equivalent-formatting,
+ambiguous-input, no-false-positive, and finding-id-stability cases for every rule; dedicated
+normalization tests for dates/GPA/companies/titles/yes-no).
+
+### Trusted input assembler + gate (`packages/database/src/queries/consistency.ts`)
+
+`evaluateOwnConsistencyFindings(ForAnswers)` gathers only already-persisted, already-approved
+data: this application's own `generated_answers` rows filtered to `userDecision IN ('APPROVED',
+'EDITED')` (a SKIPPED or never-decided suggestion was never going to be submitted, so checking it
+would be checking content that isn't real; uses `finalText` when edited, else the original AI
+answer), and `education`/`experiences` filtered to `userApproved && approvedForApplications`
+(docs/AI_GROUNDING.md's standing rule, applied here even though this isn't an AI call — an
+unreviewed record shouldn't be trusted enough to contradict a real answer). Exempted from the
+repo's `user-id-filtering.test.ts` structural guard with an explicit, documented reason: it issues
+no direct table query of its own, only composes already-independently-scoped functions.
+
+`enforceConsistencyGate(findings, acknowledgedFindingIds)` is the actual authorization boundary:
+any BLOCKING finding rejects immediately, before `acknowledgedFindingIds` is even consulted — a
+BLOCKING finding can never be satisfied by anything a caller sends, including its own id. A
+WARNING finding is satisfied only if its exact, freshly-recomputed id appears in
+`acknowledgedFindingIds`; a stale id from an earlier GET, or an invented one, simply isn't in the
+current findings list and can never suppress a real current warning. Throws
+`ConsistencyCheckFailedError` (`reason: 'blocking_findings' | 'unacknowledged_warnings'`, carrying
+the full findings list) otherwise; returns the acknowledgement records to freeze (with a fresh
+`acknowledgedAt` timestamp) only for findings actually satisfied this way.
+
+### Wired into `markOwnApplicationApplied` (the one integration seam, unchanged in shape since
+
+5B.0)
+
+Every **real transition attempt** (current status is not already `APPLIED` — covers both a first
+transition and reaching `APPLIED` again after moving away) now: fetches `generated_answers` once
+(reused for both the packet's `answers_snapshot` and the gate's input — no duplicate fetch),
+recomputes findings via `evaluateOwnConsistencyFindingsForAnswers`, and calls
+`enforceConsistencyGate` — authoritatively, from scratch, never trusting anything the caller
+sends beyond which ids it acknowledged. The idempotent already-`APPLIED` path (and the legacy-
+APPLIED-no-packet path, which is the same case) skips the gate entirely — nothing new is being
+submitted, so there's nothing to check. A packet that already exists (reaching `APPLIED` again
+after moving away) is still gated on **this** transition's current findings — the gate can still
+block a re-submission — but the packet itself is never mutated with a later evaluation's result;
+only a **newly-created** packet ever freezes `consistencyFindings`/`consistencyAcknowledgements`.
+Live-pgTAP-verified: a non-empty findings/acknowledgements payload is frozen into a newly-created
+packet exactly as given, including the acknowledgement's timestamp (assertions 29–31 in
+`0019_submission_packets.test.sql`).
+
+### API — GET is advisory, PATCH is authoritative
+
+`GET /api/applications/:id/consistency-check` (cookie-session auth, same posture as the packet
+route) — fresh recomputation on every call, nothing persisted, returns
+`{findings, blockingCount, warningCount}`. Exists purely for UX; deliberately not authoritative.
+
+`PATCH /api/applications/:id/mark-applied` — body is now optional but may carry
+`{acknowledgedFindingIds}` (`markAppliedRequestSchema`, defaults to `[]` on a missing/malformed
+body — correct for a clean application and fully backward-compatible with the extension's
+pre-5B.2 bodyless calls). Catches `ConsistencyCheckFailedError` specifically and returns
+`consistencyBlockedResponseSchema`'s shape at **409**, distinct from the existing 404
+not-found/not-owned response. This closes the GET/PATCH race by construction: the PATCH call
+never reads what GET returned, it recomputes independently at the moment it actually matters.
+
+### Dashboard UI
+
+The application detail page's generic status `<select>` no longer offers `APPLIED` at all
+(`CREATABLE_APPLICATION_STATUSES`, reused from Phase 5B.0's create-form exclusion — the same
+constant, a different call site) — `changeApplicationStatus`'s existing APPLIED branch (Phase
+5B.0) stays as defense-in-depth only, since an HTML form is not a security boundary, but the
+primary path is now a dedicated `MarkAppliedPanel` client component: idle → "Mark as Applied"
+click → `GET /consistency-check` → clean result submits immediately (identical to pre-5B.2
+behavior), otherwise renders BLOCKING findings (no acknowledgement control at all) and WARNING
+findings (one unchecked-by-default checkbox each) → a new `markApplicationApplied` server action
+(distinct from `changeApplicationStatus`) is called directly from the client component with the
+acknowledged ids, returning a discriminated result instead of throwing across the server/client
+boundary — a `consistency_check_failed` result re-renders the review panel with the _server's_
+findings, never the earlier client-fetched ones.
+
+**A real bug found and fixed while wiring this up**: `changeApplicationStatus`'s APPLIED branch
+was still passing the plain session-scoped Supabase client into `markOwnApplicationApplied` —
+correct before Phase 5B.1, but `mark_application_applied` has been a `service_role`-only RPC
+since that migration, so this would have failed with a permission-denied error the first time
+anyone actually clicked through the dashboard's status dropdown to APPLIED. No existing test
+caught it, because `actions.test.ts` mocked `@career-os/database` entirely and only asserted
+"was `markOwnApplicationApplied` called," never "called with _which_ client" — exactly the class
+of gap this repo's own docs have flagged before as something only real integration exercise
+catches. Fixed by switching that branch (and the new `markApplicationApplied` action) to
+`createAdminClient()`, the same pattern already established for
+`apps/web/app/(app)/settings/actions.ts`; a new test now explicitly asserts which client each
+branch receives, not just that a function was called.
+
+### Extension UI
+
+`useApplicationTracker` gained `reviewFindings`/`acknowledgedIds` state and
+`startMarkAsApplied`/`confirmMarkAsApplied`/`toggleAcknowledgement`/`cancelReview`. The popup's
+existing confirm step ("Mark this application as applied?") now calls `startMarkAsApplied`, which
+advisory-checks consistency first and either proceeds straight through (clean) or surfaces a
+compact review step in `ApplicationTracker.tsx` — BLOCKING findings shown with no acknowledgement
+control, WARNING findings with a checkbox each, confirm disabled until every current warning is
+checked. No consistency-rule logic exists anywhere in the extension — every finding rendered came
+from the server, and a `consistency_check_failed` PATCH response replaces whatever the earlier
+GET showed, same "server is authoritative" posture as the dashboard. No new extension permission
+was added (manifest untouched) — this only uses the popup's existing authenticated-fetch
+infrastructure. `@testing-library/react`/`@testing-library/jest-dom` were added as explicit
+devDependencies (already present via npm workspace hoisting from `apps/web`, now correctly
+declared rather than relied on implicitly) so `useApplicationTracker`'s new flow could be tested
+with `renderHook`.
+
+### "What you submitted" viewer — a first version shipped alongside this phase
+
+Not originally staged until 5B.4, but small enough to build now that the packet and findings
+exist: `SubmissionPacketSection` (server component, application detail page, rendered only when
+`status === 'APPLIED'`) shows `applied_at`, the reviewed answers (with an explicit, honest note
+when there are none — "Career OS has no literal field values recorded... never records what you
+typed directly into the employer's page"), autofill summary, consistency findings with
+acknowledgement timestamps, and résumé state ("not recorded" when `resumeId` is null, which is
+every application today). A legacy APPLIED application with no packet gets the honest, explicit
+"marked applied before submission snapshots were introduced" message — never an offer to generate
+one from current data. **Still deferred to a dedicated Phase 5B.4 pass**: a requirement-mapping-
+run summary in the viewer, and any polish beyond this first pass.
+
+### Files changed
+
+- `packages/database/src/queries/consistency.ts` (+ test, new) — assembler, gate,
+  `ConsistencyCheckFailedError`
+- `packages/database/src/queries/applications.ts` — `markOwnApplicationApplied` gate wiring
+- `packages/database/src/queries/user-id-filtering.test.ts` — documented `consistency.ts`
+  exemption
+- `apps/web/app/api/applications/[id]/consistency-check/route.ts` (+ test, new)
+- `apps/web/app/api/applications/[id]/mark-applied/route.ts` (+ test) — acknowledgement body, 409
+  handling
+- `apps/web/app/(app)/applications/actions.ts` — admin-client fix, new `markApplicationApplied`
+  action
+- `apps/web/app/(app)/applications/actions.test.ts` — client-identity assertions, new action tests
+- `apps/web/app/(app)/applications/mark-applied-panel.tsx` (+ test, new)
+- `apps/web/app/(app)/applications/submission-packet-section.tsx` (new, Phase 5B.4 first pass)
+- `apps/web/app/(app)/applications/[id]/page.tsx` — dropdown exclusion, panel + viewer wiring
+- `apps/extension/src/lib/api-client.ts` — `checkConsistency`, `markApplied` acknowledgement body
+  - 409 handling
+- `apps/extension/src/popup/hooks/useApplicationTracker.ts` (+ test, new) — review-flow state
+- `apps/extension/src/popup/components/ApplicationTracker.tsx`, `App.tsx` — review UI
+- `apps/extension/package.json` — `@testing-library/react`/`jest-dom` declared explicitly
+- `supabase/tests/database/0019_submission_packets.test.sql` — 3 more live assertions (33 total)
+
+### Tests / verification
+
+`packages/shared`: 125 tests (44 new for the rule engine). `packages/database`: 72 tests (9 new
+for the assembler/gate, 5 new gate-integration cases in `applications.test.ts`). `apps/web`: 92
+tests (4 consistency-check route, 4 more mark-applied route cases, 3 more actions cases, 6
+`MarkAppliedPanel`). `apps/extension`: 125 tests (6 new for the review flow). pgTAP: 33/33 live
+against the linked project (3 new, verifying non-empty findings/acknowledgements are frozen
+exactly as given). Typecheck clean across shared/database/web/extension; `next lint` and the
+extension's `eslint` both zero warnings.
+
+### Definition of done
+
+- A BLOCKING finding can never be bypassed by any client input — verified by both a unit test
+  (`enforceConsistencyGate` ignoring an acknowledgement id matching the blocking finding) and the
+  live pgTAP suite's packet-freezing assertions.
+- A stale or invented WARNING acknowledgement can never suppress a real current warning —
+  verified by dedicated unit tests in both `consistency.test.ts` and
+  `useApplicationTracker.test.ts`.
+- Both entry points (dashboard, extension) reach the same authoritative gate; neither can bypass
+  it — verified live for the dashboard (the admin-client bug fix) and by mock-based tests for both.
+- No consistency-rule logic is duplicated in the extension — every finding it ever shows came
+  from a server response.
+
+### Explicitly excluded from Phase 5B.2
+
+AI-assisted unsupported-claim checking (Phase 5B.3, not started — `UNSUPPORTED_CLAIM` remains an
+unused enum value). Résumé-version selection. Full 5B.4 viewer polish (requirement-mapping-run
+summary, broader design pass) beyond the first-pass `SubmissionPacketSection` shipped here.

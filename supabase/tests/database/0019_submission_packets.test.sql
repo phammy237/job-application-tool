@@ -4,7 +4,7 @@
 
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(30);
+select plan(33);
 create temp table pgtap_log (seq serial, line text);
 grant insert on pgtap_log to authenticated, anon;
 grant usage on sequence pgtap_log_seq_seq to authenticated, anon;
@@ -21,7 +21,8 @@ values
   ('e0000000-0000-4000-8000-000000000001', 'a0000000-0000-4000-8000-000000000001', 'Acme', 'Backend Engineer', 'IN_PROGRESS'),
   ('e0000000-0000-4000-8000-000000000002', 'a0000000-0000-4000-8000-000000000002', 'Globex', 'Frontend Engineer', 'IN_PROGRESS'),
   -- A legacy APPLIED application that predates packet support — already APPLIED, no packet.
-  ('e0000000-0000-4000-8000-000000000003', 'a0000000-0000-4000-8000-000000000001', 'Initech', 'QA Engineer', 'APPLIED');
+  ('e0000000-0000-4000-8000-000000000003', 'a0000000-0000-4000-8000-000000000001', 'Initech', 'QA Engineer', 'APPLIED'),
+  ('e0000000-0000-4000-8000-000000000004', 'a0000000-0000-4000-8000-000000000001', 'Umbrella', 'DevOps Engineer', 'IN_PROGRESS');
 update public.applications set applied_at = '2025-01-01T00:00:00Z' where id = 'e0000000-0000-4000-8000-000000000003';
 
 insert into public.submission_packets (id, user_id, application_id, content_fingerprint)
@@ -282,6 +283,37 @@ insert into pgtap_log(line) select is(
   (select applied_at::text from public.applications where id = 'e0000000-0000-4000-8000-000000000003'),
   '2025-01-01 00:00:00+00',
   'the legacy application''s original applied_at is untouched'
+);
+
+-- Phase 5B.2: the RPC freezes whatever consistency_findings/consistency_acknowledgements content
+-- it is given (the TypeScript gate is responsible for having already validated it before this
+-- call) — verify a non-empty payload actually lands in the created packet, not just empty arrays
+-- as every case above happened to use.
+insert into pgtap_log(line) select results_eq(
+  $$select status from public.mark_application_applied(
+      'a0000000-0000-4000-8000-000000000001', 'e0000000-0000-4000-8000-000000000004',
+      '[]'::jsonb, null, null,
+      '[{"id":"w1","ruleId":"GPA_MISMATCH","severity":"WARNING","fieldALabel":"GPA","fieldASource":"GENERATED_ANSWER","fieldAValue":"3.2","fieldBLabel":"GPA","fieldBSource":"PROFILE_EDUCATION","fieldBValue":"3.9","description":"Mismatch"}]'::jsonb,
+      '[{"findingId":"w1","acknowledgedAt":"2026-01-01T00:00:00.000Z"}]'::jsonb,
+      null, null, null, 'v1:with-findings')$$,
+  $$values ('APPLIED'::text)$$,
+  'a transition with non-empty consistency findings/acknowledgements succeeds'
+);
+
+insert into pgtap_log(line) select is(
+  (select consistency_findings ->> 'ruleId' from (
+    select jsonb_array_elements(consistency_findings) as consistency_findings
+    from public.submission_packets where application_id = 'e0000000-0000-4000-8000-000000000004'
+  ) f),
+  'GPA_MISMATCH',
+  'the exact deterministic finding passed in is frozen into the created packet, not discarded or altered'
+);
+
+insert into pgtap_log(line) select is(
+  (select consistency_acknowledgements -> 0 ->> 'findingId' from public.submission_packets
+    where application_id = 'e0000000-0000-4000-8000-000000000004'),
+  'w1',
+  'the acknowledgement record (including its timestamp) is frozen into the created packet'
 );
 
 -- Confused-deputy: a caller cannot pass a p_user_id that does not actually own p_application_id
