@@ -2,12 +2,15 @@ import { listOwnApplications } from '@career-os/database';
 import {
   APPLICATION_STATUSES,
   CREATABLE_APPLICATION_STATUSES,
+  formatNextAction,
   type ApplicationStatus,
 } from '@career-os/shared';
 import { Button, Input, Label, Select, StatusBadge } from '@career-os/ui';
 import Link from 'next/link';
 import { requireUser } from '../../../lib/auth';
+import { attachNextActions } from '../../../lib/dashboard';
 import { createClient } from '../../../lib/supabase/server';
+import { PriorityBadge } from '../dashboard/priority-badge';
 import { createApplication } from './actions';
 
 export default async function ApplicationsPage({
@@ -23,6 +26,7 @@ export default async function ApplicationsPage({
     status: status ? (status as ApplicationStatus) : undefined,
     search: q || undefined,
   });
+  const withNextActions = attachNextActions(applications, new Date().toISOString());
 
   return (
     <div className="space-y-6">
@@ -95,11 +99,12 @@ export default async function ApplicationsPage({
               <th className="px-4 py-2 font-medium">Company</th>
               <th className="px-4 py-2 font-medium">Title</th>
               <th className="px-4 py-2 font-medium">Status</th>
+              <th className="px-4 py-2 font-medium">Next action</th>
               <th className="px-4 py-2 font-medium">Updated</th>
             </tr>
           </thead>
           <tbody>
-            {applications.map((application) => (
+            {withNextActions.map(({ application, nextAction }) => (
               <tr key={application.id} className="border-border border-b last:border-0">
                 <td className="px-4 py-3">
                   <Link
@@ -113,6 +118,12 @@ export default async function ApplicationsPage({
                 <td className="px-4 py-3">
                   <StatusBadge status={application.status} />
                 </td>
+                <td className="px-4 py-3">
+                  <div className="flex items-center gap-2">
+                    <PriorityBadge priority={nextAction.priority} />
+                    <span>{formatNextAction(nextAction).title}</span>
+                  </div>
+                </td>
                 <td className="text-muted-foreground px-4 py-3">
                   {new Date(application.updatedAt).toLocaleDateString()}
                 </td>
@@ -120,7 +131,7 @@ export default async function ApplicationsPage({
             ))}
             {applications.length === 0 ? (
               <tr>
-                <td colSpan={4} className="text-muted-foreground px-4 py-8 text-center">
+                <td colSpan={5} className="text-muted-foreground px-4 py-8 text-center">
                   No applications yet.
                 </td>
               </tr>

@@ -31,13 +31,20 @@ phase depends on a later phase's output.
 - [x] Phase 5B hardening — closes a direct-PostgREST APPLIED bypass an adversarial review found,
       separates relocation's rule ids from work-authorization's, and adds a schema-level guard
       against an AI-assisted BLOCKING finding (migration 0015 — see "Phase 5B hardening" below)
+- [x] Phase 5C.1 — Deterministic next-action engine: one primary recommended action per
+      application, derived entirely from already-persisted state, no model call, no persistence
+      (see "Phase 5C.1" below)
+- [x] Phase 5C.2 — Dashboard intelligence: attention-sorted overview, follow-up suggestions,
+      pipeline stages, recent activity, and a next-action column on the applications list (no
+      schema change — see "Phase 5C.2" below)
+- [ ] Phase 5C.3 — Follow-up drafting/interview-prep content (AI-assisted) — not started, out of
+      scope for this pass by explicit instruction
 - [ ] Phase 6 — Multi-user beta hardening, privacy controls, testing, deployment
 - [ ] Phase 7 — Optional mypham.space integration, public onboarding, future sharing
 
-**Not yet started:** Phase 5C (next actions/deadlines, dashboard overview) — out of scope for 5A,
-unscoped beyond its name, and not yet slotted into the numbered sequence relative to Phase 5's
-Gmail work. That ordering decision is intentionally left open rather than assumed here. The whole
-Phase 5B line (5B.0 through 5B.4, plus the hardening pass above) is now complete.
+The whole Phase 5B line (5B.0 through 5B.4, plus the hardening pass) is complete. Phase 5C.1/5C.2
+are now complete too; only 5C.3 (AI-assisted follow-up/interview-prep content drafting) remains
+unstarted within Phase 5C.
 
 Phase 4A shipped: the popup classifies every detected field into a review state (sensitive /
 unsupported / already-completed / pending-suggestion / ready / suggested / needs-input),
@@ -1768,3 +1775,340 @@ Phase 5B design: a revert restores a historical state, it does not re-review one
 cryptographically sign or otherwise make `application_events` rows tamper-evident beyond the
 `applied_at`-anchor check — a narrower, sufficient fix for the one exploit path this pass actually
 needed to close. No Phase 5C work of any kind.
+
+## Phase 5C.1 — Deterministic next-action engine
+
+**Goal**: for any tracked application, derive one primary "what should I do next" recommendation
+from already-persisted state — deterministic, explainable, no model call, no persistence.
+
+### Repository-reality inspection that shaped this design
+
+Before writing any rule, the actual schema was inspected (not assumed): `applications.status`,
+`application_events`, `email_signals`, `submission_packets`, and every migration that touches
+them. Two findings directly shaped the design:
+
+1. **No deadline of any kind is ever persisted anywhere** — not on `applications`, not on
+   `email_signals`, not on `application_events`. There is no "interview date," "assessment due
+   date," or "employer deadline" column to read, so "never invent a deadline" isn't a discipline
+   this code needs to exercise — it's a structural fact: the type system has no field to invent
+   one into (`NextAction.dueAt` is typed `z.null()`, not a nullable date, specifically so it
+   cannot silently start being populated without a deliberate type change first).
+2. **`applications.status` is already the single, fully-reconciled fact by the time any dashboard
+   code sees it.** Every path that could change it based on an email signal
+   (`confirmOwnEmailSignal`'s CONFIRM branch, the sync pipeline's AUTO_APPLIED case) routes
+   through `changeOwnApplicationStatus`, which writes `status` directly — a `PENDING`
+   (unconfirmed) `email_signals` row never touches `status` at all, and neither does a `DECLINED`
+   one. This means the engine does not need to separately consult `email_signals` or
+   `application_events` to decide what to recommend: if `status` is still exactly `APPLIED`,
+   that alone proves no employer-classified signal has been confirmed since the original
+   transition. Precedence therefore reduces to a straightforward per-status dispatch, not a
+   multi-signal-fusion problem — because Phase 5B already made `status` the sole reconciled
+   input. This is also why 5C.1 needed **zero new database queries** for correctness:
+   `listOwnApplications` (already existing) returns everything the rule engine needs.
+
+### 5C.1A — Domain model (`packages/shared/src/schemas/next-action.ts`)
+
+- `NextActionType` — `REVIEW_UNRESOLVED_FIELDS`, `COMPLETE_APPLICATION`, `MARK_APPLIED`,
+  `REVIEW_ACTION_REQUIRED`, `COMPLETE_ASSESSMENT`, `PREPARE_INTERVIEW`, `REVIEW_OFFER`,
+  `CONSIDER_FOLLOW_UP`, `REVIEW_APPLICATION`, `NO_ACTION`. Deliberately narrower than "one per
+  `applications.status` value" — `SAVED`/`IN_PROGRESS` collapse into three different types
+  depending on real recorded progress (5C.1C below), not the status label alone.
+- `NextActionPriority` — `URGENT`/`HIGH`/`MEDIUM`/`LOW`/`NONE`. Five discrete levels, never a
+  numeric score (a score would invite false precision this engine has no basis for).
+- `NextActionSource` — `APPLICATION_STATUS`/`UNRESOLVED_FIELDS`/`TIME_SINCE_APPLICATION`/
+  `UNKNOWN_STATUS`. Every value corresponds to a field the engine actually reads; there is no
+  `AI_JUDGMENT` source, because nothing here ever calls a model.
+- `NextAction` — `{type, priority, source, appliedAt, daysSinceApplied, dueAt}`. Deliberately has
+  **no title/reason string fields** — see 5C.1I.
+
+### 5C.1B — Rule precedence
+
+Because `status` is single-valued and already reconciled (see above), "precedence" is a plain
+switch over `status` with no default case (a new `ApplicationStatus` enum member is a compile
+error here until handled), plus two small nested decisions:
+
+```
+ACTION_REQUIRED -> REVIEW_ACTION_REQUIRED (URGENT)
+ASSESSMENT      -> COMPLETE_ASSESSMENT    (HIGH)
+INTERVIEW       -> PREPARE_INTERVIEW      (HIGH)
+OFFER           -> REVIEW_OFFER           (URGENT)
+REJECTED        -> NO_ACTION              (NONE) -- never a follow-up suggestion
+WITHDRAWN       -> NO_ACTION              (NONE) -- never a follow-up suggestion
+SAVED/IN_PROGRESS      -> unresolved fields present?  -> REVIEW_UNRESOLVED_FIELDS (MEDIUM)
+                          IN_PROGRESS, none left?      -> MARK_APPLIED             (MEDIUM)
+                          SAVED, none left/never ran?  -> COMPLETE_APPLICATION     (LOW)
+APPLIED/APPLICATION_RECEIVED -> days since appliedAt >= threshold? -> CONSIDER_FOLLOW_UP (LOW)
+                                otherwise                          -> NO_ACTION         (NONE)
+UNKNOWN         -> REVIEW_APPLICATION     (LOW) -- reachable in the type, unwritten today
+```
+
+Written down here and in `next-action-rules.ts`'s own comments/tests, not left accidental.
+"Known employer deadline outranks heuristic timing" is honored by construction rather than by an
+explicit rule: no deadline field exists to ever compete with the heuristic in the first place —
+if one is ever added, it would need its own explicit precedence entry here, not a silent
+override.
+
+### 5C.1C — Application-status rules, exactly
+
+- **SAVED/IN_PROGRESS**: a non-empty `unresolvedFields` always wins (`REVIEW_UNRESOLVED_FIELDS`),
+  regardless of which of the two statuses it is. Otherwise: `IN_PROGRESS` (meaning at least one
+  field was approved/edited — see `useApplicationTracker.ts`'s `save()`) with nothing left
+  unresolved becomes `MARK_APPLIED`; `SAVED` with no unresolved-field record at all (either a
+  manually-created dashboard application that never touched the extension flow, or a run that
+  approved nothing and left nothing unresolved) becomes `COMPLETE_APPLICATION`. `null` vs. `[]`
+  for `unresolvedFields` is a real, meaningful distinction here, not treated as equivalent.
+- **APPLIED/APPLICATION_RECEIVED**: `NO_ACTION` until the follow-up threshold (5C.1F), then
+  `CONSIDER_FOLLOW_UP`. `APPLICATION_RECEIVED` uses the same original `appliedAt`, since no
+  separate "received at" timestamp is persisted on `applications`.
+- **ASSESSMENT** -> `COMPLETE_ASSESSMENT`. **INTERVIEW** -> `PREPARE_INTERVIEW`. **OFFER** ->
+  `REVIEW_OFFER`. **ACTION_REQUIRED** -> `REVIEW_ACTION_REQUIRED`.
+- **REJECTED**/**WITHDRAWN** -> `NO_ACTION` (a UX choice: nothing is actionable for the user on a
+  closed application, and — per the explicit self-review requirement — neither ever produces a
+  follow-up suggestion).
+- **UNKNOWN** -> `REVIEW_APPLICATION`. This status exists in `applicationStatusSchema` but no
+  code path in this repository writes it today (confirmed by inspection, not assumed) — handled
+  anyway so the switch has no default case to silently swallow a future real use of it.
+
+### 5C.1D — Unresolved/autofill awareness
+
+Only `applications.unresolvedFields` drives actionability — `autofillSummary`'s raw counts
+(`filled`/`approved`/`skipped`/`failed`/`manual`) are deliberately **not** separately branched
+on. A `FILL_FAILED` unresolved field is already a `unresolvedFieldSummarySchema` entry (one of
+`unresolvedFieldStatusSchema`'s four values), so anything `autofillSummary` could tell the
+engine that actually implies user action is already captured there; branching on the raw counts
+too would risk exactly the noisy, redundant alert the spec warns against.
+
+### 5C.1E — Email/Gmail signal awareness
+
+No separate email-signal input exists in `NextActionRuleInput` at all — see the repository-reality
+finding above. A `PENDING` (unconfirmed) signal is real repository state, but it is surfaced
+through the existing Settings-page confirmation flow (`listOwnEmailSignalsNeedingConfirmation`),
+not duplicated as a new next-action type here; adding one would have meant either treating an
+unconfirmed signal as if it were authoritative (explicitly forbidden) or building a second,
+parallel "please confirm" surface next to the one that already exists. Deliberately deferred, not
+overlooked — noted as a considered-and-declined option below.
+
+### 5C.1F — Follow-up recommendation
+
+`FOLLOW_UP_SUGGESTION_THRESHOLD_DAYS = 7`, a named constant in `next-action-rules.ts` (not a
+magic number at each call site). No existing product doc specifies a threshold (checked
+`docs/PRODUCT_SPEC.md`, `docs/USER_FLOWS.md`, and this file before choosing one) — 7 days is a
+conservative default: long enough that a follow-up isn't premature, short enough to still be
+useful. `CONSIDER_FOLLOW_UP` only ever fires when: the application is `APPLIED`/
+`APPLICATION_RECEIVED` (which, per the reconciled-status finding, already implies "no
+newer employer-driven status change exists"), `appliedAt` is a real persisted fact, and at least
+`FOLLOW_UP_SUGGESTION_THRESHOLD_DAYS` whole days have passed. It is always `LOW` priority and
+always `type: 'CONSIDER_FOLLOW_UP'` — never conflated with a fact, never escalated to "overdue"
+past the threshold (there is no upper bound/escalation at all).
+
+### 5C.1G — Real known dates only
+
+`NextAction.appliedAt` is the one real fact ever surfaced — always `applications.appliedAt`
+verbatim, never inferred, never defaulted to "today." `dueAt` is typed `z.null()` (not a nullable
+date) specifically because nothing in this schema can ever produce a non-null value for it yet —
+see 5C.1A. "Prepare for interview," not "interview due tomorrow"; "Complete the assessment," not
+"assessment due in 2 days" — enforced by `format-next-action.ts` never having a date-shaped
+template for either.
+
+### 5C.1H — Architecture: three separated layers
+
+1. **Server-side data assembly** — `apps/web/lib/dashboard.ts`'s `attachNextActions`, wiring an
+   already-fetched `Application[]` into the rule engine. Never calls Supabase itself.
+2. **Pure rule engine** — `packages/shared/src/lib/next-action-rules.ts`'s `deriveNextAction`. No
+   database access, no network access, no Claude — a plain function of its arguments, the same
+   posture as `consistency-rules.ts`.
+3. **UI formatting** — `packages/shared/src/lib/format-next-action.ts`'s `formatNextAction`,
+   turning a `NextAction` into `{title, reason}` strings. Kept separate from the domain object
+   (5C.1A's own design question, answered: yes, a formatter, not stored text) so wording changes
+   never touch the rule engine, and the rule engine's own tests never assert exact prose.
+
+### 5C.1I — Explainability
+
+Every `NextAction` carries a `source` naming the persisted fact it came from. `formatNextAction`'s
+`CONSIDER_FOLLOW_UP` text is the concrete example from the original spec: "You applied N days ago
+and Career OS has not detected a newer employer update. Career OS suggests following up — this is
+a recommendation, not a known employer deadline." — `N` and "applied" are fact (`appliedAt` is
+real, "now" is real, the absence of a newer signal is observable from `status` alone), while
+"suggests" and the explicit "not a known employer deadline" disclaimer keep the recommendation
+clearly separated from a fact. Nothing in `format-next-action.ts` ever says "overdue," "late," or
+implies an employer promise.
+
+### 5C.1J — Tests
+
+`packages/shared/src/lib/next-action-rules.test.ts` (31 tests): one case per `ApplicationStatus`
+value (table-driven), the unresolved-field override (including the `null` vs. `[]` distinction
+for both `SAVED` and `IN_PROGRESS`), the follow-up threshold's exact boundary (`>= threshold`
+fires, one millisecond short does not, well past the threshold still fires with no escalation,
+`APPLICATION_RECEIVED` uses the same threshold, a null `appliedAt` never fires it), explicit
+precedence assertions (`REJECTED`/`WITHDRAWN` never produce a follow-up regardless of elapsed
+time; `ACTION_REQUIRED`/`ASSESSMENT`/`INTERVIEW`/`OFFER` each short-circuit before any follow-up
+computation runs at all; unresolved fields outrank `MARK_APPLIED`), and a safety sweep asserting
+every status is handled without throwing even with every optional field null.
+`packages/shared/src/lib/format-next-action.test.ts` (5 tests) covers every action type
+producing non-empty text, the exact singular/plural "N day(s) ago" wording, graceful degradation
+with no day count, and the explicit fact-vs-recommendation phrasing.
+
+### Explicitly excluded from Phase 5C.1
+
+A `next_actions` table or any other persistence — recomputed at read time every time (see the
+"Database decision" rationale below). A dedicated next-action type for an unconfirmed Gmail
+signal (5C.1E). Any AI call of any kind. Phase 5C.3 (follow-up drafting/interview-prep content).
+
+## Phase 5C.2 — Dashboard intelligence
+
+**Goal**: make `/dashboard` (previously four static stat cards and a link) answer "what needs my
+attention," "what stage is everything in," "what changed recently," and "what should I do next,"
+using the Phase 5C.1 engine — never a new AI call, never an analytics vanity metric.
+
+### 5C.2A — Sections implemented
+
+Inspected the existing dashboard before changing it (a placeholder: `total`/`active`/
+`interviewing`/`offers` stat cards, a "no applications" empty state, two links) and the existing
+`/applications` flat table. Implemented, in this order on `/dashboard`:
+
+- **Attention needed** — every application whose next action is `URGENT`/`HIGH`/`MEDIUM`
+  priority, sorted by attention (5C.2B). Deliberately merged with what the original spec
+  described as a separate "Upcoming/active" section: since `ASSESSMENT`/`INTERVIEW`/
+  `ACTION_REQUIRED`/`OFFER` are already exactly the `URGENT`/`HIGH` members of this same list, a
+  second section listing the identical applications again would be the literal duplication the
+  spec itself warned against — one well-labeled section instead of two overlapping ones.
+- **Follow-up suggestions** — exactly the applications whose next action is
+  `CONSIDER_FOLLOW_UP`, labeled inline as "Career OS recommendations — not known employer
+  deadlines." Kept structurally separate from "Attention needed" (a `LOW`-priority suggestion is
+  excluded from that section's `needsAttention` definition below) specifically so a
+  recommendation is never visually conflated with an urgent need.
+- **Pipeline overview** — counts per stage group (5C.2E), replacing the old four fixed stat
+  cards.
+- **Recent activity** — from `application_events`, across every application, one query (5C.2F).
+- Not implemented as its own section: a live conversion-percentage/success-rate metric (5C.2E) —
+  see that subsection.
+
+### 5C.2B — Attention sorting (`packages/shared/src/lib/attention-sort.ts`)
+
+`compareByAttention`: (1) priority rank, `URGENT` first through `NONE` last; (2) within the same
+priority, if both items have a real `appliedAt`, the older one (longer-waiting) sorts first; (3)
+otherwise, `updatedAt` descending (most recently touched first) as a stable, always-available
+fallback; (4) a final `id` tie-break so the order is a true total order, never accidentally
+unstable across re-renders. Pure and independently tested
+(`packages/shared/src/lib/attention-sort.test.ts`, 7 tests) the same way the rule engine is.
+
+### 5C.2C — Application cards/rows
+
+`apps/web/app/(app)/dashboard/application-action-row.tsx` — company/title (linked), status
+badge, priority badge, the next action's title, and its one-sentence "why." Reused for both the
+"Attention needed" and "Follow-up suggestions" sections rather than two bespoke layouts. The
+`/applications` list table also gained a compact "Next action" column (priority badge + title
+only, no reason text — the detail page/dashboard row is where the full explanation lives),
+extending 5C.2C's intent to the existing list view rather than confining next-action visibility
+to `/dashboard` alone.
+
+### 5C.2D — Attention count
+
+`apps/web/lib/dashboard.ts`'s `needsAttention(item)` is the **one** definition: priority is
+`URGENT`, `HIGH`, or `MEDIUM`. Deliberately excludes `LOW` (`CONSIDER_FOLLOW_UP`,
+`COMPLETE_APPLICATION`) and `NONE` — a follow-up recommendation is not an urgent need, and
+`COMPLETE_APPLICATION` is "something you could start," not something pressing. The dashboard's
+header line ("N applications need attention" / "Nothing needs attention right now") and the
+"Attention needed" section's membership both call this exact function — tested in
+`apps/web/lib/dashboard.test.ts`.
+
+### 5C.2E — Stage/pipeline grouping
+
+`DASHBOARD_STAGE_GROUPS` (`apps/web/lib/dashboard.ts`) buckets the existing tracked statuses,
+inventing no new status: `PREPARING` (`SAVED`, `IN_PROGRESS`), `APPLIED` (`APPLIED`,
+`APPLICATION_RECEIVED`), `ACTIVE_PROCESS` (`ASSESSMENT`, `INTERVIEW`, `ACTION_REQUIRED`), `OFFER`
+(`OFFER`), `CLOSED` (`REJECTED`, `WITHDRAWN`). `UNKNOWN` maps to a separate `'OTHER'` bucket
+(counted but not rendered as its own card, since no code path writes it today) rather than being
+silently folded into one of the five real groups. **No conversion percentage/success-rate metric
+was added** — plain counts only, per the explicit "prefer counts over fancy percentages for v1"
+guidance; a rate over a handful of applications would be exactly the "tiny sample size" case that
+guidance warns is easy to get wrong, and no product doc asked for one yet.
+
+### 5C.2F — Recent activity
+
+`packages/database/src/queries/application-events.ts`'s new `listOwnRecentApplicationEvents` —
+one query across every application for the user (ordered, limited), not one query per
+application. `apps/web/lib/dashboard.ts`'s `toRecentActivity` maps each event to its
+company/title using the applications list the page already fetched (an in-memory lookup, never a
+second query or a join), and drops anything that is not a live `STATUS_CHANGE` (a `NOTE`/
+`MANUAL_EDIT`/`EMAIL_MATCHED` event, or one that has since been reverted) — exactly the "avoid
+showing noisy internal events" instruction. The UI renders a from-status/to-status badge pair,
+a timestamp, and "via Gmail" only when `source === 'GMAIL_SYNC'` — never raw JSON, never the
+event's internal `id`/`source` enum value verbatim.
+
+### 5C.2G — Stale vs. needs-follow-up
+
+Handled by construction, not a separate indicator: an `APPLIED` application that hasn't crossed
+the follow-up threshold is `NO_ACTION` (old but not flagged); one that has is `CONSIDER_FOLLOW_UP`
+(clearly labeled a Career OS suggestion, per 5C.2A). No additional "stale" badge/section was
+added on top of this — a second, differently-worded indicator for the same underlying fact would
+risk exactly the "every old application becomes a warning" outcome the spec cautions against.
+
+### 5C.2H — Server/query architecture
+
+`/dashboard` issues exactly two queries in parallel (`Promise.all`): `listOwnApplications` and
+`listOwnRecentApplicationEvents` — no per-application follow-up query, no N+1. Neither query nor
+the next-action computation ever touches `submission_packets` — the packet-existence signal the
+original spec considered was found unnecessary once `applications.submissionPacketId` (already
+present on the `Application` row from Phase 5B.1) was confirmed sufficient as a boolean-only
+signal, so Phase 5C.2 was able to avoid querying that table at all rather than needing to trim a
+"just a boolean" projection from it.
+
+### 5C.2I — Empty states
+
+No applications: existing card, extended with the profile/applications links. Applications
+exist but nothing needs attention: "Nothing needs attention right now." (both in the header and
+inline in the "Attention needed" section). No follow-up suggestions: "No follow-up suggestions
+right now." No recent activity: "No recent activity." An all-closed pipeline naturally falls out
+of the same "nothing needs attention" path — no separate special case was needed, and no
+encouragement metric was fabricated for it.
+
+### 5C.2J — Responsive UI
+
+No new design system, no broad redesign — reused `@career-os/ui`'s existing `Card`/`Badge`/
+`StatusBadge` and the same plain-Tailwind-utility layout style already used on the application
+detail page. The pipeline-overview grid and card rows both collapse to a single column below the
+`sm` breakpoint (`grid-cols-1 sm:grid-cols-5`, `flex-col sm:flex-row`), matching the pattern the
+pre-existing dashboard's stat cards already used.
+
+### Database decision
+
+**No `next_actions` table, no new column, no migration.** A next action is a derived view of
+already-persisted state, recomputed at read time from data `listOwnApplications` was already
+returning — introducing a table would mean a stale-synchronization problem (every status change,
+unresolved-field update, or the mere passage of time would need to re-trigger a write) for a
+value with no independent meaning of its own. Confirmed cheap in practice: the entire computation
+for every application on the dashboard is a pure, synchronous, non-async pass over an
+already-fetched array.
+
+### Files changed (Phase 5C.1 + 5C.2)
+
+- `packages/shared/src/schemas/next-action.ts` (new)
+- `packages/shared/src/lib/next-action-rules.ts` (+test, new)
+- `packages/shared/src/lib/format-next-action.ts` (+test, new)
+- `packages/shared/src/lib/attention-sort.ts` (+test, new)
+- `packages/shared/src/index.ts` (exports for the four files above)
+- `packages/database/src/queries/application-events.ts` (+test additions — new
+  `listOwnRecentApplicationEvents`)
+- `apps/web/lib/dashboard.ts` (+test, new — `attachNextActions`, `sortApplicationsByAttention`,
+  `needsAttention`, `DASHBOARD_STAGE_GROUPS`/`stageGroupForStatus`, `toRecentActivity`)
+- `apps/web/app/(app)/dashboard/page.tsx` (rewritten)
+- `apps/web/app/(app)/dashboard/priority-badge.tsx` (new)
+- `apps/web/app/(app)/dashboard/application-action-row.tsx` (new)
+- `apps/web/app/(app)/applications/page.tsx` (added the "Next action" column)
+
+### Tests (Phase 5C.1 + 5C.2)
+
+`packages/shared`: 179 tests (43 new: 31 rule-engine table/precedence/boundary cases, 5 formatter
+cases, 7 attention-sort cases). `packages/database`: 2 new cases for
+`listOwnRecentApplicationEvents`. `apps/web`: 19 new cases in `lib/dashboard.test.ts`. Typecheck
+clean across shared/database/web/extension/ai/email; `next lint` zero warnings; prettier clean.
+
+### Explicitly excluded from Phase 5C.2
+
+Phase 5C.3 (AI-assisted follow-up drafting/interview-prep content) — not started, per explicit
+instruction. A conversion-percentage/success-rate metric (5C.2E). A dedicated "confirm this Gmail
+match" next-action/dashboard surface (5C.1E) — that flow already exists on the Settings page and
+was deliberately not duplicated. Any Kanban-board view (`docs/PRODUCT_SPEC.md` §7 mentions one as
+an aspirational dashboard surface; it does not exist in this codebase today and building one was
+out of scope for this pass — noted here rather than silently left inconsistent with that doc).

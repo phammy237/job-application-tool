@@ -119,10 +119,17 @@ preferences, relocation preferences, links, and résumé versions. Full fact sch
 Statuses: `SAVED`, `IN_PROGRESS`, `APPLIED`, `APPLICATION_RECEIVED`, `ASSESSMENT`,
 `INTERVIEW`, `ACTION_REQUIRED`, `OFFER`, `REJECTED`, `WITHDRAWN`, `UNKNOWN`.
 
-Dashboard surfaces: Kanban view, table view, search, company/role/location/date filters,
-application detail page (notes, associated résumé, generated-answer history, event timeline,
-manual status changes, undo for automated updates), and summary metrics (applications this
-week, interview rate, offer rate, rejection rate, applications awaiting a response).
+Dashboard surfaces (as actually built — see `docs/IMPLEMENTATION_PLAN.md` Phase 5C.1/5C.2 for
+the full design): an attention-sorted overview (`/dashboard`) grouping applications by a
+deterministically-derived next action rather than a flat list — attention-needed, follow-up
+suggestions (explicitly labeled as a Career OS recommendation, never a known employer deadline),
+a pipeline-stage count breakdown, and a recent-activity feed of real status-change events; a
+table view (`/applications`) with status filtering, free-text company/title search, and each
+row's next action; an application detail page (notes, associated résumé, generated-answer
+history, event timeline, manual status changes, undo for automated updates). No Kanban view,
+location/date filters, or rate-based summary metrics (interview rate, offer rate, etc.) exist
+yet — Phase 5C.2 deliberately preferred plain counts over percentages for a v1 with a small
+per-user sample size; a rate metric may be added later if it can be computed transparently.
 
 ## 8. Initial beta constraints
 

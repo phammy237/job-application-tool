@@ -110,8 +110,22 @@ false`, `visibleOnPublicProfile = false`. Nothing extracted is usable until step
 
 ## 6. Reviewing applications on the dashboard
 
-1. User opens `/applications`: Kanban or table view, filterable by company/role/location/
-   date/status.
+0. User opens `/dashboard` (Phase 5C.1/5C.2). Every tracked application has one deterministically
+   derived "next action" (e.g. "Review unresolved fields," "Prepare for the interview," "Consider
+   following up") — computed from already-persisted state (status, unresolved fields, how long
+   ago the application was actually submitted), never from a model call, and never inventing a
+   deadline. The dashboard groups applications by attention rather than showing a flat list:
+   **Attention needed** (anything with an urgent/high/medium-priority next action, sorted so the
+   longest-waiting urgent items surface first), **Follow-up suggestions** (a separate, explicitly
+   labeled "Career OS recommendation — not a known employer deadline" section — a follow-up
+   suggestion is never shown as if it were an urgent need or a real deadline), **Pipeline
+   overview** (counts by stage: Preparing / Applied / Active process / Offer / Closed), and
+   **Recent activity** (real status-change events across every application, most recent first).
+   "N applications need attention" in the header means exactly "priority is urgent, high, or
+   medium" — a follow-up suggestion or an unstarted draft is deliberately not counted as an
+   urgent need.
+1. User opens `/applications`: table view (also showing each row's next action alongside its
+   status), filterable by status and a free-text search across company/title.
 2. Application detail page shows notes, associated résumé version, full generated-answer
    history (including skipped/edited suggestions, for the user's own audit trail), and the
    event timeline.

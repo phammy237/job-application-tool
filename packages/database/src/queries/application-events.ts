@@ -41,6 +41,29 @@ export async function listApplicationEvents(
   return (data ?? []).map(rowToEvent);
 }
 
+/**
+ * Recent events across every one of the user's applications, in one query — the dashboard's
+ * "Recent activity" section (docs/IMPLEMENTATION_PLAN.md "Phase 5C.2F") needs this exact shape:
+ * one bounded fetch, not one query per application (which would be the N+1
+ * docs/IMPLEMENTATION_PLAN.md "Phase 5C.2H" explicitly calls out to avoid). The caller maps
+ * `applicationId` back to a company/title using the applications list it already has, rather
+ * than this query embedding a join.
+ */
+export async function listOwnRecentApplicationEvents(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+  limit: number,
+): Promise<ApplicationEvent[]> {
+  const { data, error } = await supabase
+    .from('application_events')
+    .select('*')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  assertNoError(error, 'listOwnRecentApplicationEvents');
+  return (data ?? []).map(rowToEvent);
+}
+
 export async function recordApplicationEvent(
   supabase: CareerOsSupabaseClient,
   userId: string,

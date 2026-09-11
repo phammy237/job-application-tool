@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CareerOsSupabaseClient } from '../types/client';
-import { revertApplicationEvent } from './application-events';
+import {
+  listOwnRecentApplicationEvents,
+  revertApplicationEvent,
+} from './application-events';
 
 const USER_ID = '22222222-2222-4222-8222-222222222222';
 const APPLICATION_ID = '44444444-4444-4444-8444-444444444444';
@@ -155,5 +158,42 @@ describe('revertApplicationEvent — guard rails unrelated to APPLIED', () => {
       /already been reverted/,
     );
     expect(fromMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('listOwnRecentApplicationEvents', () => {
+  it('scopes by user_id, orders newest first, and applies the given limit — across all applications, not one', async () => {
+    const eq = vi.fn().mockReturnThis();
+    const order = vi.fn().mockReturnThis();
+    const limitFn = vi.fn();
+    const chain: Record<string, unknown> = {};
+    chain.select = vi.fn(() => chain);
+    chain.eq = eq.mockImplementation(() => chain);
+    chain.order = order.mockImplementation(() => chain);
+    chain.limit = limitFn.mockImplementation(() =>
+      Promise.resolve({ data: [NON_APPLIED_EVENT_ROW], error: null }),
+    );
+    const supabase = { from: vi.fn(() => chain) } as unknown as CareerOsSupabaseClient;
+
+    const result = await listOwnRecentApplicationEvents(supabase, USER_ID, 10);
+
+    expect(eq).toHaveBeenCalledWith('user_id', USER_ID);
+    expect(eq).not.toHaveBeenCalledWith('application_id', expect.anything());
+    expect(order).toHaveBeenCalledWith('created_at', { ascending: false });
+    expect(limitFn).toHaveBeenCalledWith(10);
+    expect(result).toHaveLength(1);
+    expect(result[0]!.id).toBe(EVENT_ID);
+  });
+
+  it('returns an empty array rather than throwing when there are no events at all', async () => {
+    const chain: Record<string, unknown> = {};
+    chain.select = vi.fn(() => chain);
+    chain.eq = vi.fn(() => chain);
+    chain.order = vi.fn(() => chain);
+    chain.limit = vi.fn().mockResolvedValue({ data: null, error: null });
+    const supabase = { from: vi.fn(() => chain) } as unknown as CareerOsSupabaseClient;
+
+    const result = await listOwnRecentApplicationEvents(supabase, USER_ID, 10);
+    expect(result).toEqual([]);
   });
 });
