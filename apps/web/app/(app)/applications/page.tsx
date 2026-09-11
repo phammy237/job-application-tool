@@ -1,5 +1,9 @@
 import { listOwnApplications } from '@career-os/database';
-import { APPLICATION_STATUSES, type ApplicationStatus } from '@career-os/shared';
+import {
+  APPLICATION_STATUSES,
+  CREATABLE_APPLICATION_STATUSES,
+  type ApplicationStatus,
+} from '@career-os/shared';
 import { Button, Input, Label, Select, StatusBadge } from '@career-os/ui';
 import Link from 'next/link';
 import { requireUser } from '../../../lib/auth';
@@ -65,8 +69,13 @@ export default async function ApplicationsPage({
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="new-status">Status</Label>
+            {/* APPLIED is deliberately excluded — an application reaches APPLIED only through the
+                canonical "Mark as Applied" action, never generic creation (see
+                docs/IMPLEMENTATION_PLAN.md Phase 5B.0). CREATABLE_APPLICATION_STATUSES is also the
+                actual server-side trust boundary (createOwnApplication's input type), so this isn't
+                merely hiding the option — the server rejects it too. */}
             <Select id="new-status" name="status" defaultValue="SAVED">
-              {APPLICATION_STATUSES.map((s) => (
+              {CREATABLE_APPLICATION_STATUSES.map((s) => (
                 <option key={s} value={s}>
                   {s}
                 </option>

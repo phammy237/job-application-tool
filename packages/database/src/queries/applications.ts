@@ -123,12 +123,32 @@ export async function getOwnApplication(
   return data ? rowToApplication(data) : null;
 }
 
-/** Creates an application and records the initial SAVED status as a timeline event. */
+/**
+ * Creates an application and records its initial status as a timeline event — used by the
+ * dashboard's manual "Add application" form. `input.status` is typed as
+ * `CreatableApplicationStatus` (docs/IMPLEMENTATION_PLAN.md Phase 5B.0), which structurally
+ * excludes `APPLIED` at the type/schema level — but that boundary only protects a caller that
+ * goes through `applicationInputSchema.parse(...)` and stays correctly typed afterward. The
+ * runtime check below is the actual trust boundary this package's functions are meant to enforce
+ * (CLAUDE.md: RLS is the backstop, not the only check — the same posture applies to type safety):
+ * a caller that reaches this function with `status: 'APPLIED'` despite the type, e.g. via an
+ * unsafe cast or untyped JS, is still rejected here, not silently allowed to create an `APPLIED`
+ * row outside `markOwnApplicationApplied`. `applied_at` is otherwise always `null` at creation —
+ * there is no valid pairing outside `APPLIED` (docs/DATA_MODEL.md: "`applied_at` ... set only ...
+ * alongside `status = 'APPLIED'`"), and no backdate/historical-import input exists in this slice.
+ */
 export async function createOwnApplication(
   supabase: CareerOsSupabaseClient,
   userId: string,
   input: ApplicationInput,
 ): Promise<Application> {
+  if ((input.status as string) === 'APPLIED') {
+    throw new DatabaseError(
+      'createOwnApplication does not accept APPLIED — use markOwnApplicationApplied, the one ' +
+        'canonical operation for that transition (docs/IMPLEMENTATION_PLAN.md Phase 5B.0).',
+    );
+  }
+
   const { data, error } = await supabase
     .from('applications')
     .insert({
@@ -138,7 +158,7 @@ export async function createOwnApplication(
       status: input.status ?? 'SAVED',
       notes: input.notes ?? null,
       resume_id: input.resumeId ?? null,
-      applied_at: input.appliedAt ?? null,
+      applied_at: null,
     })
     .select('*')
     .single();
@@ -193,6 +213,14 @@ export async function updateOwnApplication(
  * packages/email's sync.ts and the user-confirmed path in confirmOwnEmailSignal) passes
  * `source: 'GMAIL_SYNC'` and its `emailSignalId` so the resulting application_events row is
  * undoable via the existing revertApplicationEvent/RevertEventButton mechanism with no new code.
+ *
+ * Never accepts `APPLIED` (docs/IMPLEMENTATION_PLAN.md Phase 5B.0) — that transition has its own
+ * semantics (an idempotent `applied_at`, see markOwnApplicationApplied) that this generic
+ * function must not duplicate or silently get wrong. `EMAIL_CLASSIFICATION_TO_STATUS` already
+ * makes it impossible for the Gmail paths to pass `APPLIED` here at the type level; this guard
+ * exists for the one caller that could otherwise: the dashboard's manual status-change control,
+ * which must route an `APPLIED` selection through `markOwnApplicationApplied` instead (see
+ * apps/web/app/(app)/applications/actions.ts).
  */
 export async function changeOwnApplicationStatus(
   supabase: CareerOsSupabaseClient,
@@ -201,6 +229,13 @@ export async function changeOwnApplicationStatus(
   toStatus: ApplicationStatus,
   options?: { source?: ApplicationEventSource; emailSignalId?: string | null },
 ): Promise<Application> {
+  if (toStatus === 'APPLIED') {
+    throw new DatabaseError(
+      'changeOwnApplicationStatus does not handle APPLIED — use markOwnApplicationApplied, the ' +
+        'one canonical operation for that transition (docs/IMPLEMENTATION_PLAN.md Phase 5B.0).',
+    );
+  }
+
   const current = await getOwnApplication(supabase, userId, id);
   if (!current) {
     throw new Error('Application not found or not owned by this user.');
@@ -423,12 +458,23 @@ export async function upsertApplicationWithSnapshot(
 }
 
 /**
- * The only place applications.status ever becomes APPLIED from the extension — a separate,
- * explicit action (docs/IMPLEMENTATION_PLAN.md Phase 4C: "never infer APPLIED from filling or
- * detecting a submit button"). Sets applied_at alongside status, unlike the generic
- * changeOwnApplicationStatus (which the manual dashboard flow uses and which deliberately
- * doesn't touch applied_at for every status transition) — this one specifically means "the user
- * told us, right now, that they applied."
+ * The one canonical operation for transitioning an application to APPLIED
+ * (docs/IMPLEMENTATION_PLAN.md Phase 5B.0) — the extension's PATCH /api/applications/:id/
+ * mark-applied route and the dashboard's status-change action both call this exclusively;
+ * neither implements any part of this transition's semantics itself. A separate, explicit
+ * action from saving/filling (docs/IMPLEMENTATION_PLAN.md Phase 4C: "never infer APPLIED from
+ * filling or detecting a submit button") — this function only ever runs from a real user click,
+ * never automatically.
+ *
+ * `applied_at` represents when the application was *originally* submitted, not the most recent
+ * status-toggle timestamp: it is set to now() only the first time (when it's still null), and
+ * preserved on every later call regardless of the application's current status — covering
+ * repeated mark-applied while already APPLIED (idempotent no-op on the timestamp), APPLIED
+ * moving to a later status and back (handled by changeOwnApplicationStatus, which never touches
+ * this column), and re-invoking this function after such a round-trip. A `STATUS_CHANGE` event is
+ * only recorded when the status actually changes, matching the existing "don't spam identical
+ * transitions" precedent in POST /api/applications — calling this while already APPLIED updates
+ * nothing but touches no event log either.
  */
 export async function markOwnApplicationApplied(
   supabase: CareerOsSupabaseClient,
@@ -437,10 +483,12 @@ export async function markOwnApplicationApplied(
 ): Promise<Application> {
   const current = await getOwnApplication(supabase, userId, id);
   if (!current) {
-    throw new DatabaseError('markOwnApplicationApplied: application not found or not owned by this user.');
+    throw new DatabaseError(
+      'markOwnApplicationApplied: application not found or not owned by this user.',
+    );
   }
 
-  const appliedAt = new Date().toISOString();
+  const appliedAt = current.appliedAt ?? new Date().toISOString();
   const { data, error } = await supabase
     .from('applications')
     .update({ status: 'APPLIED', applied_at: appliedAt })
@@ -448,15 +496,19 @@ export async function markOwnApplicationApplied(
     .eq('user_id', userId)
     .select('*')
     .single();
-  const application = rowToApplication(unwrapRow(data, error, 'markOwnApplicationApplied'));
+  const application = rowToApplication(
+    unwrapRow(data, error, 'markOwnApplicationApplied'),
+  );
 
-  await recordApplicationEvent(supabase, userId, {
-    applicationId: id,
-    eventType: 'STATUS_CHANGE',
-    fromStatus: current.status,
-    toStatus: 'APPLIED',
-    source: 'USER',
-  });
+  if (current.status !== 'APPLIED') {
+    await recordApplicationEvent(supabase, userId, {
+      applicationId: id,
+      eventType: 'STATUS_CHANGE',
+      fromStatus: current.status,
+      toStatus: 'APPLIED',
+      source: 'USER',
+    });
+  }
 
   return application;
 }

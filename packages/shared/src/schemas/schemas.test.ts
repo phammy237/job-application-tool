@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { ApplicationInput } from '../index';
 import {
   aiUsageEventSchema,
   applicationInputSchema,
@@ -118,6 +119,41 @@ describe('applicationInputSchema', () => {
     const parsed = applicationInputSchema.parse({ company: 'Acme', title: 'Engineer' });
     expect(parsed.status).toBe('SAVED');
   });
+
+  it('accepts every non-APPLIED status', () => {
+    for (const status of ['SAVED', 'IN_PROGRESS', 'INTERVIEW', 'REJECTED', 'WITHDRAWN']) {
+      const result = applicationInputSchema.safeParse({
+        company: 'Acme',
+        title: 'Engineer',
+        status,
+      });
+      expect(result.success).toBe(true);
+    }
+  });
+
+  it('rejects status: APPLIED — APPLIED is reserved for markOwnApplicationApplied (docs/IMPLEMENTATION_PLAN.md Phase 5B.0)', () => {
+    const result = applicationInputSchema.safeParse({
+      company: 'Acme',
+      title: 'Engineer',
+      status: 'APPLIED',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('makes status: APPLIED unrepresentable at the type level, not just rejected at parse time', () => {
+    const input: ApplicationInput = {
+      company: 'Acme',
+      title: 'Engineer',
+      status: 'SAVED',
+    };
+    // @ts-expect-error — ApplicationInput['status'] is CreatableApplicationStatus, which
+    // structurally excludes 'APPLIED'. If this ever stops being a compile error, the type-level
+    // trust boundary this test guards has silently regressed (verified by `tsc --noEmit`, not by
+    // vitest, which doesn't type-check — an unused `@ts-expect-error` itself becomes a compile
+    // error, so this assertion is self-verifying under `npm run typecheck`).
+    input.status = 'APPLIED';
+    expect(input.company).toBe('Acme');
+  });
 });
 
 describe('profileUpdateSchema', () => {
@@ -148,7 +184,14 @@ describe('applicationSchema', () => {
       canonicalUrl: 'https://boards.example.com/job/1',
       atsProvider: 'GENERIC',
       externalId: null,
-      autofillSummary: { approved: 1, filled: 1, skipped: 0, failed: 0, unresolved: 0, manual: 0 },
+      autofillSummary: {
+        approved: 1,
+        filled: 1,
+        skipped: 0,
+        failed: 0,
+        unresolved: 0,
+        manual: 0,
+      },
       unresolvedFields: [],
     });
     expect(result.success).toBe(true);
@@ -189,7 +232,14 @@ describe('saveApplicationRequestSchema', () => {
       saveApplicationRequestSchema.safeParse({
         jobId: '11111111-1111-4111-8111-111111111111',
         status: 'APPLIED',
-        autofillSummary: { approved: 0, filled: 0, skipped: 0, failed: 0, unresolved: 0, manual: 0 },
+        autofillSummary: {
+          approved: 0,
+          filled: 0,
+          skipped: 0,
+          failed: 0,
+          unresolved: 0,
+          manual: 0,
+        },
         unresolvedFields: [],
         answeredFields: [],
       }).success,
@@ -200,12 +250,28 @@ describe('saveApplicationRequestSchema', () => {
     const result = saveApplicationRequestSchema.safeParse({
       jobId: '11111111-1111-4111-8111-111111111111',
       status: 'IN_PROGRESS',
-      autofillSummary: { approved: 1, filled: 1, skipped: 0, failed: 0, unresolved: 0, manual: 0 },
+      autofillSummary: {
+        approved: 1,
+        filled: 1,
+        skipped: 0,
+        failed: 0,
+        unresolved: 0,
+        manual: 0,
+      },
       unresolvedFields: [
-        { label: 'Gender', classification: 'DEMOGRAPHIC', status: 'SENSITIVE', reason: 'Always requires your direct input.' },
+        {
+          label: 'Gender',
+          classification: 'DEMOGRAPHIC',
+          status: 'SENSITIVE',
+          reason: 'Always requires your direct input.',
+        },
       ],
       answeredFields: [
-        { generatedAnswerId: '22222222-2222-4222-8222-222222222222', decision: 'APPROVED', finalText: null },
+        {
+          generatedAnswerId: '22222222-2222-4222-8222-222222222222',
+          decision: 'APPROVED',
+          finalText: null,
+        },
       ],
     });
     expect(result.success).toBe(true);
@@ -330,14 +396,17 @@ describe('generatedAnswerContractSchema', () => {
   });
 
   it('rejects an empty sourceFactIds array — there is no zero-provenance answer', () => {
-    const result = generatedAnswerContractSchema.safeParse({ ...valid, sourceFactIds: [] });
+    const result = generatedAnswerContractSchema.safeParse({
+      ...valid,
+      sourceFactIds: [],
+    });
     expect(result.success).toBe(false);
   });
 
   it('rejects confidence outside [0, 1]', () => {
-    expect(generatedAnswerContractSchema.safeParse({ ...valid, confidence: 1.1 }).success).toBe(
-      false,
-    );
+    expect(
+      generatedAnswerContractSchema.safeParse({ ...valid, confidence: 1.1 }).success,
+    ).toBe(false);
   });
 
   it('rejects a reasoningSummary over 400 characters', () => {

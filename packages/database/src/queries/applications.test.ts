@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 import type { SanitizedJobSnapshotContent } from '@career-os/shared';
 import type { CareerOsSupabaseClient } from '../types/client';
 import {
+  changeOwnApplicationStatus,
+  createOwnApplication,
   getOwnApplicationByJobId,
+  markOwnApplicationApplied,
   upsertApplicationFromExtension,
   upsertApplicationWithSnapshot,
 } from './applications';
@@ -80,16 +83,28 @@ describe('rowToApplication migration-observability warning (via getOwnApplicatio
     try {
       // A row shaped like one read from a database that never had migrations 0008/0009 applied
       // — the keys are absent entirely, not present-and-null.
-      const { source_url: _sourceUrl, location: _location, ...rowMissingMigrationColumns } = BASE_ROW;
+      const {
+        source_url: _sourceUrl,
+        location: _location,
+        ...rowMissingMigrationColumns
+      } = BASE_ROW;
 
-      const first = await getOwnApplicationByJobId(chainReturning(rowMissingMigrationColumns), USER_ID, JOB_ID);
+      const first = await getOwnApplicationByJobId(
+        chainReturning(rowMissingMigrationColumns),
+        USER_ID,
+        JOB_ID,
+      );
       expect(first?.sourceUrl).toBeNull();
       expect(first?.location).toBeNull();
       expect(warnSpy).toHaveBeenCalledTimes(1);
       expect(warnSpy.mock.calls[0]?.[0]).toContain('migration 0008/0009');
 
       // A second row shaped the same way must not warn again (once per process, not once per row).
-      await getOwnApplicationByJobId(chainReturning(rowMissingMigrationColumns), USER_ID, JOB_ID);
+      await getOwnApplicationByJobId(
+        chainReturning(rowMissingMigrationColumns),
+        USER_ID,
+        JOB_ID,
+      );
       expect(warnSpy).toHaveBeenCalledTimes(1);
 
       // A normally-shaped row (migration present) must not trigger any further warning either.
@@ -105,7 +120,12 @@ describe('upsertApplicationFromExtension', () => {
   it('calls the upsert_application_from_extension RPC with the authenticated user id, not any client-supplied id', async () => {
     const rpc = vi.fn().mockReturnValue({
       single: vi.fn().mockResolvedValue({
-        data: { application_id: APPLICATION_ID, created: true, final_status: 'SAVED', previous_status: null },
+        data: {
+          application_id: APPLICATION_ID,
+          created: true,
+          final_status: 'SAVED',
+          previous_status: null,
+        },
         error: null,
       }),
     });
@@ -121,7 +141,14 @@ describe('upsertApplicationFromExtension', () => {
       canonicalUrl: 'https://boards.example.com/job/123',
       atsProvider: 'GENERIC',
       externalId: null,
-      autofillSummary: { approved: 0, filled: 0, skipped: 0, failed: 0, unresolved: 0, manual: 0 },
+      autofillSummary: {
+        approved: 0,
+        filled: 0,
+        skipped: 0,
+        failed: 0,
+        unresolved: 0,
+        manual: 0,
+      },
       unresolvedFields: [],
     });
 
@@ -191,7 +218,14 @@ describe('upsertApplicationWithSnapshot', () => {
       canonicalUrl: 'https://boards.example.com/job/123',
       atsProvider: 'GENERIC',
       externalId: null,
-      autofillSummary: { approved: 0, filled: 0, skipped: 0, failed: 0, unresolved: 0, manual: 0 },
+      autofillSummary: {
+        approved: 0,
+        filled: 0,
+        skipped: 0,
+        failed: 0,
+        unresolved: 0,
+        manual: 0,
+      },
       unresolvedFields: [],
     });
 
@@ -233,7 +267,10 @@ describe('upsertApplicationWithSnapshot', () => {
     const result = await upsertApplicationWithSnapshot(supabase, USER_ID, {
       jobId: JOB_ID,
       status: 'SAVED',
-      snapshot: { ...BASE_SNAPSHOT_CONTENT, description: 'Re-analyzed, different content now.' },
+      snapshot: {
+        ...BASE_SNAPSHOT_CONTENT,
+        description: 'Re-analyzed, different content now.',
+      },
       snapshotContentFingerprint: 'v1:different',
       snapshotContentTruncated: false,
       snapshotTruncatedFields: [],
@@ -242,11 +279,257 @@ describe('upsertApplicationWithSnapshot', () => {
       canonicalUrl: 'https://boards.example.com/job/123',
       atsProvider: 'GENERIC',
       externalId: null,
-      autofillSummary: { approved: 0, filled: 0, skipped: 0, failed: 0, unresolved: 0, manual: 0 },
+      autofillSummary: {
+        approved: 0,
+        filled: 0,
+        skipped: 0,
+        failed: 0,
+        unresolved: 0,
+        manual: 0,
+      },
       unresolvedFields: [],
     });
 
     expect(result.snapshotFrozen).toBe(true);
     expect(result.jobSnapshotId).toBe(EXISTING_SNAPSHOT_ID);
+  });
+});
+
+/**
+ * Shared mock for the two-or-three-call sequence markOwnApplicationApplied/
+ * changeOwnApplicationStatus/createOwnApplication each make: a read via getOwnApplication (when
+ * applicable), an update/insert on `applications`, and — conditionally — an insert on
+ * `application_events`. One chain object per table; each chain method returns itself except the
+ * two terminal reads, which resolve independently so both a `select().maybeSingle()` read and a
+ * `select().single()` write can share the same mocked `.eq`/`.select`, matching this file's
+ * existing chain-mock style.
+ */
+function mockApplicationsAndEvents(options: {
+  currentRow: Record<string, unknown> | null;
+  updatedRow?: Record<string, unknown>;
+  eventRow?: Record<string, unknown>;
+}) {
+  const appChain: Record<string, unknown> = {};
+  appChain.select = vi.fn(() => appChain);
+  appChain.insert = vi.fn(() => appChain);
+  appChain.update = vi.fn(() => appChain);
+  appChain.eq = vi.fn(() => appChain);
+  appChain.maybeSingle = vi
+    .fn()
+    .mockResolvedValue({ data: options.currentRow, error: null });
+  appChain.single = vi
+    .fn()
+    .mockResolvedValue({ data: options.updatedRow ?? options.currentRow, error: null });
+
+  const eventChain: Record<string, unknown> = {};
+  eventChain.insert = vi.fn(() => eventChain);
+  eventChain.select = vi.fn(() => eventChain);
+  eventChain.single = vi.fn().mockResolvedValue({
+    data: options.eventRow ?? {
+      id: '66666666-6666-4666-8666-666666666666',
+      user_id: USER_ID,
+      application_id: APPLICATION_ID,
+      event_type: 'STATUS_CHANGE',
+      from_status: null,
+      to_status: null,
+      source: 'USER',
+      email_signal_id: null,
+      reverted_at: null,
+      created_at: '2026-01-01T00:00:00.000Z',
+    },
+    error: null,
+  });
+
+  const from = vi.fn((table: string) =>
+    table === 'applications' ? appChain : eventChain,
+  );
+  const supabase = { from } as unknown as CareerOsSupabaseClient;
+  return { supabase, from, appChain, eventChain };
+}
+
+describe('markOwnApplicationApplied', () => {
+  it('sets status APPLIED, sets applied_at to now, and records a STATUS_CHANGE event on a first transition', async () => {
+    const { supabase, appChain, eventChain } = mockApplicationsAndEvents({
+      currentRow: { ...BASE_ROW, status: 'IN_PROGRESS', applied_at: null },
+      updatedRow: {
+        ...BASE_ROW,
+        status: 'APPLIED',
+        applied_at: '2026-06-01T00:00:00.000Z',
+      },
+    });
+
+    const result = await markOwnApplicationApplied(supabase, USER_ID, APPLICATION_ID);
+
+    expect(result.status).toBe('APPLIED');
+    expect(result.appliedAt).toBe('2026-06-01T00:00:00.000Z');
+    // The write must have been asked to set a non-null applied_at (the exact "now" value is the
+    // mocked updatedRow above; this asserts the *call*, not a specific clock value).
+    expect(appChain.update).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'APPLIED', applied_at: expect.any(String) }),
+    );
+    expect(eventChain.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        from_status: 'IN_PROGRESS',
+        to_status: 'APPLIED',
+        source: 'USER',
+      }),
+    );
+  });
+
+  it('is idempotent when already APPLIED: preserves the existing applied_at and records no duplicate event', async () => {
+    const { supabase, appChain, eventChain } = mockApplicationsAndEvents({
+      currentRow: {
+        ...BASE_ROW,
+        status: 'APPLIED',
+        applied_at: '2026-01-01T00:00:00.000Z',
+      },
+      updatedRow: {
+        ...BASE_ROW,
+        status: 'APPLIED',
+        applied_at: '2026-01-01T00:00:00.000Z',
+      },
+    });
+
+    const result = await markOwnApplicationApplied(supabase, USER_ID, APPLICATION_ID);
+
+    expect(result.appliedAt).toBe('2026-01-01T00:00:00.000Z');
+    expect(appChain.update).toHaveBeenCalledWith(
+      expect.objectContaining({ applied_at: '2026-01-01T00:00:00.000Z' }),
+    );
+    expect(eventChain.insert).not.toHaveBeenCalled();
+  });
+
+  it('preserves the original applied_at when transitioning back to APPLIED after having moved away', async () => {
+    // e.g. APPLIED -> INTERVIEW (Gmail/manual) -> APPLIED again, or a reverted event landing back
+    // on APPLIED — applied_at must still read the very first mark-applied timestamp, not now().
+    const { supabase, appChain, eventChain } = mockApplicationsAndEvents({
+      currentRow: {
+        ...BASE_ROW,
+        status: 'INTERVIEW',
+        applied_at: '2026-01-01T00:00:00.000Z',
+      },
+      updatedRow: {
+        ...BASE_ROW,
+        status: 'APPLIED',
+        applied_at: '2026-01-01T00:00:00.000Z',
+      },
+    });
+
+    const result = await markOwnApplicationApplied(supabase, USER_ID, APPLICATION_ID);
+
+    expect(result.appliedAt).toBe('2026-01-01T00:00:00.000Z');
+    expect(appChain.update).toHaveBeenCalledWith(
+      expect.objectContaining({ applied_at: '2026-01-01T00:00:00.000Z' }),
+    );
+    expect(eventChain.insert).toHaveBeenCalledWith(
+      expect.objectContaining({ from_status: 'INTERVIEW', to_status: 'APPLIED' }),
+    );
+  });
+
+  it('throws without ever attempting a write when the application is not found or not owned', async () => {
+    const { supabase, appChain, eventChain } = mockApplicationsAndEvents({
+      currentRow: null,
+    });
+
+    await expect(
+      markOwnApplicationApplied(supabase, USER_ID, APPLICATION_ID),
+    ).rejects.toThrow(/not found or not owned/);
+    expect(appChain.update).not.toHaveBeenCalled();
+    expect(eventChain.insert).not.toHaveBeenCalled();
+  });
+});
+
+describe('changeOwnApplicationStatus', () => {
+  it('refuses APPLIED without touching the database at all — the dashboard must route APPLIED through markOwnApplicationApplied instead', async () => {
+    const { supabase, from } = mockApplicationsAndEvents({
+      currentRow: { ...BASE_ROW, status: 'IN_PROGRESS' },
+    });
+
+    await expect(
+      changeOwnApplicationStatus(supabase, USER_ID, APPLICATION_ID, 'APPLIED'),
+    ).rejects.toThrow(/markOwnApplicationApplied/);
+    expect(from).not.toHaveBeenCalled();
+  });
+
+  it('still handles every other status normally', async () => {
+    const { supabase, appChain, eventChain } = mockApplicationsAndEvents({
+      currentRow: { ...BASE_ROW, status: 'SAVED' },
+      updatedRow: { ...BASE_ROW, status: 'IN_PROGRESS' },
+    });
+
+    const result = await changeOwnApplicationStatus(
+      supabase,
+      USER_ID,
+      APPLICATION_ID,
+      'IN_PROGRESS',
+    );
+
+    expect(result.status).toBe('IN_PROGRESS');
+    expect(appChain.update).toHaveBeenCalledWith({ status: 'IN_PROGRESS' });
+    expect(eventChain.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        from_status: 'SAVED',
+        to_status: 'IN_PROGRESS',
+        source: 'USER',
+      }),
+    );
+  });
+});
+
+describe('createOwnApplication', () => {
+  it('defaults to status SAVED with a null applied_at when no status is given', async () => {
+    const { supabase, appChain } = mockApplicationsAndEvents({
+      currentRow: null,
+      updatedRow: { ...BASE_ROW, status: 'SAVED', applied_at: null },
+    });
+
+    await createOwnApplication(supabase, USER_ID, {
+      company: 'Acme',
+      title: 'Engineer',
+      status: 'SAVED',
+    });
+
+    expect(appChain.insert).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'SAVED', applied_at: null }),
+    );
+  });
+
+  it('creates with status IN_PROGRESS and a null applied_at', async () => {
+    const { supabase, appChain } = mockApplicationsAndEvents({
+      currentRow: null,
+      updatedRow: { ...BASE_ROW, status: 'IN_PROGRESS', applied_at: null },
+    });
+
+    await createOwnApplication(supabase, USER_ID, {
+      company: 'Acme',
+      title: 'Engineer',
+      status: 'IN_PROGRESS',
+    });
+
+    expect(appChain.insert).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'IN_PROGRESS', applied_at: null }),
+    );
+  });
+
+  it('rejects status APPLIED at runtime — defense-in-depth beneath the type-level guarantee, for a caller that bypasses ApplicationInput entirely (docs/IMPLEMENTATION_PLAN.md Phase 5B.0)', async () => {
+    const { supabase, appChain, eventChain, from } = mockApplicationsAndEvents({
+      currentRow: null,
+    });
+
+    // Simulates a caller that reaches this function without going through
+    // applicationInputSchema.parse(...) or staying correctly typed — the only way 'APPLIED' could
+    // arrive here at all, since ApplicationInput's own type already excludes it.
+    const bypassedInput = {
+      company: 'Acme',
+      title: 'Engineer',
+      status: 'APPLIED',
+    } as unknown as Parameters<typeof createOwnApplication>[2];
+
+    await expect(createOwnApplication(supabase, USER_ID, bypassedInput)).rejects.toThrow(
+      /markOwnApplicationApplied/,
+    );
+    expect(from).not.toHaveBeenCalled();
+    expect(appChain.insert).not.toHaveBeenCalled();
+    expect(eventChain.insert).not.toHaveBeenCalled();
   });
 });

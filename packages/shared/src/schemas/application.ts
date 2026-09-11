@@ -103,14 +103,35 @@ export const applicationSchema = z.object({
 });
 export type Application = z.infer<typeof applicationSchema>;
 
-/** Manual creation from the dashboard — Phase 1 has no extension, so jobId/resumeId are optional. */
+/**
+ * Every status a new application may be created with directly — every status except `APPLIED`.
+ * This is the actual trust boundary (docs/IMPLEMENTATION_PLAN.md Phase 5B.0), not merely a UI
+ * restriction: an application reaches `APPLIED` only through the canonical
+ * `markOwnApplicationApplied` operation, so it is impossible to *construct* an `ApplicationInput`
+ * with `status: 'APPLIED'` at all — not "rejected by a check," but not representable in the type,
+ * the same way `saveApplicationRequestSchema` makes `APPLIED` unrepresentable for the extension's
+ * save flow. Generic creation and generic status mutation (`changeOwnApplicationStatus`, which
+ * throws on `APPLIED` at runtime) must never independently produce `APPLIED` between them.
+ */
+export const creatableApplicationStatusSchema = applicationStatusSchema.exclude([
+  'APPLIED',
+]);
+export type CreatableApplicationStatus = z.infer<typeof creatableApplicationStatusSchema>;
+export const CREATABLE_APPLICATION_STATUSES = creatableApplicationStatusSchema.options;
+
+/**
+ * Manual creation from the dashboard — Phase 1 has no extension, so jobId/resumeId are optional.
+ * No `appliedAt` field: since `status` can never be `APPLIED` here, there is no valid pairing for
+ * it (docs/DATA_MODEL.md: "`applied_at` ... set only by the explicit 'mark as applied' action,
+ * alongside `status = 'APPLIED'`") — a historical-import workflow that backdates `appliedAt` at
+ * creation time is deliberately not built in this slice.
+ */
 export const applicationInputSchema = z.object({
   company: z.string().min(1, 'Company is required'),
   title: z.string().min(1, 'Title is required'),
-  status: applicationStatusSchema.default('SAVED'),
+  status: creatableApplicationStatusSchema.default('SAVED'),
   notes: z.string().nullable().optional(),
   resumeId: uuidSchema.nullable().optional(),
-  appliedAt: isoDateTimeSchema.nullable().optional(),
 });
 export type ApplicationInput = z.infer<typeof applicationInputSchema>;
 
@@ -160,7 +181,11 @@ export type SaveApplicationResponse = z.infer<typeof saveApplicationResponseSche
  * user does anything, per docs/IMPLEMENTATION_PLAN.md Phase 4C. */
 export const trackedApplicationResponseSchema = z.object({
   application: z
-    .object({ id: uuidSchema, status: applicationStatusSchema, updatedAt: isoDateTimeSchema })
+    .object({
+      id: uuidSchema,
+      status: applicationStatusSchema,
+      updatedAt: isoDateTimeSchema,
+    })
     .nullable(),
 });
 export type TrackedApplicationResponse = z.infer<typeof trackedApplicationResponseSchema>;

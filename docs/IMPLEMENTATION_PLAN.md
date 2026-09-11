@@ -15,15 +15,21 @@ phase depends on a later phase's output.
   - [x] Phase 4D — End-to-end integration and safety verification
 - [x] Phase 5A — Opportunity intelligence foundation: immutable job snapshots, requirement-evidence mapping
 - [x] Phase 5 — Manual Gmail synchronization, email classification, status matching (migration +
-  pgTAP verified against a real linked Supabase project; live-OAuth/test-Gmail-account pass still
-  pending, see "Verification status" below)
+      pgTAP verified against a real linked Supabase project; live-OAuth/test-Gmail-account pass still
+      pending, see "Verification status" below)
+- [x] Phase 5B.0 — Unify every APPLIED transition behind one canonical operation (prerequisite
+      plumbing for 5B.1/5B.2, no schema change — see "Phase 5B.0" below)
 - [ ] Phase 6 — Multi-user beta hardening, privacy controls, testing, deployment
 - [ ] Phase 7 — Optional mypham.space integration, public onboarding, future sharing
 
-**Not yet started:** Phase 5B (consistency firewall, frozen submission packets) and Phase 5C
-(next actions/deadlines, dashboard overview) — both explicitly out of scope for 5A, unscoped
-beyond their names, and not yet slotted into the numbered sequence relative to Phase 5's Gmail
-work. That ordering decision is intentionally left open rather than assumed here.
+**Not yet started:** Phase 5B.1 onward (frozen submission packets, the deterministic consistency
+firewall, and everything downstream of it) and Phase 5C (next actions/deadlines, dashboard
+overview) — both explicitly out of scope for 5A, unscoped beyond their names, and not yet slotted
+into the numbered sequence relative to Phase 5's Gmail work. That ordering decision is
+intentionally left open rather than assumed here. Phase 5B.0 (this update) is prerequisite
+plumbing only — **no `submission_packets` table, consistency findings, acknowledgements,
+consistency-check endpoint, rule engine, AI unsupported-claim checking, "what you submitted"
+viewer, or résumé selection exist yet.** Those remain fully unimplemented, per the staged 5B plan.
 
 Phase 4A shipped: the popup classifies every detected field into a review state (sensitive /
 unsupported / already-completed / pending-suggestion / ready / suggested / needs-input),
@@ -55,7 +61,7 @@ GET /api/applications?jobId=... ("already tracked?"), and PATCH /api/application
 side effect of saving or filling). `applications` gained source_url/canonical_url/ats_provider/
 external_id/autofill_summary/unresolved_fields columns (supabase/migrations/
 0008_applications_extension_fields.sql) — no new table, no parallel status model. Approved
-answers are recorded by updating the *existing* generated_answers row's user_decision/
+answers are recorded by updating the _existing_ generated_answers row's user_decision/
 final_text/application_id (packages/database's recordOwnGeneratedAnswerDecision) rather than
 duplicating content. Only sanitized counts and {label, classification, status, reason} summaries
 are persisted — never raw DOM data, full ReviewableField/DetectedField objects, or sensitive
@@ -88,7 +94,7 @@ all found and fixed by exercising the real system rather than by inspection alon
   ran 0008 would never pick up an in-place edit to it, silently diverging from a fresh
   database's schema. Instead, migration 0008 was restored to its exact original committed form
   and a new forward migration, `supabase/migrations/
-  0009_applications_extension_fields_fixes.sql`, carries the `location` column addition plus
+0009_applications_extension_fields_fixes.sql`, carries the `location` column addition plus
   the other Phase 4D corrections below. A fresh database (0001→0009) and a database already at
   0008 (0009 alone) are verified to converge on the identical final schema.
 - **Dedup-index/query mismatch**: the `canonical_url` unique index didn't exclude rows already
@@ -101,21 +107,21 @@ all found and fixed by exercising the real system rather than by inspection alon
   `job_id` ownership inside the function (it runs via service-role, bypassing RLS), bounded the
   `unique_violation` retry loop, normalized empty-string `external_id`/`canonical_url` to `null`.
 - **`recordOwnGeneratedAnswerDecision` hardening**: now scoped by `job_id` in addition to
-  `user_id`, so a same-user answer generated for a *different* job can never be silently
+  `user_id`, so a same-user answer generated for a _different_ job can never be silently
   re-pointed onto the application being saved.
 - **CI-crash fix, reassessed**: `applicationSchema` required the Phase 4C columns to always be
   present; any database without migrations 0008/0009 applied (e.g. a CI Supabase project, since
   migrations aren't run in CI) returns rows missing those keys entirely, not `null` — changed to
   `.nullable().default(null)` so those rows parse instead of throwing. Making the fields
   optional this way trades a loud crash for a quiet gap, so it is deliberately narrow: it only
-  affects the *read* path's 7 Phase 4C/4D columns, `rowToApplication` is a pure mapper (no
-  writes, nothing gets corrupted by defaulting to null), and the *write* path
+  affects the _read_ path's 7 Phase 4C/4D columns, `rowToApplication` is a pure mapper (no
+  writes, nothing gets corrupted by defaulting to null), and the _write_ path
   (`upsert_application_from_extension`) still fails loudly with a real Postgres error if those
   columns don't exist — a missing migration can never silently succeed at saving an
   application. What the schema relaxation alone would have left silent is a production
   environment quietly reading degraded (all-null) data with no signal anything is wrong; that
   gap is closed by `warnIfMigrationColumnsMissing` in `packages/database/src/queries/
-  applications.ts`, which logs a warn-once-per-process message the first time a row is missing
+applications.ts`, which logs a warn-once-per-process message the first time a row is missing
   these columns, naming migrations 0008/0009 explicitly. The schema was not broadened beyond
   the original 7 fields.
 
@@ -772,11 +778,218 @@ caught and fixed by this live verification, not by inspection.
 
 ### Explicitly excluded from Phase 5A
 
-- Snapshot-history *browsing UI* — the database supports multiple immutable versions per job
+- Snapshot-history _browsing UI_ — the database supports multiple immutable versions per job
   and retains superseded runs, but there is no UI to browse anything but the current one.
 - Salary, work-mode, remote-location-restriction, and work-authorization-language
-  *extraction* — the columns exist, nullable, unpopulated; no current extractor produces them.
+  _extraction_ — the columns exist, nullable, unpopulated; no current extractor produces them.
 - The consistency firewall and frozen submission packet (Phase 5B).
 - Next actions/deadlines and the dashboard overview section (Phase 5C).
 - Any change to the extension's autofill/save/mark-applied flow verified in Phase 4D — the
   extension itself was not touched.
+
+---
+
+## Phase 5B.0 — Unify every APPLIED transition behind one canonical operation
+
+Prerequisite plumbing for Phase 5B, done as its own slice before any consistency-firewall or
+submission-packet work starts. **This slice adds no table, no migration, and no new concept —
+it only consolidates existing status-transition code.** `submission_packets`, consistency
+findings, acknowledgements, a consistency-check endpoint, the deterministic rule engine, any
+AI-assisted unsupported-claim checking, a "what you submitted" viewer, and résumé-version
+selection are all still entirely unimplemented; none of that starts until 5B.1.
+
+### Why the two known APPLIED paths had to be unified
+
+Before this slice, two independent code paths could set `applications.status = 'APPLIED'`, with
+observably different behavior:
+
+1. The extension's `PATCH /api/applications/:id/mark-applied` → `markOwnApplicationApplied` —
+   set `applied_at` (unconditionally, to `now()`, even on a repeat call) and recorded a
+   `STATUS_CHANGE` event.
+2. The dashboard's generic status `<select>` → `changeApplicationStatus` server action →
+   `changeOwnApplicationStatus` — accepted `APPLIED` like any other status and never touched
+   `applied_at` at all.
+
+A future consistency-firewall gate (5B.2) and frozen submission packet (5B.1) both need to run
+at the exact moment status becomes `APPLIED` — with two divergent entry points, wiring the gate
+into only one would make it trivially bypassable through the other. This had to be fixed first,
+not as a side effect of 5B.1.
+
+**A repository-wide search for every APPLIED-capable call site turned up two more, beyond the
+two already known:**
+
+3. **`createOwnApplication`** (the dashboard's "Add application" form, `apps/web/app/(app)/
+applications/page.tsx`) originally let a user pick any status — including `APPLIED` —
+   directly at creation time. This was a real, separate bug, not just an architectural gap: the
+   form had no `appliedAt` field, so a row created this way ended up with `status = 'APPLIED'`
+   and `applied_at = null` forever, directly violating `docs/DATA_MODEL.md`'s own documented
+   invariant. A first pass fixed only the `applied_at` symptom (defaulting it to `now()`) —
+   **superseded by a follow-up fix in this same slice**: that still left a structural bypass
+   around the canonical operation, which matters concretely for 5B.1, where atomic
+   submission-packet creation attaches to `markOwnApplicationApplied` — an application that
+   reached `APPLIED` via `createOwnApplication` would never pass through that seam and would
+   have no packet. **Direct `APPLIED` creation is now removed entirely, not patched further**:
+   `ApplicationInput.status` is typed as `CreatableApplicationStatus`
+   (`packages/shared/src/schemas/application.ts`), a Zod enum that structurally excludes
+   `APPLIED` — `applicationInputSchema.parse(...)` rejects it, and no TS caller can construct an
+   `ApplicationInput` with `status: 'APPLIED'` at all, the same way
+   `saveApplicationRequestSchema` already made `APPLIED` unrepresentable for the extension's save
+   flow. `createOwnApplication` additionally rejects it at runtime (`(input.status as string) ===
+'APPLIED'` → throw) as defense-in-depth beneath that type boundary, for any caller that reaches
+   the function via an unsafe cast or untyped JS rather than a real `ApplicationInput` — the
+   invariant does not depend on every caller staying correctly typed, let alone on the UI. The
+   "Add application" form's status `<select>` no longer offers `APPLIED` as an option, but that's
+   a consequence of the type change, not the enforcement mechanism itself. `applied_at` is now
+   unconditionally
+   `null` at creation (there is no longer any status pairing that would make it non-null), and the
+   now-vestigial `appliedAt` input field was removed from `applicationInputSchema` along with it
+   — a historical-import workflow (backdating `appliedAt` for an application already submitted
+   before the user started tracking it here) is a real, plausible future feature, but is
+   deliberately not built in this slice.
+4. **`revertApplicationEvent`** (`packages/database/src/queries/application-events.ts`, the
+   "undo for automated updates" mechanism, `docs/USER_FLOWS.md` §6) can restore
+   `status = 'APPLIED'` when undoing an event whose `fromStatus` was `APPLIED` — e.g. undoing a
+   Gmail-driven or manual move away from `APPLIED`. **Deliberately left unmodified — this does
+   not constitute an independent user-facing mark-as-applied path.** It cannot _originate_ an
+   `APPLIED` transition: it only restores a status that already, verifiably, existed on this same
+   application's own timeline (`event.fromStatus`, read from a `STATUS_CHANGE` row that itself
+   only exists because `APPLIED` was reached once already, through a real canonical-operation
+   call). There is no way to fabricate an `APPLIED`-`fromStatus` event out of nothing, and nothing
+   about it looks like a user clicking "I just applied" — it is exclusively "undo," gated on an
+   event that was genuinely recorded. Consistent with that, it already never touches `applied_at`,
+   which is precisely correct: an untouched `applied_at` is a _preserved_ `applied_at`, satisfying
+   the "later transition back to APPLIED: preserve the original `applied_at`" rule below by
+   construction. Routing it through the canonical mark-applied operation would be semantically
+   wrong (it would either fabricate a fresh "explicit user action" event where the real action was
+   "undo", or need special-casing to suppress that) for a case its current behavior already gets
+   right.
+
+`Gmail sync` (`packages/email/src/sync.ts`) and the user-confirmed Gmail path
+(`confirmOwnEmailSignal`) were checked and are **structurally incapable** of ever producing
+`APPLIED`: both derive their target status exclusively from `EMAIL_CLASSIFICATION_TO_STATUS`
+(`packages/shared/src/schemas/email-signal.ts`), whose value type never includes `APPLIED` — this
+is a compile-time guarantee, not just an observed absence. `POST /api/applications` (the
+extension's save endpoint) was already correctly guarded at the schema level
+(`saveApplicationRequestSchema` restricts `status` to `SAVED`/`IN_PROGRESS`; a test already
+asserts `APPLIED` is rejected with 400) and needed no change.
+
+### The canonical integration point
+
+`markOwnApplicationApplied` (`packages/database/src/queries/applications.ts`) is now the _one_
+function responsible for the entire APPLIED transition: verifying ownership, setting
+`status = 'APPLIED'`, applying the `applied_at` rule below, recording the `STATUS_CHANGE` event
+(only when the status actually changes), and returning the updated application. Both known entry
+points call it exclusively:
+
+- The extension route (`PATCH /api/applications/:id/mark-applied`) — unchanged, already called it.
+- The dashboard's `changeApplicationStatus` server action (`apps/web/app/(app)/applications/
+actions.ts`) — now branches: `status === 'APPLIED'` calls `markOwnApplicationApplied`; every
+  other status still goes through `changeOwnApplicationStatus` unchanged.
+
+`changeOwnApplicationStatus` itself now throws immediately (before touching the database) if
+ever called with `toStatus === 'APPLIED'` — a defensive guard, not just documentation, so a
+future call site cannot silently reintroduce a second implementation. This was a plain-TS-function
+change, not a new Postgres RPC: unlike Phase 5A's snapshot/evidence tables, this operation
+touches no new table, requires no cross-table atomic promotion, and needs no immutability
+enforcement (that begins in 5B.1) — the smallest change that satisfies "one canonical operation"
+is consolidating the existing function, matching this codebase's existing idiom for this class of
+operation (`markOwnApplicationApplied` and `changeOwnApplicationStatus` were already both
+plain functions doing a table update plus a separate event-insert call, not wrapped in an
+explicit transaction — this slice preserves that same shape rather than inventing stricter
+transactionality other functions in this file don't have either).
+
+### `applied_at` semantics
+
+No existing code or doc previously stated an idempotency rule explicitly — `docs/DATA_MODEL.md`
+only said `applied_at` is "set only by the explicit 'mark as applied' action, alongside
+`status = 'APPLIED'`," which is consistent with, but doesn't fully specify, the rule below. The
+prior implementation actually violated the intended intent: it overwrote `applied_at` to `now()`
+on _every_ call, so calling mark-applied twice (or the dashboard reaching `APPLIED` a second
+time) would silently bump the timestamp. Adopted rule, now enforced by a single line
+(`current.appliedAt ?? new Date().toISOString()`) rather than a branchy special case:
+
+- First transition to `APPLIED` → `applied_at = now()`.
+- Repeated mark-applied while already `APPLIED` → idempotent; `applied_at` is preserved (and no
+  duplicate `STATUS_CHANGE` event is recorded).
+- `APPLIED` → another status → `applied_at` is preserved (`changeOwnApplicationStatus` never
+  touches this column, for any status).
+- Later transition back to `APPLIED` → `applied_at` is preserved (still non-null from the first
+  time, so the `??` never re-fires).
+
+Rationale, matching the product intent: `applied_at` records when the application was
+_originally_ submitted, not the most recent status-toggle timestamp.
+
+### Explicit-user-action semantics preserved
+
+`APPLIED` is still never inferred from autofill, saving, generated answers, Gmail, page state, or
+generic application creation — `EMAIL_CLASSIFICATION_TO_STATUS` structurally cannot produce it,
+`saveApplicationRequestSchema` rejects it at the schema level, and `applicationInputSchema` now
+does too (see item 3 above). The only way an application reaches `APPLIED` for the first time is
+an explicit "Mark as Applied" click, in either the extension or the dashboard, both of which call
+`markOwnApplicationApplied`.
+
+### The architectural invariant this slice establishes
+
+> An existing application reaches `APPLIED` only through the canonical
+> `markOwnApplicationApplied` operation. Generic creation and generic status mutation cannot
+> independently produce `APPLIED`.
+>
+> `revertApplicationEvent` may restore a previously-held `APPLIED` state (undoing a later
+> automated or manual change away from it) without changing `applied_at` — this is a restore of
+> real prior state on the same application's own timeline, not an independent way to originate
+> `APPLIED`, and is not a second mark-as-applied path.
+
+### `docs/USER_FLOWS.md` — checked, not changed
+
+§5 step 6 already reads carefully: "User explicitly clicks Mark as Applied in the popup (a
+dedicated action with its own inline confirm step), or selects `APPLIED` from the status dropdown
+on the dashboard's generic manual-status-change control." The parenthetical confirm-step claim is
+scoped to the popup clause only — the dashboard clause never claims a confirmation step, and the
+dashboard's actual UI (a `<select>` + "Update status" submit button) still has none. No
+discrepancy was found, so no change was made here.
+
+### Files changed
+
+- `packages/shared/src/schemas/application.ts` — new `creatableApplicationStatusSchema`/
+  `CREATABLE_APPLICATION_STATUSES` (every status except `APPLIED`); `applicationInputSchema`'s
+  `status` narrowed to it; `appliedAt` removed from `applicationInputSchema`/`ApplicationInput`.
+- `packages/database/src/queries/applications.ts` — `markOwnApplicationApplied` (idempotent
+  `applied_at` + conditional event), `changeOwnApplicationStatus` (rejects `APPLIED`),
+  `createOwnApplication` (`APPLIED` now unrepresentable via its input type; `applied_at` always
+  `null` at creation).
+- `apps/web/app/(app)/applications/actions.ts` — `changeApplicationStatus` branches on `APPLIED`.
+- `apps/web/app/(app)/applications/page.tsx` — "Add application" form's status `<select>` uses
+  `CREATABLE_APPLICATION_STATUSES`, not the full `APPLICATION_STATUSES` list (the filter dropdown
+  above it is unaffected — an already-`APPLIED` application must still be filterable).
+- Tests: `packages/shared/src/schemas/schemas.test.ts`, `packages/database/src/queries/
+applications.test.ts`, `apps/web/app/(app)/applications/actions.test.ts`.
+
+### Tests
+
+Coverage for: a first `IN_PROGRESS → APPLIED` transition (status, `applied_at`, event); idempotent
+repeat invocation (no `applied_at` rewrite, no duplicate event); transitioning back to `APPLIED`
+after moving away (preserves the original `applied_at`); not-found/not-owned (throws, no write
+attempted); `changeOwnApplicationStatus` refusing `APPLIED` without any database call; the
+dashboard action routing `APPLIED` through `markOwnApplicationApplied` and every other status
+through `changeOwnApplicationStatus`, each exclusively; `createOwnApplication` no longer accepting
+`APPLIED` at all (schema-level rejection, and a TS-level construction check); and
+`applicationInputSchema` rejecting `status: 'APPLIED'` directly. The pre-existing
+`mark-applied/route.test.ts` suite was re-run unmodified and still passes, confirming the
+extension's entry point is unaffected. No pgTAP suite was added — this slice makes no database
+schema change.
+
+### Definition of done
+
+- One function (`markOwnApplicationApplied`) implements the entire APPLIED transition; every
+  known entry point calls it; the generic status function refuses to handle `APPLIED` at all.
+- `applied_at` follows the documented idempotent rule above, verified by tests, not just asserted
+  in prose.
+- `packages/database`, `apps/web` typecheck and lint clean; the full `@career-os/database` and
+  `@career-os/web` unit/route-test suites pass.
+
+### Explicitly excluded from Phase 5B.0
+
+Everything named at the top of this section — `submission_packets`, consistency findings and
+acknowledgements, the consistency-check endpoint, the deterministic rule engine, AI-assisted
+unsupported-claim checking, the "what you submitted" viewer, and résumé-version selection. All of
+Phase 5B's actual firewall/packet behavior starts at 5B.1.

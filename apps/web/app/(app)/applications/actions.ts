@@ -4,6 +4,7 @@ import {
   changeOwnApplicationStatus,
   createOwnApplication,
   deleteOwnApplication,
+  markOwnApplicationApplied,
   revertApplicationEvent,
   updateOwnApplication,
 } from '@career-os/database';
@@ -37,11 +38,22 @@ export async function deleteApplication(id: string) {
   redirect('/applications');
 }
 
+/**
+ * The dashboard's one status-change entry point — branches on APPLIED rather than passing it
+ * through to changeOwnApplicationStatus (which now refuses it outright), so this generic control
+ * can never bypass the canonical APPLIED transition's applied_at/event semantics
+ * (docs/IMPLEMENTATION_PLAN.md Phase 5B.0). Every other status still goes through the ordinary
+ * status mutation, unchanged.
+ */
 export async function changeApplicationStatus(id: string, formData: FormData) {
   const user = await requireUser();
   const supabase = await createClient();
   const status = applicationStatusSchema.parse(formData.get('status'));
-  await changeOwnApplicationStatus(supabase, user.id, id, status);
+  if (status === 'APPLIED') {
+    await markOwnApplicationApplied(supabase, user.id, id);
+  } else {
+    await changeOwnApplicationStatus(supabase, user.id, id, status);
+  }
   revalidatePath('/applications');
   revalidatePath(`/applications/${id}`);
 }
