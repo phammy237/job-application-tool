@@ -30,7 +30,7 @@ plan.
 | [`docs/DATA_MODEL.md`](docs/DATA_MODEL.md)                     | Full Supabase schema: tables, indexes, RLS policies                                |
 | [`docs/EXTENSION_DESIGN.md`](docs/EXTENSION_DESIGN.md)         | Manifest V3 permissions, adapter architecture, field classification, popup UI      |
 | [`docs/AI_GROUNDING.md`](docs/AI_GROUNDING.md)                 | Retrieval pipeline, Claude response contract, fabrication-rejection gate           |
-| [`docs/EMAIL_INTEGRATION.md`](docs/EMAIL_INTEGRATION.md)       | Gmail OAuth, manual sync, classification, data minimization                        |
+| [`docs/EMAIL_INTEGRATION.md`](docs/EMAIL_INTEGRATION.md)       | Gmail OAuth, attended sync (manual + throttled auto-check), classification, data minimization |
 | [`docs/SECURITY_AND_PRIVACY.md`](docs/SECURITY_AND_PRIVACY.md) | Threat model, RLS strategy, secrets, deletion flows                                |
 | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)                     | Domains, environments, hosting, CI/CD shape                                        |
 | [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md)   | Phase-by-phase build plan                                                          |
@@ -71,7 +71,8 @@ Gmail API (server-side OAuth only), Vitest, Playwright, ESLint, Prettier, npm wo
   always clicks submit.
 - **No surveillance.** The extension inspects the page only after an explicit user action —
   no screen recording, keystroke capture, browsing history, or background monitoring.
-- **Gmail is optional and manual.** No continuous mailbox monitoring in the initial version.
+- **Gmail is optional and attended-only.** Sync runs from a manual click or a throttled
+  auto-check while the page is open — no continuous mailbox monitoring in the initial version.
 
 ## Development
 

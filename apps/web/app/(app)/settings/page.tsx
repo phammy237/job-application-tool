@@ -107,7 +107,7 @@ export default async function SettingsPage({
           <CardTitle>Gmail</CardTitle>
           <CardDescription>
             {gmailGloballyEnabled
-              ? 'Manually check your inbox for application status updates. Always opt-in, always click-triggered — never a background job.'
+              ? 'Check your inbox for application status updates — manually, or automatically (throttled) while you have this page open. Always opt-in, never a background job.'
               : 'Not yet available for this account. See docs/EMAIL_INTEGRATION.md.'}
           </CardDescription>
         </CardHeader>

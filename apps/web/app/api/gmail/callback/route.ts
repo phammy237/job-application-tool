@@ -3,10 +3,9 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createOwnEmailConnection, encryptRefreshToken, updateOwnGmailIntegrationEnabled } from '@career-os/database';
 import { exchangeCodeForTokens } from '@career-os/email';
 import { getCurrentUser } from '../../../../lib/auth';
-import { getGoogleOAuthRedirectUri } from '../../../../lib/gmail-oauth-config';
+import { OAUTH_STATE_COOKIE, getGoogleOAuthRedirectUri } from '../../../../lib/gmail-oauth-config';
 import { isGmailIntegrationGloballyEnabled } from '../../../../lib/gmail-feature-gate';
 import { createClient } from '../../../../lib/supabase/server';
-import { OAUTH_STATE_COOKIE } from '../connect/route';
 
 function stateMatches(expected: string, actual: string): boolean {
   const expectedBuf = Buffer.from(expected);

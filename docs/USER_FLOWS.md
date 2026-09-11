@@ -153,5 +153,9 @@ Each of the following is a first-class, discoverable action (not "contact suppor
 ## 9. Out of scope for these flows
 
 - Any flow where the system submits, signs, or attests on the user's behalf.
-- Any flow that runs without a preceding explicit user action (extension analysis, Gmail
-  sync, and autofill are all click-triggered, never scheduled or automatic in v1).
+- Any flow that runs without a preceding, attended user action. Extension analysis and
+  autofill are strictly click-triggered. Gmail sync is either click-triggered (**Sync
+  Gmail**) or a throttled auto-check on `/settings` page load/reload — both require the
+  signed-in user to actually have the app open in that moment; neither is scheduled,
+  background, or unattended (`docs/EMAIL_INTEGRATION.md` §1, `docs/IMPLEMENTATION_PLAN.md`
+  Phase 5 auto-sync note).

@@ -5,8 +5,10 @@ import { isGmailSyncEnabledForUser } from '../../../../lib/gmail-feature-gate';
 import { createClient } from '../../../../lib/supabase/server';
 
 /** Bounds worst-case request duration — see docs/IMPLEMENTATION_PLAN.md's sync-route design
- * decision. No background jobs/streaming: manual, click-triggered, one page of messages per
- * click, by design. */
+ * decision. No background jobs/streaming: every call here is a synchronous request/response,
+ * triggered either by a manual "Sync Gmail" click or by gmail-section.tsx's throttled
+ * auto-sync-on-page-load check — both require the signed-in user to have the page open in that
+ * moment, never a scheduled or unattended trigger. One page of messages per call, by design. */
 export const maxDuration = 60;
 
 /**

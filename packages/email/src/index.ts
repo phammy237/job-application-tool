@@ -1,6 +1,7 @@
 /**
- * Server-only Gmail integration — OAuth, manual sync, classification, and minimal-retention
- * signal storage described in docs/EMAIL_INTEGRATION.md.
+ * Server-only Gmail integration — OAuth, sync (manual click or throttled auto-check on page
+ * load), classification, and minimal-retention signal storage described in
+ * docs/EMAIL_INTEGRATION.md.
  *
  * CLAUDE.md: this package must never be imported from apps/extension or from any
  * "use client" module in apps/web — Gmail OAuth secrets and refresh tokens live only in code

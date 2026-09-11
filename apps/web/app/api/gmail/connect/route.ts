@@ -2,11 +2,10 @@ import { randomBytes } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { buildAuthUrl } from '@career-os/email';
 import { getCurrentUser } from '../../../../lib/auth';
-import { getGoogleOAuthRedirectUri } from '../../../../lib/gmail-oauth-config';
+import { OAUTH_STATE_COOKIE, getGoogleOAuthRedirectUri } from '../../../../lib/gmail-oauth-config';
 import { isGmailIntegrationGloballyEnabled } from '../../../../lib/gmail-feature-gate';
 import { createClient } from '../../../../lib/supabase/server';
 
-export const OAUTH_STATE_COOKIE = 'gmail_oauth_state';
 const STATE_COOKIE_MAX_AGE_SECONDS = 10 * 60;
 
 /**

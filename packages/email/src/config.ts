@@ -12,9 +12,10 @@ export const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 export const GOOGLE_REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
 export const GMAIL_API_BASE_URL = 'https://gmail.googleapis.com/gmail/v1';
 
-/** Single-click sync is a synchronous request/response with no background jobs (spec explicitly
- * excludes polling) — this bounds worst-case request duration. A user needing more just clicks
- * Sync Gmail again; the dedup constraint + last_synced_at make repeated syncs cheap and safe. */
+/** Every sync run — a manual click or the throttled auto-check on page load — is a synchronous
+ * request/response with no background jobs (spec explicitly excludes unattended polling) — this
+ * bounds worst-case request duration. A user needing more just clicks Sync Gmail again (or
+ * reloads the page); the dedup constraint + last_synced_at make repeated syncs cheap and safe. */
 export const MAX_MESSAGES_PER_SYNC = 25;
 
 /**

@@ -21,8 +21,9 @@ without a rewrite.
    allowed to use about the candidate.
 4. **AI-assisted tailoring system** — ranks approved facts against a job description and
    drafts suggestions for the user to review, edit, approve, or skip.
-5. **Optional Gmail application-status tracker** — manual sync that classifies
-   recruiting-related emails and proposes application-timeline updates for confirmation.
+5. **Optional Gmail application-status tracker** — attended sync (manual click, or a
+   throttled auto-check while `/settings` is open) that classifies recruiting-related emails
+   and proposes application-timeline updates for confirmation.
 6. **Opportunity intelligence — requirement-evidence mapping (Phase 5A)** — an immutable,
    versioned archive of a posting's content captured at save time, plus a user-triggered,
    per-requirement breakdown of which approved facts support it. Never a fabricated match, and
@@ -41,8 +42,9 @@ These are deliberate exclusions, not gaps to be filled opportunistically:
 - **No continuous surveillance.** No screen recording, no keystroke capture, no browsing
   history collection, no background page monitoring. The extension only inspects the current
   page after an explicit user action. See `docs/EXTENSION_DESIGN.md`.
-- **No continuous mailbox monitoring** in the initial version. Gmail sync is a manual,
-  user-triggered button.
+- **No continuous mailbox monitoring** in the initial version. Gmail sync only ever runs
+  attended — a manual click, or a throttled auto-check while the user has `/settings` open —
+  never a background job, cron, or webhook (`docs/EMAIL_INTEGRATION.md` §1).
 - **No billing in the initial version.** Usage limits and feature flags are built now so
   billing can be added later without restructuring; the billing system itself is documented,
   not implemented (see `docs/IMPLEMENTATION_PLAN.md` Phase 7).

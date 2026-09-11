@@ -152,7 +152,8 @@ unit/integration suite (271+ tests, see the Phase 4D report for the exact final 
 **Phase 5 shipped**: server-side Google OAuth (`packages/email`), AES-256-GCM refresh-token
 encryption (`packages/database/src/crypto/token-encryption.ts`, resolving the encryption-key
 question `docs/SECURITY_AND_PRIVACY.md` §12 had left open in favor of an application-level key
-over Supabase Vault), manual-only Gmail sync capped at 25 messages per click (no background jobs),
+over Supabase Vault), manual-only Gmail sync capped at 25 messages per click (no background jobs;
+later extended by a throttled, attended auto-sync-on-page-load — see the note below),
 a deterministic keyword classifier tried first (`packages/email/src/deterministic-classifier.ts`)
 with a Claude fallback for ambiguous messages only (`packages/ai/src/generate-email-classification.ts`,
 reusing the Phase 3/5A pipeline's rate-limiting, untrusted-content tagging, and rejection-gate
@@ -193,13 +194,45 @@ temp table and selected back as one result — the test file itself was not modi
 output was observed. The verification ran inside a `begin ... rollback` transaction (the test
 file's own structure), so no test data persists in the real database.
 
-What remains **not** verified: no real Google OAuth client or test Gmail account was exercised
-end-to-end — the OAuth/Gmail-API request shapes (`packages/email/src/oauth.ts`, `gmail-client.ts`)
-were written directly against Google's documented REST contracts but never called against a live
-endpoint, since that requires a real `GOOGLE_OAUTH_CLIENT_ID`/`SECRET` pair and a test Gmail
-account added to the consent screen's test-user list — neither exists in this environment. Before
-a real user exercises this phase: complete one real Connect → Sync → Confirm → Disconnect pass
-with a test Gmail account, per `docs/EMAIL_INTEGRATION.md` §6.
+**Live OAuth verified** against a real Google Cloud OAuth client and the product owner's own
+Gmail account (added as a consent-screen test user): Connect → Google consent → callback →
+`email_connections` row created with the encrypted refresh token and correct `gmail.readonly`
+scope, confirmed directly in the database. Sync was also exercised live against a real inbox (25
+messages processed); one bug was caught only by this live pass, not by unit tests — a stray
+trailing backslash accidentally included in the local `ANTHROPIC_API_KEY` value corrupted the key
+and made every Claude fallback classification call fail with `provider_error` (visible in
+`ai_usage_events`), which a mocked-Claude-client unit test could never have caught since it never
+exercises a real API key. Confirm/Decline and Disconnect were not yet exercised live as of this
+writing.
+
+**Auto-sync-on-page-load (deviation from the original Phase 5 design)**: the Phase 5 spec above
+(`## Phase 5 — Manual Gmail synchronization...`) specified sync as manual-only — a button click,
+nothing else. The implementation now adds a second trigger: `apps/web/app/(app)/settings/
+gmail-section.tsx`'s `SyncGmailButton` also fires a sync automatically when `/settings` loads or
+reloads, if the connection's last sync was more than `AUTO_SYNC_THROTTLE_MS` (5 minutes) ago,
+guarded against firing twice under React 18 Strict Mode's dev-only double-invoke of effects via a
+`hasAutoSyncedRef` ref set before the throttle check runs.
+
+This changes v1's interaction model; it is not a background-sync feature. The prohibition this
+repo actually cares about — no cron job, no webhook, no push notification, no IMAP idle
+connection, no polling while the user is away from the app — is unchanged and still holds: both
+the manual click and the auto-check only ever run inside a real request made while the signed-in
+user has the `/settings` tab open in that moment, and neither runs if the user isn't there. The
+distinction that matters is **attended vs. unattended**, not **click vs. no-click**.
+`docs/EMAIL_INTEGRATION.md` §1 and `docs/USER_FLOWS.md` §9 have been updated to state this
+distinction directly rather than the narrower "click-triggered, never automatic" language they
+used before.
+
+There is no record in this repo of this specific change being raised with the product owner as a
+discussion before implementation — this note does not claim that happened. If it wasn't raised,
+it still should be, per this file's own "raise it explicitly rather than quietly working around
+it" rule: continuous/background Gmail access patterns are scrutinized more heavily in Google's
+OAuth verification process than click-triggered access, and while a throttled, attended,
+per-page-load check is not the same as unattended polling, it is a materially different access
+pattern than what Phase 5 originally scoped and was verified against. If this product ever gains
+a second real user, this decision should be revisited — the throttle is a reasonable default for
+one person's own inbox, not a validated design for arbitrary Gmail-API/Claude cost exposure
+across many accounts.
 
 Update this checklist when a phase's definition of done is met and the next one starts —
 this is the single source of truth for "what phase are we on," so it needs to stay current,

@@ -32,9 +32,10 @@ const AUTO_APPLY_THRESHOLD = 0.85;
 
 /**
  * Single synchronous request/response, capped at MAX_MESSAGES_PER_SYNC — no background jobs or
- * streaming, matching docs/EMAIL_INTEGRATION.md's manual/click-triggered-only requirement. A
- * user needing more just clicks Sync Gmail again; the dedup constraint + last_synced_at make
- * repeated syncs cheap and safe, giving free "pagination."
+ * streaming, matching docs/EMAIL_INTEGRATION.md's attended-only requirement (a manual click or
+ * the throttled auto-check on page load — never unattended). A user needing more just clicks
+ * Sync Gmail again; the dedup constraint + last_synced_at make repeated syncs cheap and safe,
+ * giving free "pagination."
  */
 export async function runGmailSync(
   supabase: CareerOsSupabaseClient,

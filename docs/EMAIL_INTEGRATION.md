@@ -1,8 +1,20 @@
 # Email Integration
 
 Gmail sync is optional, off by default (`gmail_integration_enabled` feature flag, plus a
-per-user toggle in `user_settings`), and manual in v1: there is no background polling, no
-push notifications, no cron job reading anyone's mailbox without a click.
+per-user toggle in `user_settings`), and **attended-only** in v1 — every sync run happens
+inside a real request made while the signed-in user actually has the app open, never while
+they're away. Two things trigger it:
+
+- **Manual.** The user clicks **Sync Gmail** in `/settings`.
+- **Throttled auto-check on page load.** `/settings` also fires the same sync automatically
+  when the page loads or reloads, if the connection's last sync was more than five minutes
+  ago (`AUTO_SYNC_THROTTLE_MS` in `apps/web/app/(app)/settings/gmail-section.tsx`).
+
+Neither is background/unattended sync. The distinction this doc cares about is **attended vs.
+unattended**, not **click vs. no-click**: there is still no cron job, no webhook, no push
+notification, no IMAP idle connection, and no polling that runs while the user doesn't have
+the page open. See `docs/IMPLEMENTATION_PLAN.md`'s Phase 5 auto-sync note for why the
+auto-check was added on top of the originally-specified manual-only design.
 
 ## 1. Flow
 
@@ -10,8 +22,11 @@ push notifications, no cron job reading anyone's mailbox without a click.
    through Google's server-side OAuth flow (`packages/email`); the extension is not involved
    and never sees the Gmail token. On success, an `email_connections` row is created with the
    refresh token encrypted at rest (§5).
-2. **Manual sync.** User clicks **Sync Gmail**. There is no automatic trigger in v1 — no
-   webhook, no scheduled job, no IMAP idle connection.
+2. **Sync runs — manual click or throttled auto-check, always attended.** Either the user's
+   **Sync Gmail** click or the page-load auto-check (see above) hits the same
+   `POST /api/gmail/sync` route — there is no separate code path for the two. Nothing else
+   triggers a sync: no scheduled/cron job, no webhook, no IMAP idle connection, independently
+   of a real page load initiated by the signed-in user.
 3. **Search.** Server searches the mailbox (Gmail API `messages.list` with a query scoped to
    likely recruiting senders/subjects) for candidate messages — retrieving only what's needed
    for classification (headers + snippet), not full raw MIME bodies by default.

@@ -3,7 +3,26 @@
 import { Button, Select } from '@career-os/ui';
 import type { EmailConnection, EmailSignal } from '@career-os/shared';
 import { useRouter } from 'next/navigation';
-import { useState, useTransition } from 'react';
+import { useEffect, useRef, useState, useTransition } from 'react';
+
+/**
+ * Auto-sync-on-page-load, throttled — a documented shift from manual-only to attended
+ * (docs/EMAIL_INTEGRATION.md §1, docs/USER_FLOWS.md §9): sync now runs from a manual click OR
+ * this auto-check, made for this single-user deployment (see docs/IMPLEMENTATION_PLAN.md's
+ * Phase 5 note on it). This is still NOT a background job: nothing runs unless a human has the
+ * /settings tab open and loads/reloads it, no cron, no unattended token refresh outside a real
+ * request. The throttle exists so navigating to /settings repeatedly doesn't hammer the
+ * Gmail/Claude APIs on every load.
+ *
+ * Both are exported for testing (`isDueForAutoSync`'s throttle-boundary behavior) rather than
+ * kept module-private — this doesn't change runtime behavior.
+ */
+export const AUTO_SYNC_THROTTLE_MS = 5 * 60 * 1000;
+
+export function isDueForAutoSync(lastSyncedAt: string | null): boolean {
+  if (!lastSyncedAt) return true;
+  return Date.now() - new Date(lastSyncedAt).getTime() > AUTO_SYNC_THROTTLE_MS;
+}
 
 interface ApplicationOption {
   id: string;
@@ -54,7 +73,7 @@ export function GmailSection({
           </p>
         </div>
         <div className="flex gap-2">
-          <SyncGmailButton />
+          <SyncGmailButton lastSyncedAt={connection.lastSyncedAt} />
           <DisconnectGmailButton />
         </div>
       </div>
@@ -110,46 +129,68 @@ function ConnectGmailButton() {
   );
 }
 
-function SyncGmailButton() {
+function SyncGmailButton({ lastSyncedAt }: { lastSyncedAt: string | null }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [summary, setSummary] = useState<SyncSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [autoTriggered, setAutoTriggered] = useState(false);
+  const hasAutoSyncedRef = useRef(false);
+
+  const runSync = (auto: boolean) => {
+    setError(null);
+    setSummary(null);
+    setAutoTriggered(auto);
+    startTransition(async () => {
+      try {
+        const response = await fetch('/api/gmail/sync', { method: 'POST' });
+        const body = (await response.json()) as SyncSummary & { error?: string };
+        if (!response.ok) {
+          setError(body.error ?? 'Sync failed.');
+          return;
+        }
+        setSummary(body);
+        router.refresh();
+      } catch {
+        setError('Sync failed.');
+      }
+    });
+  };
+
+  // Auto-sync on page load, throttled — see the module-level doc comment on
+  // AUTO_SYNC_THROTTLE_MS. The ref is set to true right before the one attempt this mount is
+  // allowed, so React 18 Strict Mode's dev-only double-invoke of this effect (or any re-render)
+  // short-circuits on the second run instead of firing a second sync.
+  //
+  // The ref only guards this mount, though — it does not itself throttle a failed sync across
+  // reloads. Whether a failed attempt retries on the next page load depends on whether the
+  // failure advanced `lastSyncedAt` server-side: a refresh-token failure does (the sync route
+  // stamps status: 'ERROR' + lastSyncedAt before returning), so the throttle applies normally
+  // next load; other failures (e.g. a mid-sync exception) leave it untouched, so the next load
+  // retries immediately — intentional, so a transient failure surfaces promptly rather than
+  // sitting silently until the throttle window passes.
+  useEffect(() => {
+    if (hasAutoSyncedRef.current) return;
+    hasAutoSyncedRef.current = true;
+    if (isDueForAutoSync(lastSyncedAt)) {
+      runSync(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div>
-      <Button
-        variant="outline"
-        size="sm"
-        disabled={pending}
-        onClick={() => {
-          setError(null);
-          setSummary(null);
-          startTransition(async () => {
-            try {
-              const response = await fetch('/api/gmail/sync', { method: 'POST' });
-              const body = (await response.json()) as SyncSummary & { error?: string };
-              if (!response.ok) {
-                setError(body.error ?? 'Sync failed.');
-                return;
-              }
-              setSummary(body);
-              router.refresh();
-            } catch {
-              setError('Sync failed.');
-            }
-          });
-        }}
-      >
-        {pending ? 'Syncing…' : 'Sync Gmail'}
+      <Button variant="outline" size="sm" disabled={pending} onClick={() => runSync(false)}>
+        {pending ? (autoTriggered ? 'Checking for updates…' : 'Syncing…') : 'Sync Gmail'}
       </Button>
       {summary ? (
         <p className="text-muted-foreground mt-2 text-xs">
-          Checked {summary.processed} message{summary.processed === 1 ? '' : 's'}
+          {autoTriggered ? 'Auto-checked' : 'Checked'} {summary.processed} message
+          {summary.processed === 1 ? '' : 's'}
           {summary.autoApplied > 0 ? ` · ${summary.autoApplied} updated automatically` : ''}
           {summary.needsConfirmation > 0 ? ` · ${summary.needsConfirmation} need confirmation` : ''}
           {summary.errors.length > 0 ? ` · ${summary.errors.length} could not be processed` : ''}
-          . Syncs your most recent messages — click again to check for more.
+          .
         </p>
       ) : null}
       {error ? <p className="text-destructive mt-2 text-sm">{error}</p> : null}
