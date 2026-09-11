@@ -155,3 +155,83 @@ inventing new ones:
   caller until now) records one row per attempt via `recordAiUsageEvent`, correlated by
   `generation_run_id = requirement_mapping_runs.id`, best-effort (a telemetry failure never
   fails the user's actual request).
+
+## 9. Unsupported-claim check (Phase 5B.3)
+
+A third, deliberately narrower pipeline (`packages/ai/src/generate-unsupported-claims-check.ts`)
+that flips the direction of the first two: instead of generating an answer from approved facts,
+it checks whether an answer the user already decided to submit is actually backed by their
+approved facts. It exists as one input to the Consistency Firewall (`docs/DATA_MODEL.md`'s
+`submission_packets`/`markOwnApplicationApplied`) — but it is the *AI-assisted, advisory* input,
+never the deterministic, authoritative one. Its call site is `POST
+/api/applications/:id/unsupported-claims-check`, the only place in the codebase that invokes it.
+
+- **Explicit, user-triggered only — never automatic.** No caller anywhere else invokes this
+  route or the underlying pipeline: not on page load, not on extension popup open, not from the
+  deterministic `GET /api/applications/:id/consistency-check`, not on every generated-answer
+  edit, not from `markOwnApplicationApplied`/Mark Applied, not from a background job, not from
+  Gmail sync. The dashboard's `MarkAppliedPanel` exposes it as a separate "Check unsupported
+  claims" button inside the review step, fired only on click.
+- **Always advisory, never blocking, never authoritative.** Every finding this pipeline can
+  produce has `severity: 'WARNING'` — hardcoded in `generate-unsupported-claims-check.ts`, not
+  model-controlled — and `ruleId: 'UNSUPPORTED_CLAIM'`. Its output is never passed into
+  `markOwnApplicationApplied`'s `acknowledgedFindingIds` gate and never required to be
+  acknowledged to submit; a model can never be the thing that stops a submission. The
+  deterministic consistency-rule engine (`packages/shared/src/lib/consistency-rules.ts`) remains
+  the sole authority for BLOCKING/WARNING findings enforced at mark-applied time.
+- **Retrieval before generation, same as §2/§8.** Only `generated_answers` rows the user actually
+  decided to use (`userDecision IN ('APPROVED', 'EDITED')`) are checked — a skipped or
+  never-decided suggestion was never going to be submitted, so there is no claim to check. Facts
+  come from the same `listOwnApprovedFactsForGeneration` retrieval as every other pipeline in
+  this document — never an unapproved fact, never the full profile.
+- **Untrusted data, tagged, same posture as §2/§8.** The user turn carries `<candidate_answers>`
+  and `<candidate_facts>` tagged sections; the static system prompt
+  (`build-unsupported-claim-system-prompt.ts`) instructs the model to treat their contents as
+  data, not instructions, and never as this prompt's source. No `tools` array, `thinking:
+  disabled`.
+- **Positional contract, not id-echoed.** The model returns a JSON array of
+  `{supportStatus, citedFactIds, explanation}` objects — one entry per answer sent, in the exact
+  same order — rather than being asked to echo back an answer id (deliberately, to remove one
+  more thing the model could hallucinate or mismatch). `validateUnsupportedClaimContract` rejects
+  outright, before ever consulting the fact-id allowlist, if the returned array's length doesn't
+  exactly match the number of answers sent (`reason: 'wrong_length'`) — a length mismatch means
+  there is no safe way to know which entry maps to which answer, so it is never guessed.
+- **Citation allowlist, same defense as §8.** Every `citedFactIds` entry across every array
+  element must be an id that was actually placed in `<candidate_facts>` for that attempt — a
+  hallucinated or prompt-injected id rejects the whole response (`reason:
+  'unknown_source_fact_id'`), never just that one entry.
+- **Conservative by design.** The system prompt explicitly instructs the model to prefer
+  `UNCERTAIN` over guessing, and that "style differences, paraphrasing, or a
+  plausible-but-unstated inference are not by themselves reasons to mark something UNSUPPORTED."
+  Only `UNSUPPORTED` entries become findings; `SUPPORTED` and `UNCERTAIN` produce nothing — an
+  uncertain result is not itself a claim to flag.
+- **One retry, same policy as §8.** Exactly one retry, and only on a rejection (malformed JSON,
+  schema violation, wrong length, an unallowlisted citation, or a refusal) — never on a hard
+  `provider_error`. A `provider_error` surfaces to the caller as "unavailable" immediately.
+- **Failure never blocks, never fabricates.** A rate limit, provider error, or a rejection that
+  survives the retry all return a non-`ok` status; the API route maps every one of them to HTTP
+  200 with `status: 'unavailable'` (or `'no_claims_to_check'` for "nothing to check yet") rather
+  than an error — this check can never fail the user's ability to submit. A malformed model
+  response is discarded, never surfaced as if it were a real finding.
+- **Ephemeral — no persisted run table.** Unlike `requirement_mapping_runs`, this pipeline keeps
+  no `PENDING`/`CURRENT`/`FAILED` run row. A fresh `generationRunId` (a plain `randomUUID()`) is
+  generated purely to correlate this attempt's `ai_usage_events` row(s); nothing else about a
+  given check is persisted anywhere. This was a deliberate scope decision — see
+  `docs/IMPLEMENTATION_PLAN.md`'s Phase 5B.3 section for the rationale — rather than an
+  oversight: an ephemeral, advisory result was judged sufficient for a check that is never
+  authoritative and never frozen into the submission packet.
+- **Not part of the frozen packet.** `submission_packets.consistency_findings` freezes only the
+  deterministic findings/acknowledgements that gated the actual mark-applied transition. This
+  pipeline's findings are never written there — a user can run this check, see nothing
+  concerning, submit, and the packet will not contain any record that the check ran at all. The
+  authoritative historical record is "what the deterministic gate required and the user
+  acknowledged," not "every advisory tool the user happened to run."
+- **Usage accounting.** `ai_usage_events.task_type = 'unsupported_claim_check'` (migration 0014),
+  recorded best-effort via `recordAiUsageEvent` — a telemetry failure never fails the user's
+  actual request. The pipeline's own more granular `'wrong_length'` contract-rejection reason is
+  recorded under the shared `rejection_reason` column's existing `'validation_failed'` value
+  (the DB's `ai_usage_events.rejection_reason` CHECK constraint was deliberately not widened for
+  this one pipeline's more specific internal distinction).
+- **Rate-limited, same as every other pipeline** — `incrementOwnAiRequestUsage` is checked first,
+  before any retrieval or provider call, and this check consumes the same per-user AI request
+  quota as every other Claude call in the system. No separate billing or quota carve-out.

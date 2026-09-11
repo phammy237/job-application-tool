@@ -142,4 +142,81 @@ describe('MarkAppliedPanel', () => {
 
     await screen.findByText(BLOCKING_FINDING.description);
   });
+
+  it('the "Check unsupported claims" affordance never fires automatically — only on explicit click', async () => {
+    vi.mocked(fetch).mockReturnValueOnce(jsonResponse({ findings: [WARNING_FINDING] }));
+
+    render(<MarkAppliedPanel applicationId={APPLICATION_ID} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Mark as Applied' }));
+    await screen.findByText(WARNING_FINDING.description);
+
+    // Only the deterministic consistency-check GET has fired so far.
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('an explicit "Check unsupported claims" click POSTs to the AI endpoint and renders returned findings, without touching acknowledgedFindingIds', async () => {
+    vi.mocked(fetch)
+      .mockReturnValueOnce(jsonResponse({ findings: [WARNING_FINDING] }))
+      .mockReturnValueOnce(
+        jsonResponse({
+          status: 'ok',
+          findings: [
+            {
+              id: 'u1',
+              ruleId: 'UNSUPPORTED_CLAIM',
+              severity: 'WARNING',
+              fieldALabel: 'Describe a project you led',
+              fieldAValue: 'I led the Kubernetes migration.',
+              fieldBLabel: 'Approved evidence',
+              fieldBValue: 'no supporting approved facts found',
+              description: 'No approved fact backs this claim.',
+            },
+          ],
+        }),
+      );
+    mocks.markApplicationApplied.mockResolvedValue({
+      status: 'ok',
+      applicationStatus: 'APPLIED',
+    });
+
+    render(<MarkAppliedPanel applicationId={APPLICATION_ID} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Mark as Applied' }));
+    await screen.findByText(WARNING_FINDING.description);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Check unsupported claims' }));
+
+    await screen.findByText('No approved fact backs this claim.');
+    expect(fetch).toHaveBeenLastCalledWith(
+      `/api/applications/${APPLICATION_ID}/unsupported-claims-check`,
+      { method: 'POST' },
+    );
+
+    // Confirming still only sends the deterministic acknowledgement — the AI finding's id was
+    // never added to acknowledgedFindingIds, since it is advisory-only.
+    fireEvent.click(screen.getByRole('checkbox'));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm — Mark as Applied' }));
+    await waitFor(() =>
+      expect(mocks.markApplicationApplied).toHaveBeenCalledWith(APPLICATION_ID, ['w1']),
+    );
+  });
+
+  it('shows an "unavailable" message, never a fabricated finding, when the AI check fails', async () => {
+    // A clean deterministic result submits immediately, so use a warning finding to keep the
+    // panel open for the AI-check affordance.
+    vi.mocked(fetch)
+      .mockReturnValueOnce(jsonResponse({ findings: [WARNING_FINDING] }))
+      .mockReturnValueOnce(
+        jsonResponse({ status: 'unavailable', reason: 'provider_error', findings: [] }),
+      );
+
+    render(<MarkAppliedPanel applicationId={APPLICATION_ID} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Mark as Applied' }));
+    await screen.findByText(WARNING_FINDING.description);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Check unsupported claims' }));
+
+    await screen.findByText(
+      'This check is unavailable right now. You can still submit — it never blocks.',
+    );
+  });
 });

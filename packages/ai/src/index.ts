@@ -7,12 +7,23 @@
  * package is reached from.
  */
 export { generateSuggestion } from './generate-suggestion';
-export type { GenerateSuggestionParams, GenerateSuggestionResult } from './generate-suggestion';
+export type {
+  GenerateSuggestionParams,
+  GenerateSuggestionResult,
+} from './generate-suggestion';
 export { generateRequirementMapping } from './generate-requirement-mapping';
 export type {
   GenerateRequirementMappingParams,
   GenerateRequirementMappingResult,
 } from './generate-requirement-mapping';
 export { classifyEmail } from './generate-email-classification';
-export type { ClassifyEmailParams, ClassifyEmailResult } from './generate-email-classification';
+export type {
+  ClassifyEmailParams,
+  ClassifyEmailResult,
+} from './generate-email-classification';
+export { generateUnsupportedClaimsCheck } from './generate-unsupported-claims-check';
+export type {
+  GenerateUnsupportedClaimsCheckParams,
+  GenerateUnsupportedClaimsCheckResult,
+} from './generate-unsupported-claims-check';
 export { NEVER_SUGGEST_CLASSIFICATIONS } from './config';

@@ -23,17 +23,17 @@ phase depends on a later phase's output.
       0013, pgTAP-verified live against the linked Supabase project — see "Phase 5B.1" below)
 - [x] Phase 5B.2 — Deterministic consistency firewall, wired into the canonical transition's gate,
       dashboard + extension review UI (see "Phase 5B.2" below)
+- [x] Phase 5B.3 — Explicit, user-triggered AI-assisted unsupported-claim check, advisory-only
+      (migration 0014, ephemeral, never part of the authoritative gate — see "Phase 5B.3" below)
 - [ ] Phase 6 — Multi-user beta hardening, privacy controls, testing, deployment
 - [ ] Phase 7 — Optional mypham.space integration, public onboarding, future sharing
 
-**Not yet started:** Phase 5B.3 (explicit AI-assisted unsupported-claim check) and Phase 5C (next
-actions/deadlines, dashboard overview) — both explicitly out of scope for 5A, unscoped beyond
-their names, and not yet slotted into the numbered sequence relative to Phase 5's Gmail work.
-That ordering decision is intentionally left open rather than assumed here. Phase 5B.4 (the
-historical submission viewer) has a working first version already, built alongside 5B.1/5B.2's UI
-work rather than as a separately-staged slice — see "Phase 5B.2" below for what shipped and what
-is still explicitly deferred to a dedicated 5B.4 pass. **No AI-assisted unsupported-claim
-checking exists yet** — every finding today is purely deterministic.
+**Not yet started:** Phase 5C (next actions/deadlines, dashboard overview) — out of scope for 5A,
+unscoped beyond its name, and not yet slotted into the numbered sequence relative to Phase 5's
+Gmail work. That ordering decision is intentionally left open rather than assumed here. Phase 5B.4
+(the historical submission viewer) has a working first version already, built alongside 5B.1/5B.2's
+UI work rather than as a separately-staged slice — see "Phase 5B.2" below for what shipped and
+what is still explicitly deferred to a dedicated 5B.4 pass.
 
 Phase 4A shipped: the popup classifies every detected field into a review state (sensitive /
 unsupported / already-completed / pending-suggestion / ready / suggested / needs-input),

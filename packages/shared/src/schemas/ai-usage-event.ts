@@ -41,17 +41,23 @@ export type AiUsageEventOutcome = z.infer<typeof aiUsageEventOutcomeSchema>;
 export const aiUsageEventEscalationReasonSchema = z
   .enum(['low_confidence', 'retryable_rejection', 'provider_error', 'refusal'])
   .nullable();
-export type AiUsageEventEscalationReason = z.infer<typeof aiUsageEventEscalationReasonSchema>;
+export type AiUsageEventEscalationReason = z.infer<
+  typeof aiUsageEventEscalationReasonSchema
+>;
 
 /** 'requirement_mapping' added in migration 0010 (Phase 5A) — packages/ai's
  * generate-requirement-mapping.ts is this table's first real caller (generate-suggestion.ts still
  * has none — see the schema doc comment below). 'email_classification' added in migration 0012
  * (Phase 5) for packages/ai's generate-email-classification.ts, the Claude fallback used only for
- * messages the deterministic classifier in packages/email can't confidently resolve. */
+ * messages the deterministic classifier in packages/email can't confidently resolve.
+ * 'unsupported_claim_check' added in migration 0014 (Phase 5B.3) for packages/ai's
+ * generate-unsupported-claims-check.ts — the explicit, user-triggered advisory check, never
+ * called automatically and never part of the authoritative mark-applied gate. */
 export const aiUsageEventTaskTypeSchema = z.enum([
   'field_suggestion',
   'requirement_mapping',
   'email_classification',
+  'unsupported_claim_check',
 ]);
 export type AiUsageEventTaskType = z.infer<typeof aiUsageEventTaskTypeSchema>;
 

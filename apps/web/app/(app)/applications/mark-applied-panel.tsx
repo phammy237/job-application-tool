@@ -24,6 +24,20 @@ type PanelState =
   | { kind: 'error'; message: string };
 
 /**
+ * State for the separate, optional "Check for unsupported claims" AI-assisted affordance
+ * (docs/IMPLEMENTATION_PLAN.md Phase 5B.3F). Deliberately never feeds acknowledgedFindingIds or
+ * any part of the deterministic gate above — its findings are advisory-only informational
+ * reading, shown alongside the review panel, never something the user has to acknowledge or
+ * clear to submit.
+ */
+type AiCheckState =
+  | { kind: 'idle' }
+  | { kind: 'checking' }
+  | { kind: 'result'; findings: Finding[] }
+  | { kind: 'no_claims_to_check' }
+  | { kind: 'unavailable' };
+
+/**
  * The dashboard's consistency-review flow for marking an application applied
  * (docs/IMPLEMENTATION_PLAN.md Phase 5B.2H) — the dedicated path alongside (not replacing) the
  * generic status control, which no longer offers APPLIED as a plain dropdown option. Mirrors the
@@ -35,9 +49,40 @@ type PanelState =
 export function MarkAppliedPanel({ applicationId }: { applicationId: string }) {
   const router = useRouter();
   const [state, setState] = useState<PanelState>({ kind: 'idle' });
+  const [aiCheck, setAiCheck] = useState<AiCheckState>({ kind: 'idle' });
+
+  const checkUnsupportedClaims = async () => {
+    setAiCheck({ kind: 'checking' });
+    try {
+      const res = await fetch(
+        `/api/applications/${applicationId}/unsupported-claims-check`,
+        {
+          method: 'POST',
+        },
+      );
+      if (!res.ok) {
+        setAiCheck({ kind: 'unavailable' });
+        return;
+      }
+      const body = (await res.json()) as
+        | { status: 'ok'; findings: Finding[] }
+        | { status: 'no_claims_to_check'; findings: Finding[] }
+        | { status: 'unavailable'; findings: Finding[] };
+      if (body.status === 'unavailable') {
+        setAiCheck({ kind: 'unavailable' });
+      } else if (body.status === 'no_claims_to_check') {
+        setAiCheck({ kind: 'no_claims_to_check' });
+      } else {
+        setAiCheck({ kind: 'result', findings: body.findings });
+      }
+    } catch {
+      setAiCheck({ kind: 'unavailable' });
+    }
+  };
 
   const startReview = async () => {
     setState({ kind: 'checking' });
+    setAiCheck({ kind: 'idle' });
     try {
       const res = await fetch(`/api/applications/${applicationId}/consistency-check`);
       if (!res.ok) {
@@ -182,6 +227,53 @@ export function MarkAppliedPanel({ applicationId }: { applicationId: string }) {
           ))}
         </div>
       ) : null}
+
+      <div className="border-border space-y-2 rounded-md border border-dashed p-3">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-muted-foreground text-xs">
+            Optional: have AI check your approved answers for claims your profile
+            doesn&apos;t back up. Advisory only — nothing here is required to submit.
+          </p>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={aiCheck.kind === 'checking' || submitting}
+            onClick={checkUnsupportedClaims}
+          >
+            {aiCheck.kind === 'checking' ? 'Checking…' : 'Check unsupported claims'}
+          </Button>
+        </div>
+
+        {aiCheck.kind === 'result' && aiCheck.findings.length === 0 ? (
+          <p className="text-muted-foreground text-xs">
+            No unsupported claims found in your approved answers.
+          </p>
+        ) : null}
+
+        {aiCheck.kind === 'result' && aiCheck.findings.length > 0 ? (
+          <div className="space-y-2">
+            {aiCheck.findings.map((finding) => (
+              <div key={finding.id} className="bg-muted/50 rounded-md p-3 text-sm">
+                <p className="font-medium">&ldquo;{finding.fieldALabel}&rdquo;</p>
+                <p className="text-muted-foreground mt-1">{finding.description}</p>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        {aiCheck.kind === 'no_claims_to_check' ? (
+          <p className="text-muted-foreground text-xs">
+            Nothing to check yet — no approved answers or approved facts.
+          </p>
+        ) : null}
+
+        {aiCheck.kind === 'unavailable' ? (
+          <p className="text-muted-foreground text-xs">
+            This check is unavailable right now. You can still submit — it never blocks.
+          </p>
+        ) : null}
+      </div>
 
       <div className="flex gap-2">
         <Button

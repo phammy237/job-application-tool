@@ -3,6 +3,7 @@ import {
   MAX_OUTPUT_TOKENS,
   MODEL_ID,
   REQUIREMENT_MAPPING_MAX_OUTPUT_TOKENS,
+  UNSUPPORTED_CLAIM_CHECK_MAX_OUTPUT_TOKENS,
 } from '../config';
 import { getAnthropicClient } from './client';
 
@@ -107,7 +108,10 @@ const REQUIREMENT_MAPPING_JSON_SCHEMA = {
         ],
       },
       requiredOrPreferred: { type: 'string', enum: ['REQUIRED', 'PREFERRED'] },
-      relationship: { type: 'string', enum: ['DIRECT', 'EQUIVALENT', 'INFERRED', 'MISSING'] },
+      relationship: {
+        type: 'string',
+        enum: ['DIRECT', 'EQUIVALENT', 'INFERRED', 'MISSING'],
+      },
       matchedFactIds: { type: 'array', items: { type: 'string' } },
       explanation: { type: 'string' },
       confidence: { type: 'number' },
@@ -204,6 +208,63 @@ const EMAIL_CLASSIFICATION_JSON_SCHEMA = {
  * each contract has its own shape and output-token budget, kept independent so a change to one
  * call can never accidentally affect the others' already-verified behavior.
  */
+/**
+ * Mirrors unsupportedClaimCheckContractSchema (packages/shared) — an array with the same length
+ * as the number of answers sent, one entry per answer, in order.
+ */
+const UNSUPPORTED_CLAIM_CHECK_JSON_SCHEMA = {
+  type: 'array',
+  items: {
+    type: 'object',
+    properties: {
+      supportStatus: { type: 'string', enum: ['SUPPORTED', 'UNSUPPORTED', 'UNCERTAIN'] },
+      citedFactIds: { type: 'array', items: { type: 'string' } },
+      explanation: { type: 'string' },
+    },
+    required: ['supportStatus', 'citedFactIds', 'explanation'],
+    additionalProperties: false,
+  },
+} as const;
+
+/**
+ * Same no-tools/thinking-disabled/schema-constrained posture as the other call* functions — the
+ * content being assessed here is the user's own already-approved/edited answer text, not
+ * third-party content, but the posture is kept identical for consistency and because an answer's
+ * text could itself echo untrusted job-posting language the user pasted in.
+ */
+export async function callClaudeForUnsupportedClaimCheck(
+  systemPrompt: string,
+  userText: string,
+): Promise<CallClaudeResult> {
+  try {
+    const response = await getAnthropicClient().messages.create({
+      model: MODEL_ID,
+      max_tokens: UNSUPPORTED_CLAIM_CHECK_MAX_OUTPUT_TOKENS,
+      thinking: { type: 'disabled' },
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userText }],
+      output_config: {
+        format: { type: 'json_schema', schema: UNSUPPORTED_CLAIM_CHECK_JSON_SCHEMA },
+      },
+    });
+
+    if (response.stop_reason === 'refusal') {
+      return { status: 'refusal', category: response.stop_details?.category ?? null };
+    }
+
+    const textBlock = response.content.find((block) => block.type === 'text');
+    if (!textBlock || textBlock.type !== 'text') {
+      return { status: 'provider_error', message: 'No text content in Claude response' };
+    }
+    return { status: 'ok', rawText: textBlock.text };
+  } catch (error) {
+    return {
+      status: 'provider_error',
+      message: error instanceof Error ? error.message : 'Unknown Anthropic API error',
+    };
+  }
+}
+
 export async function callClaudeForEmailClassification(
   systemPrompt: string,
   userText: string,

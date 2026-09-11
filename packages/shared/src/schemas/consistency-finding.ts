@@ -108,3 +108,30 @@ export const consistencyBlockedResponseSchema = z.object({
   warningCount: z.number().int().min(0),
 });
 export type ConsistencyBlockedResponse = z.infer<typeof consistencyBlockedResponseSchema>;
+
+/**
+ * POST /api/applications/:id/unsupported-claims-check response (docs/IMPLEMENTATION_PLAN.md
+ * Phase 5B.3) — explicit user-triggered only, never automatic, never persisted (ephemeral by
+ * design — see generate-unsupported-claims-check.ts's own doc comment on why). `findings` here
+ * always has `ruleId: 'UNSUPPORTED_CLAIM'` and `severity: 'WARNING'` — an AI-assisted finding can
+ * never be BLOCKING, so a model can never be the thing that stops a submission.
+ *
+ * Deliberately always HTTP 200 for every one of these three shapes (a real auth/ownership
+ * failure is the only non-200 this route ever returns) — a rate limit, provider error, or
+ * "nothing to check yet" is reported as data, not as an HTTP error, since this check can never
+ * block or fail the user's ability to submit.
+ */
+export const unsupportedClaimCheckResponseSchema = z.union([
+  z.object({ status: z.literal('ok'), findings: z.array(consistencyFindingSchema) }),
+  z.object({
+    status: z.literal('no_claims_to_check'),
+    reason: z.enum(['no_answers_to_check', 'insufficient_facts']),
+    findings: z.array(consistencyFindingSchema),
+  }),
+  z.object({
+    status: z.literal('unavailable'),
+    reason: z.enum(['rate_limited', 'provider_error', 'validation_failed']),
+    findings: z.array(consistencyFindingSchema),
+  }),
+]);
+export type UnsupportedClaimCheckResponse = z.infer<typeof unsupportedClaimCheckResponseSchema>;

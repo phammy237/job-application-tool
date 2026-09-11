@@ -25,6 +25,7 @@ export * from './schemas/email-signal';
 export * from './schemas/email-classification-contract';
 export * from './schemas/consistency-finding';
 export * from './schemas/submission-packet';
+export * from './schemas/unsupported-claim-contract';
 export * from './lib/canonicalize-url';
 export * from './lib/job-snapshot-fingerprint';
 export * from './lib/requirement-fingerprint';

@@ -56,3 +56,14 @@ export const REQUIREMENT_MAPPING_PROMPT_VERSION = 'requirement-evidence-v1';
 export const EMAIL_CLASSIFICATION_MAX_OUTPUT_TOKENS = 512;
 export const EMAIL_CLASSIFICATION_PROMPT_VERSION = 'email-classification-v1';
 export const EMAIL_SNIPPET_CHAR_CAP = 1000;
+
+/**
+ * Phase 5B.3 explicit, user-triggered unsupported-claim check
+ * (packages/ai/src/generate-unsupported-claims-check.ts) — an array response, one entry per
+ * already-submitted application answer, same "array in / array out, validated by length" shape
+ * as the requirement-mapping pipeline. ANSWER_TEXT_CHAR_CAP bounds worst-case injected content
+ * volume from a single answer, same rationale as JOB_DESCRIPTION_CHAR_CAP/EMAIL_SNIPPET_CHAR_CAP.
+ */
+export const UNSUPPORTED_CLAIM_CHECK_MAX_OUTPUT_TOKENS = 4096;
+export const UNSUPPORTED_CLAIM_CHECK_PROMPT_VERSION = 'unsupported-claim-check-v1';
+export const ANSWER_TEXT_CHAR_CAP = 2000;
