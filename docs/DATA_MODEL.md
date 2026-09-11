@@ -213,28 +213,29 @@ Indexes: `(user_id)`, `(user_id, source_url)`. RLS: standard.
 
 ## `applications`
 
-| column               | type                                                        | notes                                                                                                                            |
-| -------------------- | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `id`                 | `uuid pk`                                                   |                                                                                                                                  |
-| `user_id`            | `uuid not null references auth.users(id) on delete cascade` |                                                                                                                                  |
-| `job_id`             | `uuid references jobs(id) on delete set null`               |                                                                                                                                  |
-| `resume_id`          | `uuid references resumes(id) on delete set null`            |                                                                                                                                  |
-| `company`            | `text not null`                                             | denormalized for fast filtering even if `job_id` is later nulled                                                                 |
-| `title`              | `text not null`                                             |                                                                                                                                  |
-| `status`             | `text not null default 'SAVED'`                             | `SAVED, IN_PROGRESS, APPLIED, APPLICATION_RECEIVED, ASSESSMENT, INTERVIEW, ACTION_REQUIRED, OFFER, REJECTED, WITHDRAWN, UNKNOWN` |
-| `notes`              | `text`                                                      |                                                                                                                                  |
-| `applied_at`         | `timestamptz`                                               | set only by the explicit "mark as applied" action, alongside `status = 'APPLIED'`                                              |
-| `location`           | `text`                                                      | denormalized from the job at save time (Phase 4C)                                                                                |
-| `source_url`         | `text`                                                      | denormalized from the job's `source_url` at save time — survives `job_id` being nulled                                          |
-| `canonical_url`      | `text`                                                      | `source_url` normalized (query string, fragment, trailing slash stripped — `packages/shared`'s `canonicalizeUrl`); tier-2 dedup key |
-| `ats_provider`       | `text`                                                      | `GENERIC, GREENHOUSE, LEVER, WORKDAY` — denormalized from `jobs.platform_type`                                                   |
-| `external_id`        | `text`                                                      | requisition/job ID, when reliably detected — tier-1 dedup key; no current extractor populates this yet                          |
-| `autofill_summary`   | `jsonb`                                                     | counts only — `{approved, filled, skipped, failed, unresolved, manual}`, validated by `autofillSummarySchema`. No per-field content |
-| `unresolved_fields`  | `jsonb`                                                     | sanitized array of `{label, classification, status, reason}` — never a value, never a DOM locator, validated by `unresolvedFieldSummarySchema` |
-| `job_snapshot_id`    | `uuid references job_snapshots(id) on delete set null (job_snapshot_id)` | Phase 5A — points at the immutable posting content captured when this application was last saved; **frozen** (never repointed) once `status` moves past `SAVED`/`IN_PROGRESS`, see "Job snapshots" below |
+| column                 | type                                                                               | notes                                                                                                                                                                                                                                                                                                                                                                                |
+| ---------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `id`                   | `uuid pk`                                                                          |                                                                                                                                                                                                                                                                                                                                                                                      |
+| `user_id`              | `uuid not null references auth.users(id) on delete cascade`                        |                                                                                                                                                                                                                                                                                                                                                                                      |
+| `job_id`               | `uuid references jobs(id) on delete set null`                                      |                                                                                                                                                                                                                                                                                                                                                                                      |
+| `resume_id`            | `uuid references resumes(id) on delete set null`                                   |                                                                                                                                                                                                                                                                                                                                                                                      |
+| `company`              | `text not null`                                                                    | denormalized for fast filtering even if `job_id` is later nulled                                                                                                                                                                                                                                                                                                                     |
+| `title`                | `text not null`                                                                    |                                                                                                                                                                                                                                                                                                                                                                                      |
+| `status`               | `text not null default 'SAVED'`                                                    | `SAVED, IN_PROGRESS, APPLIED, APPLICATION_RECEIVED, ASSESSMENT, INTERVIEW, ACTION_REQUIRED, OFFER, REJECTED, WITHDRAWN, UNKNOWN`                                                                                                                                                                                                                                                     |
+| `notes`                | `text`                                                                             |                                                                                                                                                                                                                                                                                                                                                                                      |
+| `applied_at`           | `timestamptz`                                                                      | set only by the explicit "mark as applied" action, alongside `status = 'APPLIED'`                                                                                                                                                                                                                                                                                                    |
+| `location`             | `text`                                                                             | denormalized from the job at save time (Phase 4C)                                                                                                                                                                                                                                                                                                                                    |
+| `source_url`           | `text`                                                                             | denormalized from the job's `source_url` at save time — survives `job_id` being nulled                                                                                                                                                                                                                                                                                               |
+| `canonical_url`        | `text`                                                                             | `source_url` normalized (query string, fragment, trailing slash stripped — `packages/shared`'s `canonicalizeUrl`); tier-2 dedup key                                                                                                                                                                                                                                                  |
+| `ats_provider`         | `text`                                                                             | `GENERIC, GREENHOUSE, LEVER, WORKDAY` — denormalized from `jobs.platform_type`                                                                                                                                                                                                                                                                                                       |
+| `external_id`          | `text`                                                                             | requisition/job ID, when reliably detected — tier-1 dedup key; no current extractor populates this yet                                                                                                                                                                                                                                                                               |
+| `autofill_summary`     | `jsonb`                                                                            | counts only — `{approved, filled, skipped, failed, unresolved, manual}`, validated by `autofillSummarySchema`. No per-field content                                                                                                                                                                                                                                                  |
+| `unresolved_fields`    | `jsonb`                                                                            | sanitized array of `{label, classification, status, reason}` — never a value, never a DOM locator, validated by `unresolvedFieldSummarySchema`                                                                                                                                                                                                                                       |
+| `job_snapshot_id`      | `uuid references job_snapshots(id) on delete set null (job_snapshot_id)`           | Phase 5A — points at the immutable posting content captured when this application was last saved; **frozen** (never repointed) once `status` moves past `SAVED`/`IN_PROGRESS`, see "Job snapshots" below                                                                                                                                                                             |
+| `submission_packet_id` | `uuid references submission_packets(id) on delete set null (submission_packet_id)` | Phase 5B.1 — set exactly once, atomically, the first time `status` becomes `APPLIED` through the canonical `mark_application_applied` function; never repointed afterward. `null` for an application that has never been APPLIED under this mechanism, **including a legacy application that was already `APPLIED` before this migration shipped** — see "Submission packets" below. |
 
 Indexes: `(user_id)`, `(user_id, status)`, `(user_id, company)`, `(user_id, applied_at desc)`,
-`(job_snapshot_id)`, unique partial `(user_id, canonical_url) where canonical_url is not null
+`(job_snapshot_id)`, `(submission_packet_id)`, unique partial `(user_id, canonical_url) where canonical_url is not null
 and external_id is null`, unique partial `(user_id, ats_provider, external_id) where
 external_id is not null`.
 RLS: standard.
@@ -257,7 +258,7 @@ scoped so it can never collapse two genuinely different applications:
    — without that exclusion, two different requisitions sharing one generic apply-page URL
    (a canonical URL strips the query string entirely) would incorrectly merge.
 3. **`(user_id, lower(company), lower(title))`**, only among rows with neither a canonical URL
-   nor an external ID — deliberately *not* a database uniqueness constraint (a company/title
+   nor an external ID — deliberately _not_ a database uniqueness constraint (a company/title
    match alone can describe two genuinely different openings), so this tier is a best-effort,
    row-locked application-layer check with an accepted narrow race window under true
    concurrency; tiers 1–2 are enforced by real partial unique indexes and are fully race-free
@@ -282,8 +283,8 @@ confused-deputy privilege-escalation path against any job whose id an attacker c
 The same server-only grant pattern is applied to every Phase 5A function below.
 
 Approved/edited generated answers are linked to the saved application by updating the
-*existing* `generated_answers` row (`user_decision`, `final_text`, `application_id` —
-`recordOwnGeneratedAnswerDecision`, scoped by `user_id` *and* `job_id`) rather than inserting a
+_existing_ `generated_answers` row (`user_decision`, `final_text`, `application_id` —
+`recordOwnGeneratedAnswerDecision`, scoped by `user_id` _and_ `job_id`) rather than inserting a
 new row, so repeated saves never duplicate answer-usage records.
 
 ### `job_snapshots` (Phase 5A)
@@ -292,20 +293,20 @@ Immutable, versioned archive of a job posting's content, captured at save time �
 table is mutable (re-analysis overwrites it), so without this table the exact posting an
 application was based on could silently disappear or change out from under it.
 
-| column                        | type              | notes                                                                      |
-| ------------------------------ | ----------------- | --------------------------------------------------------------------------------- |
-| `id`                           | `uuid pk`          |                                                                             |
-| `user_id`                      | `uuid not null references auth.users(id) on delete cascade` |               |
-| `source_job_id`                | `uuid not null`    | **not a foreign key, deliberately** — lineage only; see "Immutability" below |
-| `company`, `title`             | `text not null`    |                                                                             |
-| `location`, `employment_type`, `source_url`, `external_id`, `description` | `text` |                                                          |
-| `required_qualifications`, `preferred_qualifications`, `responsibilities`, `skills`, `locations` | `text[]` | |
-| `salary_min`, `salary_max`     | `numeric`          | nullable — not currently extracted, see "Field-source honesty" below        |
-| `salary_currency`, `work_mode`, `remote_location_restrictions`, `work_authorization_language`, `source_type` | `text` | all nullable, same reason |
-| `content_fingerprint`          | `text not null`    | `"v1:" + sha256hex` of the canonicalized content — see "Fingerprint" below   |
-| `content_truncated`            | `boolean not null default false` | true if any field was cut down to its storage cap                  |
-| `truncated_fields`             | `text[] not null default '{}'` | which fields, so the UI can show an honest notice, never silently present a truncated posting as complete |
-| `captured_at`, `created_at`    | `timestamptz`      |                                                                             |
+| column                                                                                                       | type                                                        | notes                                                                                                     |
+| ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `id`                                                                                                         | `uuid pk`                                                   |                                                                                                           |
+| `user_id`                                                                                                    | `uuid not null references auth.users(id) on delete cascade` |                                                                                                           |
+| `source_job_id`                                                                                              | `uuid not null`                                             | **not a foreign key, deliberately** — lineage only; see "Immutability" below                              |
+| `company`, `title`                                                                                           | `text not null`                                             |                                                                                                           |
+| `location`, `employment_type`, `source_url`, `external_id`, `description`                                    | `text`                                                      |                                                                                                           |
+| `required_qualifications`, `preferred_qualifications`, `responsibilities`, `skills`, `locations`             | `text[]`                                                    |                                                                                                           |
+| `salary_min`, `salary_max`                                                                                   | `numeric`                                                   | nullable — not currently extracted, see "Field-source honesty" below                                      |
+| `salary_currency`, `work_mode`, `remote_location_restrictions`, `work_authorization_language`, `source_type` | `text`                                                      | all nullable, same reason                                                                                 |
+| `content_fingerprint`                                                                                        | `text not null`                                             | `"v1:" + sha256hex` of the canonicalized content — see "Fingerprint" below                                |
+| `content_truncated`                                                                                          | `boolean not null default false`                            | true if any field was cut down to its storage cap                                                         |
+| `truncated_fields`                                                                                           | `text[] not null default '{}'`                              | which fields, so the UI can show an honest notice, never silently present a truncated posting as complete |
+| `captured_at`, `created_at`                                                                                  | `timestamptz`                                               |                                                                                                           |
 
 Indexes: unique `(user_id, source_job_id, content_fingerprint)` (dedup/versioning key),
 `(user_id)`, `(source_job_id)`.
@@ -313,7 +314,7 @@ Indexes: unique `(user_id, source_job_id, content_fingerprint)` (dedup/versionin
 **Immutability, enforced at the database level, not by convention**: RLS grants `authenticated`
 **select only** — no insert/update/delete policy at all, since a direct insert would bypass
 sanitization/fingerprinting/capture rules entirely. A `before update` trigger
-(`reject_immutable_row_mutation`) unconditionally rejects every update, for *every* role
+(`reject_immutable_row_mutation`) unconditionally rejects every update, for _every_ role
 including `service_role` — RLS bypass does not bypass triggers. This is also why
 `source_job_id` has no foreign key: `jobs(id) on delete set null` would require the FK
 enforcement mechanism to issue an `UPDATE` against this table when a `jobs` row is deleted,
@@ -339,16 +340,16 @@ another migration, not because they're already populated.
 One row per requirement-analysis attempt for a snapshot — `provider`/`model`/`prompt_version`
 live here, not duplicated onto every mapping row.
 
-| column                 | type    | notes                                                                    |
-| ----------------------- | ------- | --------------------------------------------------------------------------- |
-| `id`                    | `uuid pk` |                                                                         |
-| `user_id`               | `uuid not null references auth.users(id) on delete cascade` |           |
-| `job_snapshot_id`       | `uuid not null references job_snapshots(id) on delete cascade` (composite, see "Ownership" below) | |
-| `status`                | `text not null` | `PENDING, CURRENT, SUPERSEDED, FAILED`                                 |
-| `provider`, `model`, `prompt_version` | `text not null` |                                                         |
-| `retrieval_fact_count`  | `int not null default 0` |                                                                |
-| `failure_category`      | `text`  | `provider_error, validation_failed, refusal, rate_limited`; only set when `FAILED` |
-| `created_at`, `completed_at`, `failed_at` | `timestamptz` | exact valid combinations enforced by a CHECK constraint, see below |
+| column                                    | type                                                                                              | notes                                                                              |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `id`                                      | `uuid pk`                                                                                         |                                                                                    |
+| `user_id`                                 | `uuid not null references auth.users(id) on delete cascade`                                       |                                                                                    |
+| `job_snapshot_id`                         | `uuid not null references job_snapshots(id) on delete cascade` (composite, see "Ownership" below) |                                                                                    |
+| `status`                                  | `text not null`                                                                                   | `PENDING, CURRENT, SUPERSEDED, FAILED`                                             |
+| `provider`, `model`, `prompt_version`     | `text not null`                                                                                   |                                                                                    |
+| `retrieval_fact_count`                    | `int not null default 0`                                                                          |                                                                                    |
+| `failure_category`                        | `text`                                                                                            | `provider_error, validation_failed, refusal, rate_limited`; only set when `FAILED` |
+| `created_at`, `completed_at`, `failed_at` | `timestamptz`                                                                                     | exact valid combinations enforced by a CHECK constraint, see below                 |
 
 A CHECK constraint rules out every nonsensical status/timestamp combination (e.g. `PENDING`
 with `completed_at` set, or `SUPERSEDED` without one) at the database level. A **partial
@@ -366,27 +367,27 @@ Explainable per-requirement evidence, generated by `packages/ai`'s
 `generate-requirement-mapping.ts` — the Phase 5A analog of `generated_answers`, but for "does
 my background cover what this posting asks for" rather than one form field.
 
-| column                    | type    | notes                                                                 |
-| -------------------------- | ------- | -------------------------------------------------------------------------- |
-| `id`                        | `uuid pk` |                                                                       |
-| `user_id`                   | `uuid not null references auth.users(id) on delete cascade` |         |
-| `run_id`                    | `uuid not null references requirement_mapping_runs(id) on delete cascade` (composite) | |
-| `requirement_text`          | `text not null`, ≤500 chars |                                                         |
-| `requirement_fingerprint`   | `text not null` | dedup key within a run — `unique (run_id, requirement_fingerprint)` |
-| `requirement_category`      | `text`  | `SKILL, EXPERIENCE, EDUCATION, CERTIFICATION, WORK_AUTHORIZATION, LOCATION, LANGUAGE, OTHER` |
-| `required_or_preferred`     | `text not null` | `REQUIRED, PREFERRED`                                             |
-| `relationship`              | `text not null` | `DIRECT, EQUIVALENT, INFERRED, MISSING`                           |
-| `matched_facts`             | `jsonb not null default '[]'` | server-derived provenance, never model-generated — see below |
-| `explanation`               | `text not null`, ≤400 chars |                                                         |
-| `confidence`                | `numeric(3,2) not null` |                                                                 |
-| `requires_user_confirmation` | `boolean not null default true` | always `true` for `INFERRED` (CHECK constraint)      |
+| column                       | type                                                                                  | notes                                                                                        |
+| ---------------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `id`                         | `uuid pk`                                                                             |                                                                                              |
+| `user_id`                    | `uuid not null references auth.users(id) on delete cascade`                           |                                                                                              |
+| `run_id`                     | `uuid not null references requirement_mapping_runs(id) on delete cascade` (composite) |                                                                                              |
+| `requirement_text`           | `text not null`, ≤500 chars                                                           |                                                                                              |
+| `requirement_fingerprint`    | `text not null`                                                                       | dedup key within a run — `unique (run_id, requirement_fingerprint)`                          |
+| `requirement_category`       | `text`                                                                                | `SKILL, EXPERIENCE, EDUCATION, CERTIFICATION, WORK_AUTHORIZATION, LOCATION, LANGUAGE, OTHER` |
+| `required_or_preferred`      | `text not null`                                                                       | `REQUIRED, PREFERRED`                                                                        |
+| `relationship`               | `text not null`                                                                       | `DIRECT, EQUIVALENT, INFERRED, MISSING`                                                      |
+| `matched_facts`              | `jsonb not null default '[]'`                                                         | server-derived provenance, never model-generated — see below                                 |
+| `explanation`                | `text not null`, ≤400 chars                                                           |                                                                                              |
+| `confidence`                 | `numeric(3,2) not null`                                                               |                                                                                              |
+| `requires_user_confirmation` | `boolean not null default true`                                                       | always `true` for `INFERRED` (CHECK constraint)                                              |
 
 Two CHECK constraints enforce structural invariants the database, not just the application,
-guarantees: `relationship = 'MISSING'` requires an *empty* `matched_facts`; every other
-relationship requires *at least one*. `relationship = 'INFERRED'` requires
+guarantees: `relationship = 'MISSING'` requires an _empty_ `matched_facts`; every other
+relationship requires _at least one_. `relationship = 'INFERRED'` requires
 `requires_user_confirmation = true`. Immutable once written (same `before update` trigger
 pattern as `job_snapshots`) — a run's whole mapping set is inserted once, atomically, and never
-touched again; supersession happens on the *run*, not on individual mapping rows.
+touched again; supersession happens on the _run_, not on individual mapping rows.
 
 **`matched_facts` provenance, not a bare `uuid[]`**: `[{"factId", "sourceTable", "factUpdatedAt"}, ...]`.
 Approved facts live across five heterogeneous tables (`candidate_facts`, `experiences`,
@@ -399,7 +400,7 @@ globally unique. `factUpdatedAt` reuses each fact table's existing `updated_at` 
 signal for detecting an edit since generation — deliberately not a new fact-content
 fingerprint. On read, each matched fact resolves to one of four distinct states — `valid`,
 `changed_since_analysis`, `unapproved`, `deleted` — never collapsed into a single boolean;
-fact *content* is never duplicated into this table, only id/table/timestamp.
+fact _content_ is never duplicated into this table, only id/table/timestamp.
 
 **Ownership, enforced structurally, not just in RPC code**: `applications.job_snapshot_id`,
 `requirement_mapping_runs.job_snapshot_id`, and
@@ -439,6 +440,67 @@ snapshot is still captured/deduped as usual, but the link is left untouched — 
 application's historical record can't be silently repointed at a different posting by an
 ordinary re-save. There is no amendment/correction workflow in Phase 5A; that's explicitly
 deferred to Phase 5B.
+
+### `submission_packets` (Phase 5B.1)
+
+Immutable, historical record of what Career OS actually had persisted at the moment an
+application was newly marked `APPLIED` — answers "what did I actually submit?" **This is not a
+live projection**: it stores resolved values, never a live-re-resolving pointer, unlike
+`requirement_evidence_mappings.matched_facts` — it must never change when the profile, résumé,
+job posting, requirement mapping, or AI models change later.
+
+| column                         | type                                                        | notes                                                                                                                                                                                                                                   |
+| ------------------------------ | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                           | `uuid pk`                                                   |                                                                                                                                                                                                                                         |
+| `user_id`                      | `uuid not null references auth.users(id) on delete cascade` |                                                                                                                                                                                                                                         |
+| `application_id`               | `uuid not null`                                             | composite FK to `applications(user_id, id)`; `unique (user_id, application_id)` — **at most one packet per application, ever**, enforced structurally                                                                                   |
+| `job_snapshot_id`              | `uuid`                                                      | nullable; composite FK to `job_snapshots(user_id, id)` — null if the application had no linked snapshot at freeze time                                                                                                                  |
+| `resume_id`                    | `uuid`                                                      | nullable; composite FK to `resumes(user_id, id)` — null today for every application, since no code path currently writes `applications.resume_id` (never inferred or defaulted)                                                         |
+| `requirement_mapping_run_id`   | `uuid`                                                      | nullable; composite FK to `requirement_mapping_runs(user_id, id)` — a reference into an already-immutable table, never duplicated content; null if no `CURRENT` run existed for the snapshot at freeze time                             |
+| `answers_snapshot`             | `jsonb not null default '[]'`                               | the literal, already-persisted `generated_answers` content for this application at freeze time — see "Truthfulness" below                                                                                                               |
+| `autofill_summary`             | `jsonb`                                                     | copied from `applications.autofill_summary` at freeze time — that column stays ordinarily mutable after `APPLIED` (an extension "Save" overwrites it unconditionally regardless of status), so this is the frozen copy, not a live read |
+| `unresolved_fields`            | `jsonb`                                                     | copied from `applications.unresolved_fields` at freeze time, same reasoning                                                                                                                                                             |
+| `consistency_findings`         | `jsonb not null default '[]'`                               | the deterministic consistency-firewall findings (Phase 5B.2) computed and gated on at the exact moment this packet was created                                                                                                          |
+| `consistency_acknowledgements` | `jsonb not null default '[]'`                               | which WARNING findings the user acknowledged, and when                                                                                                                                                                                  |
+| `content_fingerprint`          | `text not null`                                             | `"v1:" + sha256hex` of the canonicalized packet content — `computeSubmissionPacketFingerprint`, same pattern as `job_snapshots.content_fingerprint`                                                                                     |
+| `created_at`                   | `timestamptz`                                               |                                                                                                                                                                                                                                         |
+
+**Truthfulness of `answers_snapshot`**: sourced exclusively from this application's own
+`generated_answers` rows (`{generatedAnswerId, fieldLabel, fieldClassification, originalAnswer,
+finalText, userDecision, sourceFactIds, confidence}` per entry) — Career OS only ever has a
+literal value for a field if the user requested an AI suggestion for it, whether or not they
+ultimately approved/edited/skipped it. A field the user typed directly into the employer's page,
+or that the browser's own autofill completed, was never sent to Career OS and has **no entry
+here** — this is a deliberate, documented limitation, not an oversight. Nothing is ever
+reconstructed from today's profile and presented as historical.
+
+**Immutability, enforced at the database level, exactly like `job_snapshots`**: RLS grants
+`authenticated` **select only**; the same `before update` trigger
+(`reject_immutable_row_mutation`) rejects every update for every role including `service_role`.
+The only writer is `mark_application_applied` (below), `service_role`-only, called from
+`markOwnApplicationApplied` (`packages/database`).
+
+**Legacy `APPLIED` rows (temporal invariant)**: an application already `APPLIED` before this
+migration shipped has `submission_packet_id = null` and stays that way forever. A repeated
+"Mark as Applied" call on such a row is a pure no-op (current status is already `APPLIED`) — it
+never fabricates a packet from today's data and labels it historical. There is no "generate a
+packet now" action anywhere in this product; that would create fake history.
+
+### `mark_application_applied` (Phase 5B.1)
+
+The one atomic Postgres function for the entire canonical APPLIED transition — supersedes Phase
+5B.0's plain multi-step `markOwnApplicationApplied` now that packet creation must be atomic with
+the status transition. Inside one transaction: row-locks and re-verifies ownership of the
+application, preserves (or sets, the first time) `applied_at`, creates at most one
+`submission_packets` row (only when `applications.submission_packet_id` is still null — reused,
+never re-created, on every later transition back into `APPLIED`), updates `applications.status`/
+`applied_at`/`submission_packet_id`, and records a `STATUS_CHANGE` `application_events` row only
+on a real transition (never on an idempotent repeat while already `APPLIED`). `service_role`-only,
+same grant pattern as every Phase 5A function — `revoke ... from public, anon, authenticated`.
+Deterministic consistency-firewall gating (Phase 5B.2) happens in TypeScript immediately before
+this function is called, since the rule engine is explicitly pure/database-free; this function
+trusts its `p_consistency_findings`/`p_consistency_acknowledgements` arguments as already-final,
+validated content to freeze, not something it re-derives itself.
 
 ## `application_events`
 
@@ -508,17 +570,17 @@ Indexes: `(user_id)`, unique `(token_hash)`. RLS: standard.
 
 ## `email_connections`
 
-| column                    | type                                                        | notes                                                 |
-| ------------------------- | ----------------------------------------------------------- | ----------------------------------------------------- |
-| `id`                      | `uuid pk`                                                   |                                                       |
-| `user_id`                 | `uuid not null references auth.users(id) on delete cascade` |                                                       |
-| `provider`                | `text not null default 'gmail'`                             |                                                       |
-| `email_address`           | `text not null`                                             | the connected mailbox                                 |
-| `encrypted_refresh_token` | `text not null`                                             | encrypted at rest, see `docs/SECURITY_AND_PRIVACY.md` |
-| `scopes`                  | `text[] not null default '{}'`                              |                                                       |
-| `status`                  | `text not null default 'ACTIVE'`                            | `ACTIVE, DISCONNECTED, ERROR`                         |
-| `last_synced_at`          | `timestamptz`                                               |                                                       |
-| `created_at`              | `timestamptz not null default now()`                        |                                                       |
+| column                    | type                                                        | notes                                                                 |
+| ------------------------- | ----------------------------------------------------------- | --------------------------------------------------------------------- |
+| `id`                      | `uuid pk`                                                   |                                                                       |
+| `user_id`                 | `uuid not null references auth.users(id) on delete cascade` |                                                                       |
+| `provider`                | `text not null default 'gmail'`                             |                                                                       |
+| `email_address`           | `text not null`                                             | the connected mailbox                                                 |
+| `encrypted_refresh_token` | `text not null`                                             | encrypted at rest, see `docs/SECURITY_AND_PRIVACY.md`                 |
+| `scopes`                  | `text[] not null default '{}'`                              |                                                                       |
+| `status`                  | `text not null default 'ACTIVE'`                            | `ACTIVE, DISCONNECTED, ERROR`                                         |
+| `last_synced_at`          | `timestamptz`                                               |                                                                       |
+| `created_at`              | `timestamptz not null default now()`                        |                                                                       |
 | `updated_at`              | `timestamptz not null default now()`                        | tracks `status` transitions (e.g. a failed refresh moving to `ERROR`) |
 
 Unique: `(user_id, email_address)`, `(user_id, id)` (lets `email_signals` reference this table via
@@ -528,22 +590,22 @@ a composite FK — see below). Indexes: `(user_id)`. RLS: standard.
 
 Deliberately minimal — never full email bodies (see `docs/EMAIL_INTEGRATION.md`).
 
-| column                   | type                                                               | notes                                                                                  |
-| ------------------------ | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
-| `id`                     | `uuid pk`                                                          |                                                                                        |
-| `user_id`                | `uuid not null references auth.users(id) on delete cascade`        |                                                                                        |
-| `email_connection_id`    | `uuid not null`                                                    | composite FK `(user_id, email_connection_id) references email_connections(user_id, id) on delete cascade` — never a plain `id`-only reference, so a cross-user link is rejected by the database itself |
-| `provider_message_id`    | `text not null`                                                    | for dedup                                                                              |
-| `sender`                 | `text`                                                             |                                                                                        |
-| `sender_domain`          | `text`                                                             |                                                                                        |
-| `subject`                | `text`                                                             |                                                                                        |
-| `received_at`            | `timestamptz`                                                      |                                                                                        |
-| `matched_application_id` | `uuid references applications(id) on delete set null`              |                                                                                        |
-| `classification`         | `text`                                                             | `APPLICATION_RECEIVED, ASSESSMENT, INTERVIEW, ACTION_REQUIRED, OFFER, REJECTED, OTHER` |
-| `confidence`             | `numeric(3,2)`                                                     |                                                                                        |
-| `evidence`               | `text`                                                             | short snippet/reason, not the full email                                               |
-| `confirmation_status`    | `text not null default 'PENDING'`                                  | `PENDING, CONFIRMED, DECLINED, AUTO_APPLIED, NOT_APPLICABLE` — tracks whether a below-threshold match has been reviewed, so a declined suggestion never resurfaces identically on a later sync. Same role as `generated_answers.user_decision`. `AUTO_APPLIED` is set at insert time for matches meeting the 0.85 auto-apply threshold (already written to `application_events`); `NOT_APPLICABLE` for a zero-match or `OTHER`-classified message. |
-| `processed_at`           | `timestamptz not null default now()`                               |                                                                                        |
+| column                   | type                                                        | notes                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ------------------------ | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                     | `uuid pk`                                                   |                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `user_id`                | `uuid not null references auth.users(id) on delete cascade` |                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `email_connection_id`    | `uuid not null`                                             | composite FK `(user_id, email_connection_id) references email_connections(user_id, id) on delete cascade` — never a plain `id`-only reference, so a cross-user link is rejected by the database itself                                                                                                                                                                                                                                             |
+| `provider_message_id`    | `text not null`                                             | for dedup                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `sender`                 | `text`                                                      |                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `sender_domain`          | `text`                                                      |                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `subject`                | `text`                                                      |                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `received_at`            | `timestamptz`                                               |                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `matched_application_id` | `uuid references applications(id) on delete set null`       |                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `classification`         | `text`                                                      | `APPLICATION_RECEIVED, ASSESSMENT, INTERVIEW, ACTION_REQUIRED, OFFER, REJECTED, OTHER`                                                                                                                                                                                                                                                                                                                                                             |
+| `confidence`             | `numeric(3,2)`                                              |                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `evidence`               | `text`                                                      | short snippet/reason, not the full email                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `confirmation_status`    | `text not null default 'PENDING'`                           | `PENDING, CONFIRMED, DECLINED, AUTO_APPLIED, NOT_APPLICABLE` — tracks whether a below-threshold match has been reviewed, so a declined suggestion never resurfaces identically on a later sync. Same role as `generated_answers.user_decision`. `AUTO_APPLIED` is set at insert time for matches meeting the 0.85 auto-apply threshold (already written to `application_events`); `NOT_APPLICABLE` for a zero-match or `OTHER`-classified message. |
+| `processed_at`           | `timestamptz not null default now()`                        |                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 
 Unique: `(email_connection_id, provider_message_id)` — the dedup constraint referenced in
 `docs/EMAIL_INTEGRATION.md`. Indexes: `(user_id)`, `(matched_application_id)`. RLS: standard.
@@ -605,13 +667,14 @@ create policy "delete own applications" on applications
 always read from the verified session server-side, so RLS and the application-layer check
 agree by construction rather than by convention.
 
-**Deliberate exception (Phase 5A)**: `job_snapshots`, `requirement_mapping_runs`, and
-`requirement_evidence_mappings` ship with `select`-only RLS for `authenticated` — no
-`insert`/`update`/`delete` policy. All writes to these three tables happen exclusively through
-server-only Postgres functions (see "Server-only functions" above), which are granted to
-`service_role` only and bypass RLS entirely as a role property, so an RLS write policy for
-`authenticated` was never actually required for them to function — keeping one would only have
-opened a direct-PostgREST-write bypass around sanitization/fingerprinting/contract validation.
-`job_snapshots` and `requirement_evidence_mappings` additionally have a `before update` trigger
-blocking every update unconditionally, for every role — the true immutability guarantee, since
-RLS alone can't stop `service_role`.
+**Deliberate exception (Phase 5A, extended in Phase 5B.1)**: `job_snapshots`,
+`requirement_mapping_runs`, `requirement_evidence_mappings`, and `submission_packets` ship with
+`select`-only RLS for `authenticated` — no `insert`/`update`/`delete` policy. All writes to these
+four tables happen exclusively through server-only Postgres functions (see "Server-only
+functions" above and `mark_application_applied`), which are granted to `service_role` only and
+bypass RLS entirely as a role property, so an RLS write policy for `authenticated` was never
+actually required for them to function — keeping one would only have opened a
+direct-PostgREST-write bypass around sanitization/fingerprinting/contract validation.
+`job_snapshots`, `requirement_evidence_mappings`, and `submission_packets` additionally have a
+`before update` trigger blocking every update unconditionally, for every role — the true
+immutability guarantee, since RLS alone can't stop `service_role`.

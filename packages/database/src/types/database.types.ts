@@ -253,6 +253,7 @@ export interface Database {
           autofill_summary: Json | null;
           unresolved_fields: Json | null;
           job_snapshot_id: string | null;
+          submission_packet_id: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -438,7 +439,9 @@ export interface Database {
           completed_at: string | null;
           failed_at: string | null;
         };
-        Insert: Partial<Database['public']['Tables']['requirement_mapping_runs']['Row']> & {
+        Insert: Partial<
+          Database['public']['Tables']['requirement_mapping_runs']['Row']
+        > & {
           user_id: string;
           job_snapshot_id: string;
           status: string;
@@ -465,7 +468,9 @@ export interface Database {
           requires_user_confirmation: boolean;
           created_at: string;
         };
-        Insert: Partial<Database['public']['Tables']['requirement_evidence_mappings']['Row']> & {
+        Insert: Partial<
+          Database['public']['Tables']['requirement_evidence_mappings']['Row']
+        > & {
           user_id: string;
           run_id: string;
           requirement_text: string;
@@ -475,7 +480,9 @@ export interface Database {
           explanation: string;
           confidence: number;
         };
-        Update: Partial<Database['public']['Tables']['requirement_evidence_mappings']['Row']>;
+        Update: Partial<
+          Database['public']['Tables']['requirement_evidence_mappings']['Row']
+        >;
         Relationships: [];
       };
       email_connections: {
@@ -522,6 +529,30 @@ export interface Database {
           provider_message_id: string;
         };
         Update: Partial<Database['public']['Tables']['email_signals']['Row']>;
+        Relationships: [];
+      };
+      submission_packets: {
+        Row: {
+          id: string;
+          user_id: string;
+          application_id: string;
+          job_snapshot_id: string | null;
+          resume_id: string | null;
+          requirement_mapping_run_id: string | null;
+          answers_snapshot: Json;
+          autofill_summary: Json | null;
+          unresolved_fields: Json | null;
+          consistency_findings: Json;
+          consistency_acknowledgements: Json;
+          content_fingerprint: string;
+          created_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['submission_packets']['Row']> & {
+          user_id: string;
+          application_id: string;
+          content_fingerprint: string;
+        };
+        Update: Partial<Database['public']['Tables']['submission_packets']['Row']>;
         Relationships: [];
       };
     };
@@ -633,6 +664,29 @@ export interface Database {
         Returns: {
           run_id: string;
           mapping_count: number;
+        }[];
+      };
+      mark_application_applied: {
+        Args: {
+          p_user_id: string;
+          p_application_id: string;
+          p_answers_snapshot: Json;
+          p_autofill_summary: Json | null;
+          p_unresolved_fields: Json | null;
+          p_consistency_findings: Json;
+          p_consistency_acknowledgements: Json;
+          p_job_snapshot_id: string | null;
+          p_resume_id: string | null;
+          p_requirement_mapping_run_id: string | null;
+          p_content_fingerprint: string;
+        };
+        Returns: {
+          application_id: string;
+          status: string;
+          applied_at: string;
+          previous_status: string;
+          submission_packet_id: string;
+          packet_created: boolean;
         }[];
       };
     };

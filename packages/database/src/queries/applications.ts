@@ -1,6 +1,7 @@
 import {
   applicationSchema,
   autofillSummarySchema,
+  computeSubmissionPacketFingerprint,
   unresolvedFieldSummarySchema,
   type Application,
   type ApplicationEventSource,
@@ -8,12 +9,16 @@ import {
   type ApplicationStatus,
   type AutofillSummary,
   type SanitizedJobSnapshotContent,
+  type SubmissionPacketAnswer,
   type UnresolvedFieldSummary,
 } from '@career-os/shared';
 import { DatabaseError, assertNoError, unwrapRow } from '../errors';
-import type { Database } from '../types/database.types';
+import type { Database, Json } from '../types/database.types';
 import type { CareerOsSupabaseClient } from '../types/client';
 import { recordApplicationEvent } from './application-events';
+import { listOwnGeneratedAnswersForApplication } from './generated-answers';
+import { getCurrentOwnRequirementMappingRun } from './requirement-mapping-runs';
+import { markApplicationAppliedAtomic } from './submission-packets';
 
 type Row = Database['public']['Tables']['applications']['Row'];
 
@@ -81,6 +86,7 @@ function rowToApplication(row: Row): Application {
     autofillSummary: parseAutofillSummary(row.autofill_summary),
     unresolvedFields: parseUnresolvedFields(row.unresolved_fields),
     jobSnapshotId: 'job_snapshot_id' in row ? row.job_snapshot_id : null,
+    submissionPacketId: 'submission_packet_id' in row ? row.submission_packet_id : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });
@@ -459,22 +465,28 @@ export async function upsertApplicationWithSnapshot(
 
 /**
  * The one canonical operation for transitioning an application to APPLIED
- * (docs/IMPLEMENTATION_PLAN.md Phase 5B.0) — the extension's PATCH /api/applications/:id/
+ * (docs/IMPLEMENTATION_PLAN.md Phase 5B.0/5B.1) — the extension's PATCH /api/applications/:id/
  * mark-applied route and the dashboard's status-change action both call this exclusively;
  * neither implements any part of this transition's semantics itself. A separate, explicit
  * action from saving/filling (docs/IMPLEMENTATION_PLAN.md Phase 4C: "never infer APPLIED from
  * filling or detecting a submit button") — this function only ever runs from a real user click,
  * never automatically.
  *
- * `applied_at` represents when the application was *originally* submitted, not the most recent
- * status-toggle timestamp: it is set to now() only the first time (when it's still null), and
- * preserved on every later call regardless of the application's current status — covering
- * repeated mark-applied while already APPLIED (idempotent no-op on the timestamp), APPLIED
- * moving to a later status and back (handled by changeOwnApplicationStatus, which never touches
- * this column), and re-invoking this function after such a round-trip. A `STATUS_CHANGE` event is
- * only recorded when the status actually changes, matching the existing "don't spam identical
- * transitions" precedent in POST /api/applications — calling this while already APPLIED updates
- * nothing but touches no event log either.
+ * As of Phase 5B.1 the actual transition — ownership check, `applied_at` preservation, at-most-
+ * once submission-packet creation, status/pointer update, and conditional event recording — is
+ * one atomic Postgres transaction (`mark_application_applied`, migration 0013), not a sequence of
+ * separate client calls; this function's job is only to gather the trusted, already-persisted
+ * content that goes *into* a newly-created packet and hand it to that RPC. `applied_at` still
+ * represents when the application was *originally* submitted: the RPC sets it only the first time
+ * (when still null) and preserves it on every later call, covering repeated mark-applied while
+ * already APPLIED, APPLIED moving to a later status and back, and re-invoking this function after
+ * such a round-trip. A `STATUS_CHANGE` event is only recorded on a real transition, matching the
+ * existing "don't spam identical transitions" precedent in POST /api/applications.
+ *
+ * A legacy application already APPLIED before Phase 5B.1 shipped has no packet and never gets one
+ * fabricated from today's data on a repeated call (docs/IMPLEMENTATION_PLAN.md Phase 5B.1G) — the
+ * RPC's own already-APPLIED branch is a pure no-op, so this function skips assembling any packet
+ * content at all in that case rather than computing it and discarding it.
  */
 export async function markOwnApplicationApplied(
   supabase: CareerOsSupabaseClient,
@@ -488,27 +500,75 @@ export async function markOwnApplicationApplied(
     );
   }
 
-  const appliedAt = current.appliedAt ?? new Date().toISOString();
-  const { data, error } = await supabase
-    .from('applications')
-    .update({ status: 'APPLIED', applied_at: appliedAt })
-    .eq('id', id)
-    .eq('user_id', userId)
-    .select('*')
-    .single();
-  const application = rowToApplication(
-    unwrapRow(data, error, 'markOwnApplicationApplied'),
-  );
-
-  if (current.status !== 'APPLIED') {
-    await recordApplicationEvent(supabase, userId, {
-      applicationId: id,
-      eventType: 'STATUS_CHANGE',
-      fromStatus: current.status,
-      toStatus: 'APPLIED',
-      source: 'USER',
+  if (current.status === 'APPLIED') {
+    // Idempotent no-op — the RPC returns current state safely without touching anything. See the
+    // doc comment above: never assemble or freeze packet content for this case.
+    await markApplicationAppliedAtomic(supabase, userId, id, {
+      answersSnapshot: [] as unknown as Json,
+      autofillSummary: null,
+      unresolvedFields: null,
+      consistencyFindings: [] as unknown as Json,
+      consistencyAcknowledgements: [] as unknown as Json,
+      jobSnapshotId: null,
+      resumeId: null,
+      requirementMappingRunId: null,
+      contentFingerprint: 'v1:unused-already-applied',
     });
+    return current;
   }
 
+  // A real transition — gather exactly the already-persisted content that will be frozen if this
+  // call ends up creating a new packet (it may not: reaching APPLIED again after moving away
+  // reuses the existing one — see mark_application_applied's own doc comment).
+  const generatedAnswers = await listOwnGeneratedAnswersForApplication(
+    supabase,
+    userId,
+    id,
+  );
+  const answersSnapshot: SubmissionPacketAnswer[] = generatedAnswers.map((a) => ({
+    generatedAnswerId: a.id,
+    fieldLabel: a.fieldLabel,
+    fieldClassification: a.fieldClassification,
+    originalAnswer: a.answer,
+    finalText: a.finalText,
+    userDecision: a.userDecision,
+    sourceFactIds: a.sourceFactIds,
+    confidence: a.confidence,
+  }));
+
+  const requirementMappingRun = current.jobSnapshotId
+    ? await getCurrentOwnRequirementMappingRun(supabase, userId, current.jobSnapshotId)
+    : null;
+
+  const contentFingerprint = await computeSubmissionPacketFingerprint({
+    applicationId: id,
+    jobSnapshotId: current.jobSnapshotId,
+    resumeId: current.resumeId,
+    requirementMappingRunId: requirementMappingRun?.id ?? null,
+    answersSnapshot,
+    autofillSummary: current.autofillSummary,
+    unresolvedFields: current.unresolvedFields,
+    consistencyFindings: [],
+    consistencyAcknowledgements: [],
+  });
+
+  await markApplicationAppliedAtomic(supabase, userId, id, {
+    answersSnapshot: answersSnapshot as unknown as Json,
+    autofillSummary: current.autofillSummary as unknown as Json | null,
+    unresolvedFields: current.unresolvedFields as unknown as Json | null,
+    consistencyFindings: [] as unknown as Json,
+    consistencyAcknowledgements: [] as unknown as Json,
+    jobSnapshotId: current.jobSnapshotId,
+    resumeId: current.resumeId,
+    requirementMappingRunId: requirementMappingRun?.id ?? null,
+    contentFingerprint,
+  });
+
+  const application = await getOwnApplication(supabase, userId, id);
+  if (!application) {
+    throw new DatabaseError(
+      'markOwnApplicationApplied: application vanished immediately after being marked applied.',
+    );
+  }
   return application;
 }

@@ -19,17 +19,22 @@ phase depends on a later phase's output.
       pending, see "Verification status" below)
 - [x] Phase 5B.0 — Unify every APPLIED transition behind one canonical operation (prerequisite
       plumbing for 5B.1/5B.2, no schema change — see "Phase 5B.0" below)
+- [x] Phase 5B.1 — Frozen submission packets + the atomic canonical APPLIED transition (migration
+      0013, pgTAP-verified live against the linked Supabase project — see "Phase 5B.1" below)
 - [ ] Phase 6 — Multi-user beta hardening, privacy controls, testing, deployment
 - [ ] Phase 7 — Optional mypham.space integration, public onboarding, future sharing
 
-**Not yet started:** Phase 5B.1 onward (frozen submission packets, the deterministic consistency
-firewall, and everything downstream of it) and Phase 5C (next actions/deadlines, dashboard
-overview) — both explicitly out of scope for 5A, unscoped beyond their names, and not yet slotted
-into the numbered sequence relative to Phase 5's Gmail work. That ordering decision is
-intentionally left open rather than assumed here. Phase 5B.0 (this update) is prerequisite
-plumbing only — **no `submission_packets` table, consistency findings, acknowledgements,
-consistency-check endpoint, rule engine, AI unsupported-claim checking, "what you submitted"
-viewer, or résumé selection exist yet.** Those remain fully unimplemented, per the staged 5B plan.
+**Not yet started:** Phase 5B.2 onward (the deterministic consistency firewall, the explicit
+AI-assisted unsupported-claim check, and the historical submission viewer) and Phase 5C (next
+actions/deadlines, dashboard overview) — both explicitly out of scope for 5A, unscoped beyond
+their names, and not yet slotted into the numbered sequence relative to Phase 5's Gmail work.
+That ordering decision is intentionally left open rather than assumed here. Phase 5B.1 (this
+update) ships the immutable packet and the atomic transition it attaches to — **no consistency
+findings/acknowledgements are computed or gated on yet** (`mark_application_applied` accepts
+them as parameters and freezes whatever it's given, but every caller today always passes empty
+arrays — the deterministic rule engine that would populate them is Phase 5B.2's job), **no
+consistency-check endpoint, no AI unsupported-claim checking, no "what you submitted" viewer, and
+no résumé selection exist yet.** Those remain fully unimplemented, per the staged 5B plan.
 
 Phase 4A shipped: the popup classifies every detected field into a review state (sensitive /
 unsupported / already-completed / pending-suggestion / ready / suggested / needs-input),
@@ -993,3 +998,224 @@ Everything named at the top of this section — `submission_packets`, consistenc
 acknowledgements, the consistency-check endpoint, the deterministic rule engine, AI-assisted
 unsupported-claim checking, the "what you submitted" viewer, and résumé-version selection. All of
 Phase 5B's actual firewall/packet behavior starts at 5B.1.
+
+---
+
+## Phase 5B.1 — Frozen submission packets + the atomic canonical APPLIED transition
+
+**Goal**: when an application newly passes through the canonical mark-applied transition,
+atomically create and link exactly one immutable historical packet representing what Career OS
+actually knew and had persisted at that moment. The packet is a historical record, not a live
+projection — it must never silently change when the profile, résumé, job posting, requirement
+mapping, or AI models change later.
+
+### Schema (migration `0013_submission_packets.sql`)
+
+- `applications` and `resumes` each gain a `unique (user_id, id)` constraint — a cheap, additive
+  index required so each can be the parent side of a new composite FK (the same treatment
+  `job_snapshots`/`requirement_mapping_runs` got in migration 0010; `id` was already globally
+  unique, this only adds the exact-pair constraint Postgres requires for the FK target).
+- New table `submission_packets` — see `docs/DATA_MODEL.md`'s "submission_packets" section for
+  the full column-by-column reference. In summary: `application_id` (composite FK, `unique
+(user_id, application_id)` — one packet per application, structurally enforced), nullable
+  `job_snapshot_id`/`resume_id`/`requirement_mapping_run_id` (composite FKs), `answers_snapshot`/
+  `autofill_summary`/`unresolved_fields`/`consistency_findings`/`consistency_acknowledgements`
+  (jsonb, each CHECK-constrained to be a real JSON array where applicable), `content_fingerprint`,
+  `created_at`. Immutable via the exact same `reject_immutable_row_mutation` trigger `job_snapshots`
+  already uses (reused, not redefined) plus `select`-only RLS for `authenticated` — no
+  insert/update/delete policy at all, identical posture to `job_snapshots`/
+  `requirement_evidence_mappings`.
+- `applications` gains `submission_packet_id` (nullable, composite FK back to
+  `submission_packets`, Postgres 15+ column-scoped `on delete set null`).
+- New function `mark_application_applied(p_user_id, p_application_id, p_answers_snapshot,
+p_autofill_summary, p_unresolved_fields, p_consistency_findings, p_consistency_acknowledgements,
+p_job_snapshot_id, p_resume_id, p_requirement_mapping_run_id, p_content_fingerprint)` — see
+  "Atomic transition" below. `security invoker`, pinned `search_path`, revoked from
+  `public`/`anon`/`authenticated`, granted to `service_role` only — same Part-1 grant pattern as
+  every Phase 5A function.
+
+### Atomic transition — replacing Phase 5B.0's plain multi-step operation
+
+Phase 5B.0 made `markOwnApplicationApplied` the one canonical _TypeScript-level_ operation, safe
+at the time because it only ever touched one table (a plain update, then a separate event insert).
+That stopped being sufficient once packet creation had to join the same transition — there must
+never be a window where an application is `APPLIED` without a packet, or a packet exists without
+the application actually being `APPLIED`. `mark_application_applied` now performs the _entire_
+transition inside one Postgres transaction: row-locks and re-verifies ownership
+(`for update`, scoped by both `id` and `user_id` — this function runs via the service-role admin
+client, so RLS does not apply; this is the enforcement point), determines current status,
+preserves-or-sets `applied_at`, creates at most one packet (only when
+`applications.submission_packet_id` is still null), updates
+`status`/`applied_at`/`submission_packet_id`, and records a `STATUS_CHANGE` event only on a real
+transition. `markOwnApplicationApplied` (`packages/database`) remains the clean abstraction every
+caller (the extension route, the dashboard action) already uses unchanged — neither needed to
+change to get this atomicity, since the function's public signature and behavior contract didn't
+change, only its internals.
+
+**Division of labor**: the deterministic consistency-firewall gate (Phase 5B.2) is explicitly
+pure and database-free, so it cannot run inside Postgres — it runs in TypeScript, immediately
+before `mark_application_applied` is called, inside the same server-side request handler. The
+Postgres function trusts `p_consistency_findings`/`p_consistency_acknowledgements` as
+already-validated, final content to freeze; it does not re-derive or re-check them itself. That is
+safe because both the gating decision and this call happen in the same request, with no
+client-controlled step in between — the same posture `POST /api/applications` already uses for
+sanitizing/fingerprinting a job snapshot before calling its own RPC.
+
+`markOwnApplicationApplied`'s TypeScript side now does exactly this much, and no more: read the
+current application; if already `APPLIED`, skip straight to calling the RPC with an empty payload
+(never assemble or discard packet content for a pure no-op — see "Legacy APPLIED" below); otherwise
+gather this application's own `generated_answers` rows and map them into
+`SubmissionPacketAnswer[]`, resolve the `CURRENT` requirement-mapping run for the linked snapshot
+(if any), compute the content fingerprint (`computeSubmissionPacketFingerprint`,
+`packages/shared` — same canonical-JSON/SHA-256/`"v1:"`-prefix pattern as
+`computeJobSnapshotFingerprint`), and call the RPC. **Phase 5B.2 has not landed yet in this
+commit**, so `consistencyFindings`/`consistencyAcknowledgements` are always empty arrays here —
+the RPC parameters and the packet's own columns exist and are exercised, but nothing populates
+them with real findings until the next phase.
+
+### Idempotency — all five cases, one rule each in the database function
+
+1. **First transition** (`IN_PROGRESS → APPLIED`): creates the packet, sets `applied_at = now()`,
+   links the pointer, records one `STATUS_CHANGE` event.
+2. **Repeated mark-applied while already `APPLIED`**: pure no-op — returns current state, no
+   second packet, no `applied_at` rewrite, no duplicate event. (Live-verified: pgTAP test "repeated
+   mark-applied on an already-APPLIED application returns the current state" plus three more
+   asserting no second packet/event/timestamp change.)
+3. **`APPLIED → another status`**: unaffected — handled entirely by `changeOwnApplicationStatus`,
+   which never touches `applied_at` or `submission_packet_id` for any status (Phase 5B.0).
+4. **Another status `→ APPLIED` again**: reuses the existing packet verbatim (never mutated, never
+   replaced — the immutability trigger would reject an update attempt anyway), preserves the
+   original `applied_at`, records a real `STATUS_CHANGE` event for _this_ transition.
+5. **Legacy `APPLIED` row with no packet** (predates this migration): a repeated mark-applied call
+   is the same as case 2 — status is already `APPLIED`, so it is a pure no-op. **No packet is ever
+   fabricated from today's data and labeled historical.** `submission_packet_id` stays `null`
+   forever for that row unless it later genuinely transitions away from and back into `APPLIED`
+   (case 4's path, which _does_ create a fresh packet the first time `submission_packet_id` is
+   null and a real transition happens — that is a legitimate new submission, not a backfill).
+
+### `applied_at` semantics (unchanged from Phase 5B.0, now enforced inside the atomic function)
+
+Still the single rule: `applied_at = coalesce(current.applied_at, now())`, evaluated once per
+transition attempt, inside the same transaction as everything else — first transition sets it,
+every later call (idempotent repeat, or a genuine return to `APPLIED`) preserves it.
+
+### Truthful `answers_snapshot` — what the packet does and does not capture
+
+`answers_snapshot` is sourced exclusively from this application's own already-persisted
+`generated_answers` rows. Career OS only ever has a literal value for a field if the user
+requested an AI suggestion for it — whether they ultimately approved, edited, or skipped it. **A
+field the user typed directly into the employer's page, or that the browser's own autofill
+completed, was never sent to Career OS and has no entry in the packet.** This is a deliberate,
+documented limitation, not an oversight: inventing a value for such a field, or reconstructing one
+from today's profile and presenting it as "what was submitted," would be exactly the kind of
+fabricated historical data this phase exists to avoid. `autofillSummary`/`unresolvedFields` are
+copied at freeze time rather than read live later, because `applications.autofill_summary`/
+`unresolved_fields` remain ordinarily mutable after `APPLIED` (an extension "Save" overwrites them
+unconditionally regardless of status) — the live columns are not a safe historical source on their
+own.
+
+### `resume_id` — honestly nullable
+
+Inspected before building this: `applications.resume_id` has no writer anywhere in this
+codebase (confirmed already in the Phase 5B.0 inspection). `submission_packets.resume_id` is
+therefore always `null` today — never inferred from a "current" or "primary" résumé, never
+defaulted. A résumé-selection feature that would let this column actually get populated is a
+real, plausible future addition, deliberately not built in this phase.
+
+### Content fingerprint
+
+`computeSubmissionPacketFingerprint` (`packages/shared/src/lib/submission-packet-fingerprint.ts`)
+canonicalizes `applicationId`/`jobSnapshotId`/`resumeId`/`requirementMappingRunId`/
+`answersSnapshot`/`autofillSummary`/`unresolvedFields`/`consistencyFindings`/
+`consistencyAcknowledgements` into a fixed-key-order object (answer `sourceFactIds` sorted for
+order-independence; answer order itself preserved, since it reflects meaningful generation order)
+and SHA-256-hashes the JSON, prefixed `"v1:"`. Deliberately excludes `id`/`createdAt` (identity/
+system metadata, not content). Unit-tested: identical logical content produces an identical
+fingerprint regardless of `sourceFactIds` array order; changing any participating field changes
+the fingerprint.
+
+### Packet read plumbing
+
+`getOwnSubmissionPacket`/`getOwnSubmissionPacketByApplicationId` (`packages/database`) — read-only,
+owner-scoped, no service-role needed (the table's own `select`-only RLS is sufficient). `GET
+/api/applications/:id/packet` (cookie-session-authenticated, same posture as `GET
+/api/job-snapshots/:id/requirements`) — returns `{ packet: null }` as a legitimate 200 for both
+"not APPLIED yet" and "legacy APPLIED, no packet," never as an error; a nonexistent/not-owned
+_application_ is the only 404, indistinguishable from not-found on purpose. No polished UI yet —
+deferred to Phase 5B.4.
+
+### Files changed
+
+- `supabase/migrations/0013_submission_packets.sql` (new)
+- `supabase/tests/database/0019_submission_packets.test.sql` (new) — 30 pgTAP assertions
+- `packages/shared/src/schemas/submission-packet.ts`, `consistency-finding.ts` (new — the
+  consistency-finding schema is included here because `submission_packets.consistency_findings`/
+  `consistency_acknowledgements` need it at the type level even though nothing populates real
+  findings until 5B.2)
+- `packages/shared/src/lib/submission-packet-fingerprint.ts` (+ test, new)
+- `packages/shared/src/schemas/application.ts` — `submissionPacketId` added to `applicationSchema`
+- `packages/database/src/queries/submission-packets.ts` (new) — packet reads + the
+  `mark_application_applied` RPC wrapper
+- `packages/database/src/queries/applications.ts` — `markOwnApplicationApplied` rewritten to
+  orchestrate trusted-content assembly + the atomic RPC call instead of a plain update
+- `packages/database/src/types/database.types.ts` — `submission_packets` table,
+  `applications.submission_packet_id`, `mark_application_applied` function types (hand-maintained,
+  per this file's own header comment)
+- `apps/web/app/api/applications/[id]/packet/route.ts` (+ test, new)
+- `docs/DATA_MODEL.md` — new "submission_packets"/"mark_application_applied" sections, RLS
+  exception note extended
+
+### Tests
+
+`packages/shared`: fingerprint determinism/change-detection (6 tests). `packages/database`: a
+first transition assembling and passing the right packet content to the RPC, the idempotent
+already-`APPLIED` path skipping assembly entirely, the no-job-snapshot path never calling the
+requirement-run lookup, and not-found rejection (4 tests, `markOwnApplicationApplied`'s
+dependencies — `listOwnGeneratedAnswersForApplication`, `getCurrentOwnRequirementMappingRun`,
+`markApplicationAppliedAtomic` — mocked at module scope so these tests assert orchestration, not
+re-test already-covered internals). `apps/web`: the new packet route's auth/ownership/empty/
+present cases (4 tests); the pre-existing `mark-applied/route.test.ts` and
+`applications/actions.test.ts` suites were re-run unmodified and still pass, confirming both
+canonical-transition entry points are unaffected by the internal rewrite.
+
+**pgTAP — live-verified against the real linked Supabase project** (this sandbox has no
+Docker/Podman, so `supabase test db`'s normal runner can't execute directly; run via `supabase db
+query --linked -f`, with each assertion's TAP line captured into a session-local temp table and
+aggregated into one final `select` before `rollback`, same technique Phase 5A's live verification
+used): **30/30 assertions pass** — owner select, cross-user isolation, anon denial (with the
+`request.jwt.claims` GUC deliberately reset before the anon check, since it is a plain session
+variable independent of `role` and would otherwise silently keep resolving to whichever user's
+claims a prior `set local` left behind), authenticated direct insert/update/delete all
+ineffective (a table with only a `select` policy and no `update`/`delete` policy silently matches
+zero rows for those commands rather than raising an error — verified by content still present/
+unchanged afterward, not by expecting an exception), immutability-trigger enforcement against a
+role that bypasses RLS entirely, one-packet-per-application uniqueness, composite-FK cross-user
+rejection (application and job-snapshot references), a JSON-array CHECK constraint, grant denial
+for `authenticated`/`anon` on `mark_application_applied`, all five idempotency cases from the
+section above end-to-end, and confused-deputy rejection (a caller cannot mark `APPLIED` an
+application it doesn't own by passing a mismatched `p_user_id`, nor reach a nonexistent
+`application_id`). The whole file runs inside `begin … rollback`, so none of this left residue in
+the real database.
+
+**Typecheck/lint/format**: `@career-os/shared`, `@career-os/database`, `@career-os/web` typecheck
+clean; `@career-os/extension` typechecks clean as a sanity check (unaffected); `next lint` zero
+warnings; `prettier --check` clean on every touched file.
+
+### Definition of done
+
+- An application newly reaching `APPLIED` always gets exactly one immutable packet, created
+  atomically with the status transition — verified live, not just asserted.
+- A legacy `APPLIED` application never receives a fabricated packet, verified live.
+- `applied_at`'s idempotent rule holds across all five cases, verified live.
+- No table/function exposes packet content beyond the owning user — select-only RLS, service-role-
+  only writes, composite FKs, verified live including the anon and confused-deputy cases.
+
+### Explicitly excluded from Phase 5B.1
+
+Consistency findings/acknowledgements are structurally supported (columns, RPC parameters, Zod
+schemas) but never populated with anything but empty arrays in this slice — the deterministic rule
+engine that would compute them (`packages/shared/src/lib/consistency-rules.ts`) already exists in
+this same commit's tree for Phase 5B.2 to wire up next, but nothing calls it yet. Also not yet
+built: the consistency-check endpoint, the mark-applied gate/acknowledgement flow, any dashboard
+or extension UI for warnings/blockers, AI-assisted unsupported-claim checking, the "what you
+submitted" viewer, and résumé-version selection.

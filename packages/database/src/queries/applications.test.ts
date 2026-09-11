@@ -1,14 +1,36 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SanitizedJobSnapshotContent } from '@career-os/shared';
 import type { CareerOsSupabaseClient } from '../types/client';
-import {
+
+// markOwnApplicationApplied (Phase 5B.1) now orchestrates three sibling modules instead of doing
+// a raw table update itself — mocked at module scope so its own tests can assert exactly what it
+// asks each dependency to do, without re-testing those dependencies' own already-covered
+// internals (listOwnGeneratedAnswersForApplication, getCurrentOwnRequirementMappingRun, and the
+// mark_application_applied RPC wrapper each have their own test coverage elsewhere).
+const mocks = vi.hoisted(() => ({
+  listOwnGeneratedAnswersForApplication: vi.fn(),
+  getCurrentOwnRequirementMappingRun: vi.fn(),
+  markApplicationAppliedAtomic: vi.fn(),
+}));
+
+vi.mock('./generated-answers', () => ({
+  listOwnGeneratedAnswersForApplication: mocks.listOwnGeneratedAnswersForApplication,
+}));
+vi.mock('./requirement-mapping-runs', () => ({
+  getCurrentOwnRequirementMappingRun: mocks.getCurrentOwnRequirementMappingRun,
+}));
+vi.mock('./submission-packets', () => ({
+  markApplicationAppliedAtomic: mocks.markApplicationAppliedAtomic,
+}));
+
+const {
   changeOwnApplicationStatus,
   createOwnApplication,
   getOwnApplicationByJobId,
   markOwnApplicationApplied,
   upsertApplicationFromExtension,
   upsertApplicationWithSnapshot,
-} from './applications';
+} = await import('./applications');
 
 const USER_ID = '22222222-2222-4222-8222-222222222222';
 const JOB_ID = '33333333-3333-4333-8333-333333333333';
@@ -348,94 +370,201 @@ function mockApplicationsAndEvents(options: {
 }
 
 describe('markOwnApplicationApplied', () => {
-  it('sets status APPLIED, sets applied_at to now, and records a STATUS_CHANGE event on a first transition', async () => {
-    const { supabase, appChain, eventChain } = mockApplicationsAndEvents({
-      currentRow: { ...BASE_ROW, status: 'IN_PROGRESS', applied_at: null },
-      updatedRow: {
+  beforeEach(() => {
+    mocks.listOwnGeneratedAnswersForApplication.mockReset();
+    mocks.getCurrentOwnRequirementMappingRun.mockReset();
+    mocks.markApplicationAppliedAtomic.mockReset();
+  });
+
+  /** getOwnApplication is called twice on a real transition (before, to read current state; and
+   * after, to return the authoritative final row) and once on the idempotent/not-found paths —
+   * each call resolved independently, in order, matching real Supabase client sequencing. */
+  function mockApplicationReads(rows: (Record<string, unknown> | null)[]) {
+    const appChain: Record<string, unknown> = {};
+    appChain.select = vi.fn(() => appChain);
+    appChain.eq = vi.fn(() => appChain);
+    const maybeSingle = vi.fn();
+    for (const row of rows) maybeSingle.mockResolvedValueOnce({ data: row, error: null });
+    appChain.maybeSingle = maybeSingle;
+    const from = vi.fn(() => appChain);
+    return { supabase: { from } as unknown as CareerOsSupabaseClient, from };
+  }
+
+  const GENERATED_ANSWER = {
+    id: '77777777-7777-4777-8777-777777777777',
+    userId: USER_ID,
+    applicationId: APPLICATION_ID,
+    jobId: JOB_ID,
+    fieldLabel: 'Why us?',
+    fieldClassification: 'FREE_RESPONSE' as const,
+    answer: 'Original draft.',
+    confidence: 0.9,
+    sourceFactIds: ['88888888-8888-4888-8888-888888888888'],
+    reasoningSummary: null,
+    unsupportedClaims: [],
+    requiresUserReview: true,
+    userDecision: 'APPROVED' as const,
+    finalText: null,
+    insufficientData: false,
+    rejectionReason: null,
+    availableFactIds: null,
+    generationRunId: null,
+    attemptNumber: null,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  };
+
+  it('on a first transition: gathers generated answers, resolves the current requirement run, calls the atomic RPC, and returns the final application', async () => {
+    const SNAPSHOT_ID = '99999999-9999-4999-8999-999999999999';
+    const RUN_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const PACKET_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+
+    const { supabase, from } = mockApplicationReads([
+      {
+        ...BASE_ROW,
+        status: 'IN_PROGRESS',
+        applied_at: null,
+        job_snapshot_id: SNAPSHOT_ID,
+      },
+      {
         ...BASE_ROW,
         status: 'APPLIED',
         applied_at: '2026-06-01T00:00:00.000Z',
+        job_snapshot_id: SNAPSHOT_ID,
+        submission_packet_id: PACKET_ID,
       },
+    ]);
+    mocks.listOwnGeneratedAnswersForApplication.mockResolvedValue([GENERATED_ANSWER]);
+    mocks.getCurrentOwnRequirementMappingRun.mockResolvedValue({
+      id: RUN_ID,
+      userId: USER_ID,
+      jobSnapshotId: SNAPSHOT_ID,
+      status: 'CURRENT',
+      provider: 'anthropic',
+      model: 'claude-sonnet-5',
+      promptVersion: 'v1',
+      retrievalFactCount: 3,
+      failureCategory: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      completedAt: '2026-01-01T00:00:00.000Z',
+      failedAt: null,
+    });
+    mocks.markApplicationAppliedAtomic.mockResolvedValue({
+      applicationId: APPLICATION_ID,
+      status: 'APPLIED',
+      appliedAt: '2026-06-01T00:00:00.000Z',
+      previousStatus: 'IN_PROGRESS',
+      submissionPacketId: PACKET_ID,
+      packetCreated: true,
     });
 
     const result = await markOwnApplicationApplied(supabase, USER_ID, APPLICATION_ID);
 
-    expect(result.status).toBe('APPLIED');
-    expect(result.appliedAt).toBe('2026-06-01T00:00:00.000Z');
-    // The write must have been asked to set a non-null applied_at (the exact "now" value is the
-    // mocked updatedRow above; this asserts the *call*, not a specific clock value).
-    expect(appChain.update).toHaveBeenCalledWith(
-      expect.objectContaining({ status: 'APPLIED', applied_at: expect.any(String) }),
+    expect(mocks.listOwnGeneratedAnswersForApplication).toHaveBeenCalledWith(
+      supabase,
+      USER_ID,
+      APPLICATION_ID,
     );
-    expect(eventChain.insert).toHaveBeenCalledWith(
+    expect(mocks.getCurrentOwnRequirementMappingRun).toHaveBeenCalledWith(
+      supabase,
+      USER_ID,
+      SNAPSHOT_ID,
+    );
+    expect(mocks.markApplicationAppliedAtomic).toHaveBeenCalledWith(
+      supabase,
+      USER_ID,
+      APPLICATION_ID,
       expect.objectContaining({
-        from_status: 'IN_PROGRESS',
-        to_status: 'APPLIED',
-        source: 'USER',
+        answersSnapshot: [
+          expect.objectContaining({
+            generatedAnswerId: GENERATED_ANSWER.id,
+            fieldLabel: 'Why us?',
+            originalAnswer: 'Original draft.',
+            userDecision: 'APPROVED',
+            sourceFactIds: GENERATED_ANSWER.sourceFactIds,
+          }),
+        ],
+        jobSnapshotId: SNAPSHOT_ID,
+        requirementMappingRunId: RUN_ID,
+        contentFingerprint: expect.stringMatching(/^v1:/),
       }),
     );
+    expect(result.status).toBe('APPLIED');
+    expect(result.submissionPacketId).toBe(PACKET_ID);
+    expect(from).toHaveBeenCalledTimes(2);
   });
 
-  it('is idempotent when already APPLIED: preserves the existing applied_at and records no duplicate event', async () => {
-    const { supabase, appChain, eventChain } = mockApplicationsAndEvents({
-      currentRow: {
-        ...BASE_ROW,
-        status: 'APPLIED',
-        applied_at: '2026-01-01T00:00:00.000Z',
-      },
-      updatedRow: {
-        ...BASE_ROW,
-        status: 'APPLIED',
-        applied_at: '2026-01-01T00:00:00.000Z',
-      },
+  it('is idempotent when already APPLIED: never assembles packet content, calls the RPC with an empty payload, and returns current state without a second read', async () => {
+    const { supabase, from } = mockApplicationReads([
+      { ...BASE_ROW, status: 'APPLIED', applied_at: '2026-01-01T00:00:00.000Z' },
+    ]);
+    mocks.markApplicationAppliedAtomic.mockResolvedValue({
+      applicationId: APPLICATION_ID,
+      status: 'APPLIED',
+      appliedAt: '2026-01-01T00:00:00.000Z',
+      previousStatus: 'APPLIED',
+      submissionPacketId: null,
+      packetCreated: false,
     });
 
     const result = await markOwnApplicationApplied(supabase, USER_ID, APPLICATION_ID);
 
-    expect(result.appliedAt).toBe('2026-01-01T00:00:00.000Z');
-    expect(appChain.update).toHaveBeenCalledWith(
-      expect.objectContaining({ applied_at: '2026-01-01T00:00:00.000Z' }),
+    expect(mocks.listOwnGeneratedAnswersForApplication).not.toHaveBeenCalled();
+    expect(mocks.getCurrentOwnRequirementMappingRun).not.toHaveBeenCalled();
+    expect(mocks.markApplicationAppliedAtomic).toHaveBeenCalledWith(
+      supabase,
+      USER_ID,
+      APPLICATION_ID,
+      expect.objectContaining({
+        answersSnapshot: [],
+        jobSnapshotId: null,
+        resumeId: null,
+      }),
     );
-    expect(eventChain.insert).not.toHaveBeenCalled();
+    expect(result.appliedAt).toBe('2026-01-01T00:00:00.000Z');
+    // Only the one initial read — no second getOwnApplication call, since nothing changed.
+    expect(from).toHaveBeenCalledTimes(1);
   });
 
-  it('preserves the original applied_at when transitioning back to APPLIED after having moved away', async () => {
-    // e.g. APPLIED -> INTERVIEW (Gmail/manual) -> APPLIED again, or a reverted event landing back
-    // on APPLIED — applied_at must still read the very first mark-applied timestamp, not now().
-    const { supabase, appChain, eventChain } = mockApplicationsAndEvents({
-      currentRow: {
-        ...BASE_ROW,
-        status: 'INTERVIEW',
-        applied_at: '2026-01-01T00:00:00.000Z',
-      },
-      updatedRow: {
+  it('does not resolve a requirement run when the application has no job snapshot', async () => {
+    const { supabase } = mockApplicationReads([
+      { ...BASE_ROW, status: 'IN_PROGRESS', applied_at: null, job_snapshot_id: null },
+      {
         ...BASE_ROW,
         status: 'APPLIED',
-        applied_at: '2026-01-01T00:00:00.000Z',
+        applied_at: '2026-06-01T00:00:00.000Z',
+        job_snapshot_id: null,
       },
+    ]);
+    mocks.listOwnGeneratedAnswersForApplication.mockResolvedValue([]);
+    mocks.markApplicationAppliedAtomic.mockResolvedValue({
+      applicationId: APPLICATION_ID,
+      status: 'APPLIED',
+      appliedAt: '2026-06-01T00:00:00.000Z',
+      previousStatus: 'IN_PROGRESS',
+      submissionPacketId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      packetCreated: true,
     });
 
-    const result = await markOwnApplicationApplied(supabase, USER_ID, APPLICATION_ID);
+    await markOwnApplicationApplied(supabase, USER_ID, APPLICATION_ID);
 
-    expect(result.appliedAt).toBe('2026-01-01T00:00:00.000Z');
-    expect(appChain.update).toHaveBeenCalledWith(
-      expect.objectContaining({ applied_at: '2026-01-01T00:00:00.000Z' }),
-    );
-    expect(eventChain.insert).toHaveBeenCalledWith(
-      expect.objectContaining({ from_status: 'INTERVIEW', to_status: 'APPLIED' }),
+    expect(mocks.getCurrentOwnRequirementMappingRun).not.toHaveBeenCalled();
+    expect(mocks.markApplicationAppliedAtomic).toHaveBeenCalledWith(
+      supabase,
+      USER_ID,
+      APPLICATION_ID,
+      expect.objectContaining({ jobSnapshotId: null, requirementMappingRunId: null }),
     );
   });
 
-  it('throws without ever attempting a write when the application is not found or not owned', async () => {
-    const { supabase, appChain, eventChain } = mockApplicationsAndEvents({
-      currentRow: null,
-    });
+  it('throws without calling any dependency when the application is not found or not owned', async () => {
+    const { supabase } = mockApplicationReads([null]);
 
     await expect(
       markOwnApplicationApplied(supabase, USER_ID, APPLICATION_ID),
     ).rejects.toThrow(/not found or not owned/);
-    expect(appChain.update).not.toHaveBeenCalled();
-    expect(eventChain.insert).not.toHaveBeenCalled();
+    expect(mocks.listOwnGeneratedAnswersForApplication).not.toHaveBeenCalled();
+    expect(mocks.markApplicationAppliedAtomic).not.toHaveBeenCalled();
   });
 });
 

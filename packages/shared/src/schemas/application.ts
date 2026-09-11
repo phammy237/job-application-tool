@@ -98,6 +98,11 @@ export const applicationSchema = z.object({
    * as the Phase 4C columns above applies here too. Frozen once the application reaches APPLIED
    * or later — see upsert_application_with_snapshot's snapshot-freeze behavior. */
   jobSnapshotId: uuidSchema.nullable().default(null),
+  /** Added in migration 0013 (Phase 5B.1) — same missing-key-on-an-unmigrated-database reasoning.
+   * Null until the application's first real transition into APPLIED (markOwnApplicationApplied);
+   * once set, it never changes — a legacy APPLIED application that predates packet support stays
+   * null forever, never fabricated (docs/IMPLEMENTATION_PLAN.md Phase 5B.1G). */
+  submissionPacketId: uuidSchema.nullable().default(null),
   createdAt: isoDateTimeSchema,
   updatedAt: isoDateTimeSchema,
 });
