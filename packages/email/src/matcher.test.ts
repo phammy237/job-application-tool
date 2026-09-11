@@ -4,7 +4,9 @@ import { matchApplication } from './matcher';
 
 const USER_ID = '22222222-2222-4222-8222-222222222222';
 
-function makeApplication(overrides: Partial<Application> & { id: string; company: string; title: string }): Application {
+function makeApplication(
+  overrides: Partial<Application> & { id: string; company: string; title: string },
+): Application {
   return {
     userId: USER_ID,
     jobId: null,
@@ -20,13 +22,16 @@ function makeApplication(overrides: Partial<Application> & { id: string; company
     autofillSummary: null,
     unresolvedFields: null,
     jobSnapshotId: null,
+    submissionPacketId: null,
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
     ...overrides,
   };
 }
 
-function makeSignal(overrides: Partial<EmailSignal> & { matchedApplicationId: string }): EmailSignal {
+function makeSignal(
+  overrides: Partial<EmailSignal> & { matchedApplicationId: string },
+): EmailSignal {
   return {
     id: 'sig-1',
     userId: USER_ID,
@@ -47,11 +52,23 @@ function makeSignal(overrides: Partial<EmailSignal> & { matchedApplicationId: st
 
 describe('matchApplication — clean single match', () => {
   it('matches on company-domain-guess plus token overlap', () => {
-    const acme = makeApplication({ id: 'app-acme', company: 'Acme', title: 'Backend Engineer' });
-    const other = makeApplication({ id: 'app-other', company: 'Globex', title: 'Frontend Engineer' });
+    const acme = makeApplication({
+      id: 'app-acme',
+      company: 'Acme',
+      title: 'Backend Engineer',
+    });
+    const other = makeApplication({
+      id: 'app-other',
+      company: 'Globex',
+      title: 'Frontend Engineer',
+    });
 
     const result = matchApplication(
-      { sender: 'careers@acme.com', senderDomain: 'acme.com', subject: 'Your application to Acme — Backend Engineer' },
+      {
+        sender: 'careers@acme.com',
+        senderDomain: 'acme.com',
+        subject: 'Your application to Acme — Backend Engineer',
+      },
       [acme, other],
       [],
     );
@@ -64,10 +81,18 @@ describe('matchApplication — clean single match', () => {
 
 describe('matchApplication — zero match', () => {
   it('returns a null applicationId when nothing overlaps', () => {
-    const acme = makeApplication({ id: 'app-acme', company: 'Acme', title: 'Backend Engineer' });
+    const acme = makeApplication({
+      id: 'app-acme',
+      company: 'Acme',
+      title: 'Backend Engineer',
+    });
 
     const result = matchApplication(
-      { sender: 'newsletter@unrelated.example', senderDomain: 'unrelated.example', subject: 'Weekly job digest' },
+      {
+        sender: 'newsletter@unrelated.example',
+        senderDomain: 'unrelated.example',
+        subject: 'Weekly job digest',
+      },
       [acme],
       [],
     );
@@ -76,10 +101,19 @@ describe('matchApplication — zero match', () => {
   });
 
   it('returns a null applicationId when there are no eligible (non-WITHDRAWN) applications', () => {
-    const withdrawn = makeApplication({ id: 'app-w', company: 'Acme', title: 'Backend Engineer', status: 'WITHDRAWN' });
+    const withdrawn = makeApplication({
+      id: 'app-w',
+      company: 'Acme',
+      title: 'Backend Engineer',
+      status: 'WITHDRAWN',
+    });
 
     const result = matchApplication(
-      { sender: 'careers@acme.com', senderDomain: 'acme.com', subject: 'Your application to Acme' },
+      {
+        sender: 'careers@acme.com',
+        senderDomain: 'acme.com',
+        subject: 'Your application to Acme',
+      },
       [withdrawn],
       [],
     );
@@ -90,14 +124,26 @@ describe('matchApplication — zero match', () => {
 
 describe('matchApplication — ambiguous multi-match', () => {
   it('flags ambiguous when two applications score within the margin and neither clears the auto-apply threshold', () => {
-    const acmeA = makeApplication({ id: 'app-a', company: 'Acme', title: 'Backend Engineer' });
-    const acmeB = makeApplication({ id: 'app-b', company: 'Acme', title: 'Platform Engineer' });
+    const acmeA = makeApplication({
+      id: 'app-a',
+      company: 'Acme',
+      title: 'Backend Engineer',
+    });
+    const acmeB = makeApplication({
+      id: 'app-b',
+      company: 'Acme',
+      title: 'Platform Engineer',
+    });
 
     // Same company for both — sender/subject only weakly distinguishes the two roles, so neither
     // application's title tokens land a clean win and both score identically off the company
     // overlap + domain guess alone.
     const result = matchApplication(
-      { sender: 'careers@acme.com', senderDomain: 'acme.com', subject: 'Update on your Acme application' },
+      {
+        sender: 'careers@acme.com',
+        senderDomain: 'acme.com',
+        subject: 'Update on your Acme application',
+      },
       [acmeA, acmeB],
       [],
     );
@@ -108,7 +154,11 @@ describe('matchApplication — ambiguous multi-match', () => {
 
 describe('matchApplication — domain learned from a prior confirmed signal', () => {
   it('matches via a learned ATS sending domain even when the company-name domain guess would not match', () => {
-    const acme = makeApplication({ id: 'app-acme', company: 'Acme', title: 'Backend Engineer' });
+    const acme = makeApplication({
+      id: 'app-acme',
+      company: 'Acme',
+      title: 'Backend Engineer',
+    });
     const priorSignal = makeSignal({
       matchedApplicationId: 'app-acme',
       senderDomain: 'myworkday.com',
@@ -116,7 +166,11 @@ describe('matchApplication — domain learned from a prior confirmed signal', ()
     });
 
     const result = matchApplication(
-      { sender: 'no-reply@myworkday.com', senderDomain: 'myworkday.com', subject: 'Application status update' },
+      {
+        sender: 'no-reply@myworkday.com',
+        senderDomain: 'myworkday.com',
+        subject: 'Application status update',
+      },
       [acme],
       [priorSignal],
     );
@@ -126,7 +180,11 @@ describe('matchApplication — domain learned from a prior confirmed signal', ()
   });
 
   it('does not learn from a DECLINED or PENDING prior signal', () => {
-    const acme = makeApplication({ id: 'app-acme', company: 'Acme', title: 'Backend Engineer' });
+    const acme = makeApplication({
+      id: 'app-acme',
+      company: 'Acme',
+      title: 'Backend Engineer',
+    });
     const declinedSignal = makeSignal({
       matchedApplicationId: 'app-acme',
       senderDomain: 'myworkday.com',
@@ -134,7 +192,11 @@ describe('matchApplication — domain learned from a prior confirmed signal', ()
     });
 
     const result = matchApplication(
-      { sender: 'no-reply@myworkday.com', senderDomain: 'myworkday.com', subject: 'Unrelated notice' },
+      {
+        sender: 'no-reply@myworkday.com',
+        senderDomain: 'myworkday.com',
+        subject: 'Unrelated notice',
+      },
       [acme],
       [declinedSignal],
     );
