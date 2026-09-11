@@ -5,7 +5,20 @@ import { isoDateTimeSchema } from './common';
  * One entry per deterministic rule (docs/IMPLEMENTATION_PLAN.md Phase 5B.2B) plus
  * UNSUPPORTED_CLAIM, which shares this exact finding shape but is produced by the explicit,
  * user-triggered AI-assisted check (Phase 5B.3) rather than a deterministic rule — always
- * WARNING severity, never BLOCKING (see consistencyFindingSchema's refinement below).
+ * WARNING severity, never BLOCKING (see consistencyFindingSchema's own refinement below).
+ *
+ * `RELOCATION_SELF_CONTRADICTION`/`RELOCATION_PROFILE_MISMATCH` were added in the Phase 5B
+ * hardening pass as a **backward-compatible expansion**, never a rename: before this, both
+ * `evaluateEligibilityGroup` calls in `consistency-rules.ts` (one for `WORK_AUTHORIZATION`, one
+ * for `RELOCATION`) reused the same `ELIGIBILITY_SELF_CONTRADICTION`/`ELIGIBILITY_PROFILE_MISMATCH`
+ * ids for both classifications, making a finding's `ruleId` alone insufficient to tell a
+ * work-authorization concern apart from a relocation one (only free-text `description`/
+ * `fieldBLabel` disambiguated them). `ELIGIBILITY_SELF_CONTRADICTION`/`ELIGIBILITY_PROFILE_MISMATCH`
+ * are kept exactly as-is and remain the ids `WORK_AUTHORIZATION` findings use — this enum only
+ * ever gained new members, so every historical `submission_packets.consistency_findings` JSON
+ * blob written before this pass (using either the old shared ids, for a relocation finding that
+ * predates this split, or the `ELIGIBILITY_*` ids for a work-authorization one) still parses
+ * against this exact schema without any migration.
  */
 export const consistencyRuleIdSchema = z.enum([
   'GRADUATION_DATE_MISMATCH',
@@ -14,6 +27,8 @@ export const consistencyRuleIdSchema = z.enum([
   'JOB_TITLE_COMPANY_MISMATCH',
   'ELIGIBILITY_SELF_CONTRADICTION',
   'ELIGIBILITY_PROFILE_MISMATCH',
+  'RELOCATION_SELF_CONTRADICTION',
+  'RELOCATION_PROFILE_MISMATCH',
   'UNSUPPORTED_CLAIM',
 ]);
 export type ConsistencyRuleId = z.infer<typeof consistencyRuleIdSchema>;
@@ -28,14 +43,35 @@ export type ConsistencyRuleId = z.infer<typeof consistencyRuleIdSchema>;
 export const consistencySeveritySchema = z.enum(['WARNING', 'BLOCKING']);
 export type ConsistencySeverity = z.infer<typeof consistencySeveritySchema>;
 
+/**
+ * `PROFILE_ELIGIBILITY` was added in the Phase 5B hardening pass — another backward-compatible
+ * expansion, never a rename. Before this, both work-authorization and relocation profile-mismatch
+ * findings tagged their profile-side value `PROFILE_CONTACT`, which is a semantic misnomer
+ * (neither is contact information). `PROFILE_CONTACT` is kept exactly as-is in this enum — every
+ * historical finding already frozen into a `submission_packets` row with that tag still parses —
+ * but `evaluateEligibilityGroup` now tags newly-generated eligibility/profile-preference findings
+ * with `PROFILE_ELIGIBILITY` instead. (Nothing in this codebase's profiles table actually stores
+ * plain contact info like an email/phone in a way this rule engine ever compares against, so
+ * `PROFILE_CONTACT` may end up fully retired from new output entirely — it stays in the enum only
+ * for historical-JSON compatibility.)
+ */
 export const consistencyFieldSourceSchema = z.enum([
   'PROFILE_EDUCATION',
   'PROFILE_EXPERIENCE',
   'PROFILE_CONTACT',
+  'PROFILE_ELIGIBILITY',
   'GENERATED_ANSWER',
   'AI_EVIDENCE',
 ]);
 export type ConsistencyFieldSource = z.infer<typeof consistencyFieldSourceSchema>;
+
+/** UNSUPPORTED_CLAIM (Phase 5B.3) must always be WARNING — an AI-assisted finding may never be
+ * BLOCKING, so a model can never be the thing that stops a user from submitting. Declared before
+ * `consistencyFindingSchema` so its own refinement (below) can reference this set directly,
+ * rather than duplicating the rule-id list inline. */
+export const AI_ASSISTED_RULE_IDS: ReadonlySet<ConsistencyRuleId> = new Set([
+  'UNSUPPORTED_CLAIM',
+]);
 
 /**
  * `id` is a deterministic hash of (ruleId + the normalized identity of the two things being
@@ -44,32 +80,44 @@ export type ConsistencyFieldSource = z.infer<typeof consistencyFieldSourceSchema
  * /consistency-check could never be matched against the findings recomputed at the authoritative
  * PATCH /mark-applied a moment later (docs/IMPLEMENTATION_PLAN.md Phase 5B.2A).
  *
- * BLOCKING findings are never acknowledgeable — enforced both by the rejection refinement below
- * (a BLOCKING finding can never itself carry a legitimate acknowledgement path) and, more
- * importantly, by the server-side gate in packages/database, which refuses outright whenever any
- * BLOCKING finding is present, regardless of what acknowledgement ids the caller sends.
+ * BLOCKING findings are never acknowledgeable — enforced primarily by the server-side gate in
+ * packages/database, which refuses outright whenever any BLOCKING finding is present, regardless
+ * of what acknowledgement ids the caller sends.
+ *
+ * Phase 5B hardening: the `.superRefine` below is a second, independent, schema-level guard —
+ * defense in depth, not the only check — rejecting any finding that pairs an AI-assisted rule id
+ * (`AI_ASSISTED_RULE_IDS`, currently just `UNSUPPORTED_CLAIM`) with `severity: 'BLOCKING'`. Today
+ * `generate-unsupported-claims-check.ts` already hardcodes `severity: 'WARNING'` on every finding
+ * it produces — that remains the actual, load-bearing control, and model/provider output has
+ * never had any way to set severity itself. This refinement exists so a future bug that ever did
+ * try to construct an AI-assisted BLOCKING finding would fail schema validation immediately,
+ * rather than silently succeeding because nothing else was checking for that combination.
  */
-export const consistencyFindingSchema = z.object({
-  id: z.string().min(1),
-  ruleId: consistencyRuleIdSchema,
-  severity: consistencySeveritySchema,
-  fieldALabel: z.string(),
-  fieldASource: consistencyFieldSourceSchema,
-  fieldAValue: z.string(),
-  fieldBLabel: z.string(),
-  fieldBSource: consistencyFieldSourceSchema,
-  fieldBValue: z.string(),
-  /** Short, human-readable, never raw model chain-of-thought (same posture as
-   * generatedAnswer.reasoningSummary) — always plainly states which two values conflict. */
-  description: z.string(),
-});
+export const consistencyFindingSchema = z
+  .object({
+    id: z.string().min(1),
+    ruleId: consistencyRuleIdSchema,
+    severity: consistencySeveritySchema,
+    fieldALabel: z.string(),
+    fieldASource: consistencyFieldSourceSchema,
+    fieldAValue: z.string(),
+    fieldBLabel: z.string(),
+    fieldBSource: consistencyFieldSourceSchema,
+    fieldBValue: z.string(),
+    /** Short, human-readable, never raw model chain-of-thought (same posture as
+     * generatedAnswer.reasoningSummary) — always plainly states which two values conflict. */
+    description: z.string(),
+  })
+  .superRefine((finding, ctx) => {
+    if (finding.severity === 'BLOCKING' && AI_ASSISTED_RULE_IDS.has(finding.ruleId)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['severity'],
+        message: `An AI-assisted rule (${finding.ruleId}) can never be BLOCKING — this would let model/provider output control whether a submission is blocked.`,
+      });
+    }
+  });
 export type ConsistencyFinding = z.infer<typeof consistencyFindingSchema>;
-
-/** UNSUPPORTED_CLAIM (Phase 5B.3) must always be WARNING — an AI-assisted finding may never be
- * BLOCKING, so a model can never be the thing that stops a user from submitting. */
-export const AI_ASSISTED_RULE_IDS: ReadonlySet<ConsistencyRuleId> = new Set([
-  'UNSUPPORTED_CLAIM',
-]);
 
 export const consistencyAcknowledgementSchema = z.object({
   findingId: z.string().min(1),
@@ -134,4 +182,6 @@ export const unsupportedClaimCheckResponseSchema = z.union([
     findings: z.array(consistencyFindingSchema),
   }),
 ]);
-export type UnsupportedClaimCheckResponse = z.infer<typeof unsupportedClaimCheckResponseSchema>;
+export type UnsupportedClaimCheckResponse = z.infer<
+  typeof unsupportedClaimCheckResponseSchema
+>;

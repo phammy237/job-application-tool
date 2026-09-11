@@ -178,7 +178,12 @@ never the deterministic, authoritative one. Its call site is `POST
   `markOwnApplicationApplied`'s `acknowledgedFindingIds` gate and never required to be
   acknowledged to submit; a model can never be the thing that stops a submission. The
   deterministic consistency-rule engine (`packages/shared/src/lib/consistency-rules.ts`) remains
-  the sole authority for BLOCKING/WARNING findings enforced at mark-applied time.
+  the sole authority for BLOCKING/WARNING findings enforced at mark-applied time. As of the
+  Phase 5B hardening pass, this is now also a schema-level invariant, not just a code-review-time
+  convention: `consistencyFindingSchema`'s `.superRefine` (`packages/shared/src/schemas/
+  consistency-finding.ts`) rejects any finding pairing an AI-assisted rule id
+  (`AI_ASSISTED_RULE_IDS`) with `severity: 'BLOCKING'` outright — defense in depth, not the only
+  check, since the hardcoded `severity: 'WARNING'` above remains the actual load-bearing control.
 - **Retrieval before generation, same as §2/§8.** Only `generated_answers` rows the user actually
   decided to use (`userDecision IN ('APPROVED', 'EDITED')`) are checked — a skipped or
   never-decided suggestion was never going to be submitted, so there is no claim to check. Facts

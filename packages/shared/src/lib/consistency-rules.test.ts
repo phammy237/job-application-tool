@@ -14,6 +14,7 @@ import {
   type ConsistencyCandidateAnswer,
   type ConsistencyRuleInput,
 } from './consistency-rules';
+import { consistencyFindingSchema } from '../schemas/consistency-finding';
 
 function answer(
   overrides: Partial<ConsistencyCandidateAnswer> = {},
@@ -595,7 +596,111 @@ describe('ELIGIBILITY_PROFILE_MISMATCH', () => {
     expect(findings).toHaveLength(0);
   });
 
-  it('relocation uses the same conservative path', () => {
+  it('work authorization tags the profile side PROFILE_ELIGIBILITY, not the old PROFILE_CONTACT misnomer', () => {
+    const findings = evaluateConsistencyFindings(
+      baseInput({
+        profile: { workAuthorization: 'No', relocationPreference: null },
+        answers: [answer({ fieldClassification: 'WORK_AUTHORIZATION', text: 'Yes' })],
+      }),
+    );
+    expect(findings[0]!.fieldBSource).toBe('PROFILE_ELIGIBILITY');
+  });
+});
+
+// ================================================================================================
+// RELOCATION_SELF_CONTRADICTION (BLOCKING) / RELOCATION_PROFILE_MISMATCH (WARNING) — Phase 5B
+// hardening: relocation now gets its own dedicated rule ids, distinct from
+// ELIGIBILITY_SELF_CONTRADICTION/ELIGIBILITY_PROFILE_MISMATCH, which remain reserved for
+// WORK_AUTHORIZATION only. Mirrors the WORK_AUTHORIZATION test suite above one-for-one, on the
+// same evaluateEligibilityGroup code path with a different classification.
+// ================================================================================================
+
+describe('RELOCATION_SELF_CONTRADICTION', () => {
+  it('fires BLOCKING (with its own dedicated rule id, never ELIGIBILITY_SELF_CONTRADICTION) when two relocation answers in the same application disagree', () => {
+    const findings = evaluateConsistencyFindings(
+      baseInput({
+        answers: [
+          answer({
+            generatedAnswerId: 'a',
+            fieldClassification: 'RELOCATION',
+            fieldLabel: 'Willing to relocate?',
+            text: 'Yes',
+          }),
+          answer({
+            generatedAnswerId: 'b',
+            fieldClassification: 'RELOCATION',
+            fieldLabel: 'Open to moving for this role?',
+            text: 'No',
+          }),
+        ],
+      }),
+    );
+    const blocking = findings.filter((f) => f.ruleId === 'RELOCATION_SELF_CONTRADICTION');
+    expect(blocking).toHaveLength(1);
+    expect(blocking[0]!.severity).toBe('BLOCKING');
+    expect(findings.some((f) => f.ruleId === 'ELIGIBILITY_SELF_CONTRADICTION')).toBe(
+      false,
+    );
+  });
+
+  it('does not fire when both relocation answers agree', () => {
+    const findings = evaluateConsistencyFindings(
+      baseInput({
+        answers: [
+          answer({
+            generatedAnswerId: 'a',
+            fieldClassification: 'RELOCATION',
+            text: 'Yes',
+          }),
+          answer({
+            generatedAnswerId: 'b',
+            fieldClassification: 'RELOCATION',
+            text: 'Yes',
+          }),
+        ],
+      }),
+    );
+    expect(findings).toHaveLength(0);
+  });
+
+  it('a relocation self-contradiction finding has a stable id across re-evaluation, and never collides with the equivalent work-authorization id for the same answer ids', () => {
+    const input = baseInput({
+      answers: [
+        answer({
+          generatedAnswerId: 'a',
+          fieldClassification: 'RELOCATION',
+          text: 'Yes',
+        }),
+        answer({ generatedAnswerId: 'b', fieldClassification: 'RELOCATION', text: 'No' }),
+      ],
+    });
+    const first = evaluateConsistencyFindings(input);
+    const second = evaluateConsistencyFindings(input);
+    expect(first[0]!.id).toBe(second[0]!.id);
+
+    const workAuthInput = baseInput({
+      answers: [
+        answer({
+          generatedAnswerId: 'a',
+          fieldClassification: 'WORK_AUTHORIZATION',
+          text: 'Yes',
+        }),
+        answer({
+          generatedAnswerId: 'b',
+          fieldClassification: 'WORK_AUTHORIZATION',
+          text: 'No',
+        }),
+      ],
+    });
+    const workAuthFindings = evaluateConsistencyFindings(workAuthInput);
+    // Same answer ids, same polarity shape, different classification -> different ruleId -> a
+    // provably different finding id (the whole point of the rule-id split).
+    expect(first[0]!.id).not.toBe(workAuthFindings[0]!.id);
+  });
+});
+
+describe('RELOCATION_PROFILE_MISMATCH', () => {
+  it('fires WARNING with the dedicated relocation rule id (never the shared ELIGIBILITY_PROFILE_MISMATCH id) when a confident relocation answer disagrees with a confident profile value', () => {
     const findings = evaluateConsistencyFindings(
       baseInput({
         profile: { workAuthorization: null, relocationPreference: 'No' },
@@ -603,7 +708,57 @@ describe('ELIGIBILITY_PROFILE_MISMATCH', () => {
       }),
     );
     expect(findings).toHaveLength(1);
-    expect(findings[0]!.ruleId).toBe('ELIGIBILITY_PROFILE_MISMATCH');
+    expect(findings[0]!.ruleId).toBe('RELOCATION_PROFILE_MISMATCH');
+    expect(findings[0]!.severity).toBe('WARNING');
+    expect(findings[0]!.fieldBSource).toBe('PROFILE_ELIGIBILITY');
+  });
+
+  it('does not fire when the relocation profile value has no confident polarity', () => {
+    const findings = evaluateConsistencyFindings(
+      baseInput({
+        profile: {
+          workAuthorization: null,
+          relocationPreference: 'Open to some locations',
+        },
+        answers: [answer({ fieldClassification: 'RELOCATION', text: 'Yes' })],
+      }),
+    );
+    expect(findings).toHaveLength(0);
+  });
+});
+
+describe('ConsistencyRuleId backward compatibility with historical packets', () => {
+  it('the shared consistencyFindingSchema still parses a historical finding using the pre-split shared ids and the old PROFILE_CONTACT source', () => {
+    const historicalFinding = {
+      id: 'abc123',
+      ruleId: 'ELIGIBILITY_PROFILE_MISMATCH',
+      severity: 'WARNING',
+      fieldALabel: 'Willing to relocate?',
+      fieldASource: 'GENERATED_ANSWER',
+      fieldAValue: 'Yes',
+      fieldBLabel: 'Profile relocation preference',
+      fieldBSource: 'PROFILE_CONTACT',
+      fieldBValue: 'No',
+      description:
+        'A pre-hardening relocation finding, frozen under the old shared rule id.',
+    };
+    expect(() => consistencyFindingSchema.parse(historicalFinding)).not.toThrow();
+  });
+
+  it('still parses a historical BLOCKING work-authorization finding using ELIGIBILITY_SELF_CONTRADICTION', () => {
+    const historicalFinding = {
+      id: 'def456',
+      ruleId: 'ELIGIBILITY_SELF_CONTRADICTION',
+      severity: 'BLOCKING',
+      fieldALabel: 'Authorized to work?',
+      fieldASource: 'GENERATED_ANSWER',
+      fieldAValue: 'Yes',
+      fieldBLabel: 'Need sponsorship?',
+      fieldBSource: 'GENERATED_ANSWER',
+      fieldBValue: 'No',
+      description: 'A pre-hardening work-authorization contradiction.',
+    };
+    expect(() => consistencyFindingSchema.parse(historicalFinding)).not.toThrow();
   });
 });
 

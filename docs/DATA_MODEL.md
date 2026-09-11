@@ -678,3 +678,20 @@ direct-PostgREST-write bypass around sanitization/fingerprinting/contract valida
 `job_snapshots`, `requirement_evidence_mappings`, and `submission_packets` additionally have a
 `before update` trigger blocking every update unconditionally, for every role — the true
 immutability guarantee, since RLS alone can't stop `service_role`.
+
+**A second, narrower deliberate exception (Phase 5B hardening, migration 0015)**: `applications`
+keeps the ordinary four-policy shape above — an authenticated user can still freely
+insert/update/delete their own rows — but an adversarial review found that this alone let a
+direct PostgREST call (using a user's own legitimate session JWT, never a stolen credential)
+set `status = 'APPLIED'` (or `applied_at`/`submission_packet_id`) without ever going through
+`mark_application_applied`, bypassing packet creation and the consistency firewall entirely. RLS
+was left exactly as-is (weakening it was explicitly out of scope); instead, migration 0015 adds a
+`before insert or update` trigger (`reject_direct_applied_transition`) that rejects any write
+transitioning `status` into `'APPLIED'`, or setting `applied_at`/`submission_packet_id` from null
+to non-null, unless `current_user = 'service_role'` — which is exactly the role
+`mark_application_applied` always executes as. Every ordinary write that doesn't attempt one of
+those three transitions (a new non-APPLIED application, an edit to any column on an application
+regardless of its current status, a later-status move via `changeOwnApplicationStatus`) is
+completely unaffected. See docs/IMPLEMENTATION_PLAN.md's "Phase 5B hardening" section for the
+full design, including how `revertApplicationEvent`'s one accepted exception to this rule
+(restoring a genuinely historical APPLIED state) stays safe.

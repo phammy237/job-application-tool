@@ -436,7 +436,16 @@ function evaluateExperienceRules(input: ConsistencyRuleInput): ConsistencyFindin
 }
 
 // ================================================================================================
-// ELIGIBILITY_SELF_CONTRADICTION (BLOCKING) / ELIGIBILITY_PROFILE_MISMATCH (WARNING)
+// ELIGIBILITY_SELF_CONTRADICTION / ELIGIBILITY_PROFILE_MISMATCH (WORK_AUTHORIZATION) and
+// RELOCATION_SELF_CONTRADICTION / RELOCATION_PROFILE_MISMATCH (RELOCATION) — BLOCKING/WARNING
+// respectively for each pair.
+//
+// Phase 5B hardening: these were originally one shared pair of rule ids reused for both
+// classifications (an adversarial-review finding — a finding's ruleId alone couldn't tell a
+// work-authorization concern apart from a relocation one). RELOCATION now gets its own dedicated
+// ids, passed in by the caller below; WORK_AUTHORIZATION keeps the original ids unchanged, so
+// every historical submission_packets.consistency_findings entry still parses exactly as before
+// (packages/shared/src/schemas/consistency-finding.ts's own doc comment has the full rationale).
 //
 // "Question identity" is deliberately never inferred from label text/token-overlap (no fuzzy
 // semantic guess) — two answers are only ever compared for self-contradiction when they share the
@@ -448,8 +457,8 @@ function evaluateExperienceRules(input: ConsistencyRuleInput): ConsistencyFindin
 function evaluateEligibilityGroup(
   input: ConsistencyRuleInput,
   classification: Extract<FieldClassification, 'WORK_AUTHORIZATION' | 'RELOCATION'>,
-  ruleId: 'ELIGIBILITY_SELF_CONTRADICTION',
-  profileMismatchRuleId: 'ELIGIBILITY_PROFILE_MISMATCH',
+  ruleId: 'ELIGIBILITY_SELF_CONTRADICTION' | 'RELOCATION_SELF_CONTRADICTION',
+  profileMismatchRuleId: 'ELIGIBILITY_PROFILE_MISMATCH' | 'RELOCATION_PROFILE_MISMATCH',
   profileValue: string | null,
   profileLabel: string,
 ): ConsistencyFinding[] {
@@ -497,7 +506,7 @@ function evaluateEligibilityGroup(
           fieldASource: 'GENERATED_ANSWER',
           fieldAValue: candidate.answer.text,
           fieldBLabel: profileLabel,
-          fieldBSource: 'PROFILE_CONTACT',
+          fieldBSource: 'PROFILE_ELIGIBILITY',
           fieldBValue: profileValue,
           description: `The application answer "${candidate.answer.text}" to "${candidate.answer.fieldLabel}" differs from your stored profile (${profileLabel}: "${profileValue}").`,
           idParts: [candidate.answer.generatedAnswerId, profileValue],
@@ -530,8 +539,8 @@ export function evaluateConsistencyFindings(
     ...evaluateEligibilityGroup(
       input,
       'RELOCATION',
-      'ELIGIBILITY_SELF_CONTRADICTION',
-      'ELIGIBILITY_PROFILE_MISMATCH',
+      'RELOCATION_SELF_CONTRADICTION',
+      'RELOCATION_PROFILE_MISMATCH',
       input.profile.relocationPreference,
       'Profile relocation preference',
     ),

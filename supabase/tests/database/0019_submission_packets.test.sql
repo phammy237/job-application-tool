@@ -6,15 +6,22 @@ begin;
 create extension if not exists pgtap with schema extensions;
 select plan(33);
 create temp table pgtap_log (seq serial, line text);
-grant insert on pgtap_log to authenticated, anon;
-grant usage on sequence pgtap_log_seq_seq to authenticated, anon;
+grant select, insert on pgtap_log to authenticated, anon, service_role;
+grant usage on sequence pgtap_log_seq_seq to authenticated, anon, service_role;
 
 insert into auth.users (id, email, instance_id, aud, role, encrypted_password, email_confirmed_at, created_at, updated_at)
 values
   ('a0000000-0000-4000-8000-000000000001', 'user-a@test.local', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'x', now(), now(), now()),
   ('a0000000-0000-4000-8000-000000000002', 'user-b@test.local', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'x', now(), now(), now());
 
-set local role postgres;
+-- Migration 0015 (Phase 5B hardening) added a trigger that rejects any direct write setting
+-- applications.status/applied_at/submission_packet_id into their APPLIED-related values unless
+-- current_user = 'service_role' — a plain superuser role like `postgres` no longer bypasses it
+-- (Postgres triggers fire for every role, superuser included; only an actual role-privilege check
+-- like this one, or a table-level trigger disable, changes that). Every raw fixture write below
+-- that touches one of those three columns must run as service_role to correctly simulate how
+-- production actually reaches them (via the admin/service-role client), not as postgres.
+set local role service_role;
 
 insert into public.applications (id, user_id, company, title, status)
 values
@@ -24,6 +31,8 @@ values
   ('e0000000-0000-4000-8000-000000000003', 'a0000000-0000-4000-8000-000000000001', 'Initech', 'QA Engineer', 'APPLIED'),
   ('e0000000-0000-4000-8000-000000000004', 'a0000000-0000-4000-8000-000000000001', 'Umbrella', 'DevOps Engineer', 'IN_PROGRESS');
 update public.applications set applied_at = '2025-01-01T00:00:00Z' where id = 'e0000000-0000-4000-8000-000000000003';
+reset role;
+set local role postgres;
 
 insert into public.submission_packets (id, user_id, application_id, content_fingerprint)
 values ('f0000000-0000-4000-8000-000000000001', 'a0000000-0000-4000-8000-000000000001', 'e0000000-0000-4000-8000-000000000001', 'v1:aaa');
@@ -168,11 +177,15 @@ insert into pgtap_log(line) select throws_ok(
   'anon cannot call mark_application_applied either'
 );
 
-set local role postgres;
+-- Called as service_role itself now, not postgres (migration 0015's trigger distinguishes them —
+-- see the comment near the top of this file). This is also more representative of production
+-- than the pre-0015 version of this test was: the RPC is always actually invoked via the
+-- admin/service-role client, never as the bare postgres superuser.
+set local role service_role;
 
 -- ============================================================================================
--- mark_application_applied: atomic transition semantics (called as postgres, mirroring how
--- service_role executes it — service_role bypasses RLS as a role property, same as postgres here)
+-- mark_application_applied: atomic transition semantics (called as service_role, exactly how
+-- production actually invokes it via the admin client)
 -- ============================================================================================
 
 -- CASE 1: first-ever transition — creates a packet, sets APPLIED, sets applied_at, links pointer.

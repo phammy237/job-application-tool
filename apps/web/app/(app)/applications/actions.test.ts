@@ -50,8 +50,12 @@ vi.mock('../../../lib/supabase/admin', () => ({
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 vi.mock('next/navigation', () => ({ redirect: vi.fn() }));
 
-const { changeApplicationStatus, createApplication, markApplicationApplied } =
-  await import('./actions');
+const {
+  changeApplicationStatus,
+  createApplication,
+  markApplicationApplied,
+  revertEvent,
+} = await import('./actions');
 
 const USER_ID = '22222222-2222-4222-8222-222222222222';
 const APPLICATION_ID = '44444444-4444-4444-8444-444444444444';
@@ -181,5 +185,22 @@ describe('createApplication', () => {
       USER_ID,
       expect.objectContaining({ company: 'Acme', title: 'Engineer', status: 'SAVED' }),
     );
+  });
+});
+
+describe('revertEvent', () => {
+  const EVENT_ID = '55555555-5555-4555-8555-555555555555';
+
+  it('uses the admin client, not the session-scoped one (Phase 5B hardening: migration 0015 only permits a service_role-executed write to restore APPLIED)', async () => {
+    mocks.revertApplicationEvent.mockResolvedValue({ id: EVENT_ID });
+
+    await revertEvent(APPLICATION_ID, EVENT_ID);
+
+    expect(mocks.revertApplicationEvent).toHaveBeenCalledWith(
+      ADMIN_CLIENT,
+      USER_ID,
+      EVENT_ID,
+    );
+    expect(mocks.createClient).not.toHaveBeenCalled();
   });
 });

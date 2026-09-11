@@ -131,10 +131,20 @@ export async function updateApplicationNotes(id: string, formData: FormData) {
   revalidatePath(`/applications/${id}`);
 }
 
+/**
+ * Uses the service-role admin client, not the session-scoped one: as of Phase 5B hardening
+ * (migration 0015), `revertApplicationEvent`'s applications-table write may need to restore
+ * `status='APPLIED'` — the one accepted exception to "only mark_application_applied produces
+ * APPLIED" — which the new `applications_guard_applied_transition` trigger only permits for a
+ * `service_role`-executed write. `userId` is still always derived from the verified session
+ * (`requireUser`), never client-supplied, so this is the same "privileged operation,
+ * independently user-scoped" pattern already used for `changeApplicationStatus`'s APPLIED
+ * branch and `markApplicationApplied` above.
+ */
 export async function revertEvent(applicationId: string, eventId: string) {
   const user = await requireUser();
-  const supabase = await createClient();
-  await revertApplicationEvent(supabase, user.id, eventId);
+  const admin = createAdminClient();
+  await revertApplicationEvent(admin, user.id, eventId);
   revalidatePath('/applications');
   revalidatePath(`/applications/${applicationId}`);
 }

@@ -28,13 +28,16 @@ phase depends on a later phase's output.
 - [x] Phase 5B.4 — Historical "what you submitted" viewer, including the requirement-mapping-run
       summary and component test coverage deferred out of 5B.2's first pass (see "Phase 5B.4"
       below)
+- [x] Phase 5B hardening — closes a direct-PostgREST APPLIED bypass an adversarial review found,
+      separates relocation's rule ids from work-authorization's, and adds a schema-level guard
+      against an AI-assisted BLOCKING finding (migration 0015 — see "Phase 5B hardening" below)
 - [ ] Phase 6 — Multi-user beta hardening, privacy controls, testing, deployment
 - [ ] Phase 7 — Optional mypham.space integration, public onboarding, future sharing
 
 **Not yet started:** Phase 5C (next actions/deadlines, dashboard overview) — out of scope for 5A,
 unscoped beyond its name, and not yet slotted into the numbered sequence relative to Phase 5's
 Gmail work. That ordering decision is intentionally left open rather than assumed here. The whole
-Phase 5B line (5B.0 through 5B.4) is now complete.
+Phase 5B line (5B.0 through 5B.4, plus the hardening pass above) is now complete.
 
 Phase 4A shipped: the popup classifies every detected field into a review state (sensitive /
 unsupported / already-completed / pending-suggestion / ready / suggested / needs-input),
@@ -1565,3 +1568,203 @@ uses the same plain bordered-card layout as its first pass. No résumé-version 
 existing honest "not recorded" state (no résumé-versioning system exists yet to display). No
 extension-side historical viewer (dashboard-only, consistent with the extension's popup being a
 review-and-fill surface, not a records surface).
+
+## Phase 5B hardening — closing an adversarial-review finding
+
+A focused follow-up pass, not a new numbered sub-phase, addressing three findings from an
+adversarial review of the 5B.1–5B.4 commit stack after it was already on `origin/main`. Landed as
+its own commit, never rewriting or amending the existing Phase 5B history.
+
+### 1. The direct-PostgREST APPLIED bypass (the important one)
+
+**The finding**: `applications`' RLS policies (migration 0001) are the ordinary four-policy
+shape — `update own applications ... using (auth.uid() = user_id) with check (auth.uid() =
+user_id)` — with no column restriction. Every "cannot produce APPLIED" claim from Phase 5B.0
+onward (`createOwnApplication`/`changeOwnApplicationStatus` both throw on `'APPLIED'`) was true
+only of the TypeScript layer. Nothing stopped a user from calling PostgREST directly with their
+own legitimate session JWT (`PATCH /rest/v1/applications {status: 'APPLIED'}`, or setting
+`applied_at`/`submission_packet_id` directly) and bypassing `mark_application_applied`, packet
+creation, and the consistency firewall entirely. This does not cross the multi-tenant boundary
+(RLS's `auth.uid() = user_id` still holds — no cross-user exposure), but it does mean a user
+could defeat their own Consistency Firewall by going around the app.
+
+**Why not just block every UPDATE with `NEW.status = 'APPLIED'`**: that would also reject any
+ordinary edit (e.g. `notes`) to an application that is *already* APPLIED, since Postgres's `NEW`
+row reflects every unchanged column too — a real false-positive regression, not merely a
+theoretical one.
+
+**Enforcement chosen**: migration `0015_applied_transition_db_guard.sql` adds a `before insert or
+update on applications` trigger (`reject_direct_applied_transition`) that rejects a write only
+when it is an actual *transition*: `NEW.status = 'APPLIED'` and (`TG_OP = 'INSERT'` or `OLD.status
+IS DISTINCT FROM 'APPLIED'`), or `applied_at`/`submission_packet_id` moving from null to
+non-null — and only when `current_user <> 'service_role'`. `current_user` (not `session_user`)
+was chosen and empirically verified live against the linked project (`set local role X; select
+current_user`) precisely because it is the same primitive Postgres's own GRANT/REVOKE system
+already relies on for `mark_application_applied`'s access control — reusing an already-proven
+mechanism rather than inventing a new one. RLS itself is untouched: this is a second, independent
+database-boundary check (CLAUDE.md: "RLS is the backstop, not the only check"), narrowly scoped to
+the one case that matters.
+
+**`mark_application_applied` is unaffected**: it always executes as `service_role` (granted
+execute only to that role since migration 0013), so `current_user = 'service_role'` inside its own
+internal `update applications` statement, regardless of who called the RPC.
+
+**`revertApplicationEvent`'s exception, and closing a second-order bypass it would otherwise
+reopen**: restoring APPLIED via undo is the one accepted, pre-existing exception to "only
+`mark_application_applied` produces APPLIED." Its one `applications`-table write now runs via the
+admin/service-role client (`apps/web/app/(app)/applications/actions.ts`'s `revertEvent` action) —
+the same "privileged operation, independently `user_id`-scoped" pattern already used for
+`markApplicationApplied`/`changeApplicationStatus`'s APPLIED branch. That alone was not
+sufficient, though: `application_events` keeps its ordinary `authenticated` insert policy
+unchanged (legitimate code — `changeOwnApplicationStatus`'s move-away-from-APPLIED path — also
+inserts real events with `from_status='APPLIED'` via the session-scoped client), so a user could
+otherwise insert a *fabricated* event row (`event_type='STATUS_CHANGE', from_status='APPLIED',
+reverted_at=null`) for an application that was never genuinely applied, then call the real revert
+flow on it to manufacture a fake APPLIED state without ever touching
+`mark_application_applied`. `revertApplicationEvent` (`packages/database/src/queries/
+application-events.ts`) now refuses to trust the event log's `fromStatus` claim alone: before
+restoring APPLIED, it additionally requires the *current* application row's own `applied_at` to
+already be non-null — which, thanks to the same migration 0015 trigger, can only ever have been
+set by `mark_application_applied` in the first place, making it an unforgeable anchor. A
+genuinely-legacy pre-Phase-5B.1 application (which has `applied_at` set by whatever code produced
+it at the time, even though it has no packet) still passes this check correctly; a fabricated
+event for an application that was never really applied does not.
+
+**Files changed**: `supabase/migrations/0015_applied_transition_db_guard.sql` (new);
+`packages/database/src/queries/application-events.ts` (the `applied_at` verification + updated
+doc comment); `apps/web/app/(app)/applications/actions.ts` (`revertEvent` now uses the admin
+client); `supabase/tests/database/0019_submission_packets.test.sql` (fixture/RPC-invocation role
+switched from `postgres` to `service_role` where it touches `applications`' guarded columns — see
+that file's own updated comment for why a bare superuser role is not equivalent to `service_role`
+under a trigger, even though it was for the `mark_application_applied` grant check alone);
+`supabase/tests/database/0020_applied_transition_db_guard.test.sql` (new — 16 assertions
+specifically simulating the direct-PostgREST bypass, not just the TypeScript-facing surface).
+
+**Live verification**: migration 0015 applied cleanly against the linked Supabase project. The
+existing 33-assertion `0019` suite still passes in full after the fix (with its fixture/RPC-call
+roles corrected). The new `0020` suite's 16 assertions were each individually dry-run inside a
+`begin...rollback` transaction before being committed to the real migration, and pass live:
+direct authenticated/anon INSERT or UPDATE into APPLIED (or directly setting
+`applied_at`/`submission_packet_id`) is rejected; ordinary non-APPLIED writes, edits to an
+already-APPLIED row's other columns, and moving away from APPLIED are all unaffected;
+`service_role` can still perform every one of the writes authenticated was denied, including the
+full `mark_application_applied` RPC end-to-end.
+
+### 2. Separating relocation's rule ids from work-authorization's
+
+**The finding**: `evaluateEligibilityGroup` (`packages/shared/src/lib/consistency-rules.ts`) was
+called once for `WORK_AUTHORIZATION` and once for `RELOCATION`, but both calls passed the
+identical `ELIGIBILITY_SELF_CONTRADICTION`/`ELIGIBILITY_PROFILE_MISMATCH` rule ids — a relocation
+finding and a work-authorization finding were indistinguishable by `ruleId` alone, only by
+free-text `description`/`fieldBLabel`.
+
+**Fix, backward-compatible by construction**: `consistencyRuleIdSchema` gained two new members —
+`RELOCATION_SELF_CONTRADICTION`, `RELOCATION_PROFILE_MISMATCH` — without removing or renaming
+anything. `ELIGIBILITY_SELF_CONTRADICTION`/`ELIGIBILITY_PROFILE_MISMATCH` are unchanged and remain
+exactly what `WORK_AUTHORIZATION` findings use; only the `RELOCATION` call site in
+`evaluateConsistencyFindings` now passes the new dedicated ids. A historical
+`submission_packets.consistency_findings` JSON blob — whichever pair of ids it used, for whichever
+classification — still parses against the exact same `consistencyFindingSchema`, since a Zod
+`z.enum` only ever gained members here, never lost or renamed one. No migration was needed: the
+rule engine is pure TypeScript with no database representation of its own, and `consistency_findings`
+has no DB-level `CHECK` constraint on its JSON array's element shape (only "is an array" is
+enforced at that layer).
+
+**`ConsistencyFieldSource` improved the same way**: both eligibility comparisons tagged their
+profile-side value `PROFILE_CONTACT`, a semantic misnomer (neither is contact information).
+`consistencyFieldSourceSchema` gained `PROFILE_ELIGIBILITY`; `PROFILE_CONTACT` stays in the enum
+unchanged for historical-JSON compatibility, but `evaluateEligibilityGroup` now tags every newly-
+generated finding (both classifications) `PROFILE_ELIGIBILITY` instead.
+
+**Viewer/packet compatibility, checked, not assumed**: grepped the whole repo for every reference
+to `ELIGIBILITY_SELF_CONTRADICTION`/`ELIGIBILITY_PROFILE_MISMATCH`/`PROFILE_CONTACT` outside
+`packages/shared` itself — zero hits. `MarkAppliedPanel`, `ApplicationTracker`, and
+`SubmissionPacketSection` all render a finding generically (`description`/`severity`/
+`fieldALabel`/`fieldBLabel`), never branching on a specific `ruleId` string — so a historical
+packet frozen under the old shared ids renders identically to how it always did, and nothing
+needed updating on the display side.
+
+**Files changed**: `packages/shared/src/schemas/consistency-finding.ts` (both enum expansions, plus
+doc comments explaining the backward-compatibility contract explicitly);
+`packages/shared/src/lib/consistency-rules.ts` (widened `evaluateEligibilityGroup`'s rule-id
+parameter types to a union of the old/new pairs, the `RELOCATION` call site, and the
+`PROFILE_ELIGIBILITY` field-source tag).
+
+**Tests**: new `RELOCATION_SELF_CONTRADICTION`/`RELOCATION_PROFILE_MISMATCH` describe blocks in
+`consistency-rules.test.ts` mirroring the `WORK_AUTHORIZATION` suite one-for-one, including a test
+proving the same answer ids under `RELOCATION` vs. `WORK_AUTHORIZATION` classification produce
+*different* finding ids (the whole point of the split) and a test proving the fixed existing
+`ELIGIBILITY_PROFILE_MISMATCH`/`RELOCATION` test now asserts the new dedicated id; two new
+backward-compatibility tests directly `.parse()`-ing a historical finding shaped with the old
+`ELIGIBILITY_*` ids and the old `PROFILE_CONTACT` source, proving they still validate.
+
+### 3. The missing AI-severity schema guard
+
+**The finding**: `consistencyFindingSchema`'s own doc comment claimed "enforced both by the
+rejection refinement below" for the invariant that an AI-assisted finding (currently only
+`UNSUPPORTED_CLAIM`) can never be BLOCKING — but no `.refine`/`.superRefine` existed anywhere in
+that file. The claim was false; the actual load-bearing control was, and remains, that
+`generate-unsupported-claims-check.ts` hardcodes `severity: 'WARNING'` and never reads severity
+from the model's response at all.
+
+**Fix**: `consistencyFindingSchema` now has a `.superRefine` that rejects any finding pairing
+`AI_ASSISTED_RULE_IDS.has(ruleId)` with `severity === 'BLOCKING'`. `AI_ASSISTED_RULE_IDS` was moved
+earlier in the file (it previously came after the schema that would have needed to reference it)
+so the refinement can use the real set directly rather than duplicating the rule-id list inline —
+meaning a future addition to that set is automatically covered by this guard with no further
+schema change. This is explicitly defense in depth, not a replacement for the hardcoded severity —
+the doc comment was rewritten to say exactly that, not to overclaim protection the code doesn't
+have. No other rule→severity pairing was made structurally rigid: `ELIGIBILITY_SELF_CONTRADICTION`/
+`RELOCATION_SELF_CONTRADICTION` are the only deterministic rules that ever produce BLOCKING, and
+locking every other rule's severity in the schema itself was judged not worth the brittleness for
+this pass (a future rule needing a different fixed severity can extend `AI_ASSISTED_RULE_IDS`'s
+pattern, or add a sibling set, without disturbing this one).
+
+**Files changed**: `packages/shared/src/schemas/consistency-finding.ts` only.
+
+**Tests**: new `packages/shared/src/schemas/consistency-finding.test.ts` — `UNSUPPORTED_CLAIM` +
+`WARNING` parses; `UNSUPPORTED_CLAIM` + `BLOCKING` fails schema validation with a message on the
+`severity` path; a genuinely deterministic BLOCKING rule (`ELIGIBILITY_SELF_CONTRADICTION`) still
+parses successfully, proving the guard is scoped to AI-assisted rules only, not a blanket ban on
+BLOCKING; and a direct assertion that `AI_ASSISTED_RULE_IDS` still contains exactly
+`UNSUPPORTED_CLAIM` today.
+
+### Re-audit after implementing the above
+
+Re-checked, not just re-asserted: every APPLIED-producing path (still exactly one ordinary
+new-submission path at the TypeScript layer, `mark_application_applied`, now also the only
+database-layer path unless the caller is `service_role`); every direct write to `applications`
+(guarded only on the three APPLIED-related columns, nothing else); `revertApplicationEvent` (now
+requires the admin client and the `applied_at` anchor, both proven by dedicated tests);
+`mark_application_applied`'s grants (untouched — still `service_role`-only); ordinary
+authenticated INSERT/UPDATE behavior on `applications` (fully unaffected for every non-APPLIED
+write, live-pgTAP-proven); `submission_packet_id`/`applied_at` mutation (now guarded the same way
+as `status`); `application_events` permissions (deliberately left unchanged — the fix lives in
+`revertApplicationEvent`'s own verification, not in restricting that table's RLS, since legitimate
+code needs to keep inserting `from_status='APPLIED'` events for ordinary APPLIED→something-else
+moves); consistency rule ids and old-packet parsing (both confirmed backward-compatible, see
+above); `UNSUPPORTED_CLAIM` severity (still hardcoded in code, now also schema-enforced). No
+confused-deputy path was introduced: every new/changed write still filters explicitly by
+`user_id` in code, matching the pattern every existing service-role write in this codebase already
+follows.
+
+### Tests (Phase 5B hardening)
+
+`packages/shared`: 136 tests (11 new: 4 in the new `consistency-finding.test.ts`, 7 net new in
+`consistency-rules.test.ts` after also fixing the one pre-existing assertion that asserted the
+old shared relocation id). `packages/database`: 82 tests (6 new in the new
+`application-events.test.ts`). `apps/web`: 115 tests (1 new `revertEvent` client-identity
+assertion in `actions.test.ts`). `packages/ai`/`apps/extension`/`packages/email` unaffected, still
+118/125/19 passing. pgTAP: 33/33 (`0019`, fixture roles corrected) + 16/16 (`0020`, new) = 49
+live assertions against the linked Supabase project. Typecheck clean across
+shared/database/web/extension/ai/email; `next lint` and the extension's `eslint` both zero
+warnings; prettier clean.
+
+### Explicitly excluded from this hardening pass
+
+No change to `application_events`' own RLS (deliberately — see the re-audit above for why).
+No re-running of the consistency gate on a revert (unchanged, pre-existing, already-accepted
+Phase 5B design: a revert restores a historical state, it does not re-review one). No attempt to
+cryptographically sign or otherwise make `application_events` rows tamper-evident beyond the
+`applied_at`-anchor check — a narrower, sufficient fix for the one exploit path this pass actually
+needed to close. No Phase 5C work of any kind.
