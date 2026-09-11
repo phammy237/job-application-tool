@@ -29,9 +29,16 @@ import type {
  * follow-up anchor"): `APPLIED` and `APPLICATION_RECEIVED` share one follow-up branch, and
  * "status is now APPLICATION_RECEIVED" can be true well after the original `appliedAt`. This
  * engine stays exactly as DB-free as ever — it still only ever computes from what it's given —
- * but its caller now supplies one more already-reconciled fact,
- * `lastMeaningfulEmployerActivityAt` (see that field's own doc comment below), assembled from one
- * additional bounded query the caller issues itself.
+ * but its caller now supplies one more already-reconciled fact, `lastRelevantStatusActivityAt`
+ * (see that field's own doc comment below), assembled from one additional bounded query the
+ * caller issues itself.
+ *
+ * Naming note (Phase 5C hardening, second pass): this field was originally called
+ * `lastMeaningfulEmployerActivityAt`, which overclaimed what it actually represents — it can be
+ * satisfied by a user manually recording real progress (e.g. entering `APPLICATION_RECEIVED`
+ * after a phone call), not only by a literal employer email. Renamed to avoid product copy
+ * implying Career OS has direct evidence of employer behavior it doesn't actually have — see
+ * format-next-action.ts's own note on the same point.
  */
 
 /**
@@ -54,27 +61,40 @@ export interface NextActionRuleInput {
    * submission date. */
   appliedAt: string | null;
   /**
-   * The `createdAt` of the most recent `application_events` row with `eventType:
+   * The `createdAt` of the most recent *relevant* `application_events` row with `eventType:
    * 'STATUS_CHANGE'` for this application, if any is known to the caller — the follow-up
    * heuristic's "has something newer than appliedAt happened to this specific application"
    * signal (Phase 5C hardening; see docs/IMPLEMENTATION_PLAN.md "Phase 5C hardening — follow-up
-   * anchor" for the full rationale). Deliberately narrow: because `applications.status` only
-   * ever changes via a recorded `STATUS_CHANGE` event (Phase 5B's canonical-transition
-   * architecture, and Phase 5B hardening's database-level guard against any other path), the
-   * *latest* such event's timestamp is exactly "when did this application's current status get
-   * set" — regardless of whether that event's `source` was `USER` or `GMAIL_SYNC`, and
-   * regardless of whether it represents a forward move (e.g. into `APPLICATION_RECEIVED`) or a
-   * revert. It is never a notes edit, an autofill save, or any other non-`STATUS_CHANGE` event —
-   * those never create an `application_events` row at all (confirmed by inspection: `notes`
-   * updates go through `updateOwnApplication`'s plain column update, no event). An *unconfirmed*
-   * (`PENDING`) `email_signals` row can never influence this either, since only a `CONFIRMED` or
+   * anchor / revert exclusion" for the full rationale). "Relevant" is deliberately narrower than
+   * "every STATUS_CHANGE event" — the caller (`listOwnRelevantStatusChangeEvents`) excludes two
+   * categories at the database layer, using the real structured columns, never inferred from
+   * text:
+   *
+   * - An event with `reverted_at` set — it has itself since been undone and no longer represents
+   *   current history (e.g. an accidental status change the user later reverted).
+   * - An event with `source = 'SYSTEM'` — the bookkeeping event `revertApplicationEvent` itself
+   *   creates to log a revert. That event is never itself marked reverted, so a plain
+   *   `reverted_at is null` filter alone would still let it through and, being the newest event
+   *   by `created_at`, would incorrectly become the anchor — treating a same-day correction as if
+   *   something had just happened. `source = 'SYSTEM'` is written by exactly one call site in
+   *   this codebase (confirmed by repo-wide search); a genuine status transition — Gmail-
+   *   confirmed or a user manually recording real progress — always uses `'USER'` or
+   *   `'GMAIL_SYNC'`, never `'SYSTEM'`.
+   *
+   * Both `USER`- and `GMAIL_SYNC`-sourced events count equally once those two categories are
+   * excluded: a status change is exactly the reconciled fact this whole design already trusts
+   * completely elsewhere (unlike a notes edit, which never creates an event at all — see below).
+   * It is never a notes edit, an autofill save, or any other non-`STATUS_CHANGE` event — those
+   * never create an `application_events` row at all (confirmed by inspection: `notes` updates go
+   * through `updateOwnApplication`'s plain column update, no event). An *unconfirmed* (`PENDING`)
+   * `email_signals` row can never influence this either, since only a `CONFIRMED` or
    * `AUTO_APPLIED` signal ever reaches `changeOwnApplicationStatus` in the first place — the one
    * function that creates a `STATUS_CHANGE` event from a Gmail-driven signal. Null when the
    * caller has no such event (a genuinely brand-new application, or a caller that intentionally
    * omits this input) — the engine then falls back to `appliedAt` alone, the same behavior as
    * before this field existed.
    */
-  lastMeaningfulEmployerActivityAt: string | null;
+  lastRelevantStatusActivityAt: string | null;
   /** Injected, never read internally via `Date.now()`/`new Date()` — keeps this function a pure,
    * deterministically-testable function of its arguments. */
   now: string;
@@ -144,11 +164,13 @@ function deriveForUnsubmittedApplication(input: NextActionRuleInput): NextAction
  * heuristic's full rationale and its explicit fact-vs-recommendation framing.
  *
  * Phase 5C hardening: the eligibility clock is anchored to
- * `max(appliedAt, lastMeaningfulEmployerActivityAt)`, not `appliedAt` alone. Without this, an
+ * `max(appliedAt, lastRelevantStatusActivityAt)`, not `appliedAt` alone. Without this, an
  * application that sat at plain `APPLIED` for 10 days and then received a confirmed
  * `APPLICATION_RECEIVED` update yesterday would immediately suggest following up — even though
- * the employer had just interacted. Anchoring to whichever is later means a fresh employer-
- * driven status change always restarts the "has it been quiet for a while" clock.
+ * something had just happened. Anchoring to whichever is later means a fresh, relevant status
+ * change always restarts the "has it been quiet for a while" clock — but a reverted/correction
+ * event never does (see `lastRelevantStatusActivityAt`'s own doc comment for exactly which
+ * events qualify).
  */
 function deriveForSubmittedApplication(input: NextActionRuleInput): NextAction {
   if (!input.appliedAt) {
@@ -157,7 +179,7 @@ function deriveForSubmittedApplication(input: NextActionRuleInput): NextAction {
     // no appliedAt means no follow-up-timing decision can be made at all.
     return buildAction('NO_ACTION', 'NONE', 'APPLICATION_STATUS', input);
   }
-  const anchor = laterOf(input.appliedAt, input.lastMeaningfulEmployerActivityAt);
+  const anchor = laterOf(input.appliedAt, input.lastRelevantStatusActivityAt);
   const daysSinceAnchor = daysBetween(anchor, input.now);
   if (daysSinceAnchor >= FOLLOW_UP_SUGGESTION_THRESHOLD_DAYS) {
     return buildAction(

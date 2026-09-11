@@ -19,26 +19,32 @@ export interface ApplicationWithNextAction {
 }
 
 /**
- * Reduces every STATUS_CHANGE event for the user (from `listOwnStatusChangeEvents` — see that
- * query's own doc comment for why it must NOT be the capped "recent activity" query) down to,
- * per application, the single most recent one's `createdAt` — exactly "when did this
- * application's current status get set" (Phase 5C hardening: the follow-up heuristic's anchor;
- * see docs/IMPLEMENTATION_PLAN.md "Phase 5C hardening — follow-up anchor"). Assumes the input is
- * already ordered newest-first (as `listOwnStatusChangeEvents` returns it) and simply keeps the
- * first timestamp seen per `applicationId`; correct regardless of whether that latest event was
- * a forward move (e.g. into APPLICATION_RECEIVED) or a revert, and regardless of `source`
- * (`USER` or `GMAIL_SYNC`) — see next-action-rules.ts's `lastMeaningfulEmployerActivityAt` doc
- * comment for why both are trustworthy here.
+ * Reduces every *relevant* status-change event for the user (from
+ * `listOwnRelevantStatusChangeEvents` — see that query's own doc comment for why it must NOT be
+ * the capped "recent activity" query, and for exactly which two categories it already excludes
+ * at the database layer) down to, per application, the single most recent one's `createdAt` —
+ * exactly "when did this application's current status last *legitimately* change" (Phase 5C
+ * hardening: the follow-up heuristic's anchor; see docs/IMPLEMENTATION_PLAN.md "Phase 5C
+ * hardening — follow-up anchor / revert exclusion"). Assumes the input is already ordered
+ * newest-first (as `listOwnRelevantStatusChangeEvents` returns it) and simply keeps the first
+ * timestamp seen per `applicationId`.
+ *
+ * The two filters below are defensive, even though the query already applies them server-side —
+ * matching this codebase's established double-filtering pattern (see `toRecentActivity`'s
+ * identical posture): nothing here trusts the caller to have passed an already-correct list.
+ * A reverted event, or the `SYSTEM`-sourced event that logs a revert, must never be able to
+ * masquerade as a legitimate status update, no matter what the caller passes in. `USER`- and
+ * `GMAIL_SYNC`-sourced events are both trusted equally once those two categories are excluded —
+ * see next-action-rules.ts's `lastRelevantStatusActivityAt` doc comment for why.
  */
-export function buildLastStatusChangeMap(
-  statusChangeEvents: ApplicationEvent[],
+export function buildLastRelevantStatusActivityMap(
+  relevantStatusChangeEvents: ApplicationEvent[],
 ): Map<string, string> {
   const map = new Map<string, string>();
-  for (const event of statusChangeEvents) {
-    // Defensive, even though listOwnStatusChangeEvents already filters server-side: a notes
-    // edit or any other non-STATUS_CHANGE event must never be able to masquerade as employer
-    // activity, no matter what the caller passes in.
+  for (const event of relevantStatusChangeEvents) {
     if (event.eventType !== 'STATUS_CHANGE') continue;
+    if (event.revertedAt) continue;
+    if (event.source === 'SYSTEM') continue;
     if (!map.has(event.applicationId)) {
       map.set(event.applicationId, event.createdAt);
     }
@@ -48,18 +54,20 @@ export function buildLastStatusChangeMap(
 
 export function attachNextActions(
   applications: Application[],
-  statusChangeEvents: ApplicationEvent[],
+  relevantStatusChangeEvents: ApplicationEvent[],
   now: string,
 ): ApplicationWithNextAction[] {
-  const lastStatusChangeByApplication = buildLastStatusChangeMap(statusChangeEvents);
+  const lastRelevantStatusActivityByApplication = buildLastRelevantStatusActivityMap(
+    relevantStatusChangeEvents,
+  );
   return applications.map((application) => ({
     application,
     nextAction: deriveNextAction({
       status: application.status,
       unresolvedFields: application.unresolvedFields,
       appliedAt: application.appliedAt,
-      lastMeaningfulEmployerActivityAt:
-        lastStatusChangeByApplication.get(application.id) ?? null,
+      lastRelevantStatusActivityAt:
+        lastRelevantStatusActivityByApplication.get(application.id) ?? null,
       now,
     }),
   }));

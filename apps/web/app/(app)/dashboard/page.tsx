@@ -1,7 +1,7 @@
 import {
   listOwnApplications,
   listOwnRecentApplicationEvents,
-  listOwnStatusChangeEvents,
+  listOwnRelevantStatusChangeEvents,
 } from '@career-os/database';
 import { Card, CardContent, CardHeader, CardTitle, StatusBadge } from '@career-os/ui';
 import Link from 'next/link';
@@ -36,15 +36,15 @@ export default async function DashboardPage() {
   const user = await requireUser();
   const supabase = await createClient();
 
-  const [applications, recentEvents, statusChangeEvents] = await Promise.all([
+  const [applications, recentEvents, relevantStatusChangeEvents] = await Promise.all([
     listOwnApplications(supabase, user.id),
     listOwnRecentApplicationEvents(supabase, user.id, RECENT_ACTIVITY_FETCH_LIMIT),
-    listOwnStatusChangeEvents(supabase, user.id),
+    listOwnRelevantStatusChangeEvents(supabase, user.id),
   ]);
 
   const now = new Date().toISOString();
   const withNextActions = sortApplicationsByAttention(
-    attachNextActions(applications, statusChangeEvents, now),
+    attachNextActions(applications, relevantStatusChangeEvents, now),
   );
   const attentionItems = withNextActions.filter(needsAttention);
   const followUpItems = withNextActions.filter(

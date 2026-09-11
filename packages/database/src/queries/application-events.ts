@@ -65,23 +65,46 @@ export async function listOwnRecentApplicationEvents(
 }
 
 /** Defensive-only safety cap, not a correctness-affecting bound — see
- * listOwnStatusChangeEvents's own doc comment. */
+ * listOwnRelevantStatusChangeEvents's own doc comment. */
 export const STATUS_CHANGE_EVENT_SAFETY_LIMIT = 5000;
 
 /**
- * Every STATUS_CHANGE event for the user, across every application — the source the Phase 5C.1
- * follow-up heuristic's "has something newer than appliedAt happened to this specific
+ * Every *relevant* STATUS_CHANGE event for the user, across every application — the source the
+ * Phase 5C.1 follow-up heuristic's "has something newer than appliedAt happened to this specific
  * application" anchor is computed from (docs/IMPLEMENTATION_PLAN.md "Phase 5C hardening —
- * follow-up anchor"). Deliberately a *separate* query from `listOwnRecentApplicationEvents`,
- * which is capped to a small globally-most-recent window for the dashboard's own "Recent
- * activity" display — that cap makes it unsafe to reuse here: an older application's own most
- * recent status change could easily fall outside that global top-N window while still being the
- * most recent thing that ever happened to *that* application specifically. One query, not one
- * per application — `STATUS_CHANGE_EVENT_SAFETY_LIMIT` (5000) is a defensive cap against
- * pathological growth, not a realistic bound for this product's current solo/beta scale; it is
- * not the same class of "silently incomplete" risk as the display cap above.
+ * follow-up anchor / revert exclusion"). Deliberately a *separate* query from
+ * `listOwnRecentApplicationEvents`, which is capped to a small globally-most-recent window for
+ * the dashboard's own "Recent activity" display — that cap makes it unsafe to reuse here: an
+ * older application's own most recent status change could easily fall outside that global top-N
+ * window while still being the most recent thing that ever happened to *that* application
+ * specifically. One query, not one per application — `STATUS_CHANGE_EVENT_SAFETY_LIMIT` (5000)
+ * is a defensive cap against pathological growth, not a realistic bound for this product's
+ * current solo/beta scale; it is not the same class of "silently incomplete" risk as the display
+ * cap above.
+ *
+ * "Relevant" excludes two categories a *plain* STATUS_CHANGE filter alone would not, both
+ * confirmed by inspecting `revertApplicationEvent`'s actual behavior rather than assumed:
+ *
+ * 1. `reverted_at is not null` — an event that has *itself* since been undone. Concretely: Sep 1
+ *    apply (event A, toStatus=APPLIED), an accidental status change (event B), a Sep 11 revert of
+ *    B back to APPLIED. Event B gets `reverted_at` set to the revert time — it no longer
+ *    represents current history, and must never be read as "something happened on B's own
+ *    createdAt".
+ * 2. `source = 'SYSTEM'` — the event `revertApplicationEvent` itself creates to *log* a revert
+ *    (`recordApplicationEvent(..., source: 'SYSTEM')` at the end of that function). Continuing
+ *    the example above: the revert creates a *new* event C (Sep 11, fromStatus=whatever B moved
+ *    to, toStatus=APPLIED, source=SYSTEM) — C is never itself marked reverted, so a plain
+ *    `reverted_at is null` filter alone would still let it through, and being the newest event by
+ *    `created_at` it would otherwise become the anchor — incorrectly treating a same-day
+ *    correction as if the employer had just interacted on Sep 11. `source = 'SYSTEM'` is written
+ *    by exactly one call site in this codebase (`revertApplicationEvent`'s own trailing
+ *    `recordApplicationEvent` call, confirmed by repo-wide search) — a genuine status transition,
+ *    whether Gmail-confirmed or a user manually recording real progress (e.g. entering
+ *    `APPLICATION_RECEIVED` after a phone call), always uses `source: 'USER'` or `'GMAIL_SYNC'`,
+ *    never `'SYSTEM'`. Both filters are applied at the database layer using the real structured
+ *    columns (`reverted_at`, `source`) — never inferred from event text/description.
  */
-export async function listOwnStatusChangeEvents(
+export async function listOwnRelevantStatusChangeEvents(
   supabase: CareerOsSupabaseClient,
   userId: string,
 ): Promise<ApplicationEvent[]> {
@@ -90,9 +113,11 @@ export async function listOwnStatusChangeEvents(
     .select('*')
     .eq('user_id', userId)
     .eq('event_type', 'STATUS_CHANGE')
+    .is('reverted_at', null)
+    .neq('source', 'SYSTEM')
     .order('created_at', { ascending: false })
     .limit(STATUS_CHANGE_EVENT_SAFETY_LIMIT);
-  assertNoError(error, 'listOwnStatusChangeEvents');
+  assertNoError(error, 'listOwnRelevantStatusChangeEvents');
   return (data ?? []).map(rowToEvent);
 }
 

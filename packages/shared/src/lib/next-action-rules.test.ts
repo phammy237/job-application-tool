@@ -13,7 +13,7 @@ function input(overrides: Partial<NextActionRuleInput> = {}): NextActionRuleInpu
     status: 'SAVED',
     unresolvedFields: null,
     appliedAt: null,
-    lastMeaningfulEmployerActivityAt: null,
+    lastRelevantStatusActivityAt: null,
     now: NOW,
     ...overrides,
   };
@@ -258,24 +258,28 @@ describe('deriveNextAction — missing/malformed data never throws or guesses', 
 });
 
 // ================================================================================================
-// Follow-up anchor — accounting for a later meaningful employer interaction (Phase 5C hardening).
+// Follow-up anchor — accounting for a later relevant status activity (Phase 5C hardening).
 // See docs/IMPLEMENTATION_PLAN.md "Phase 5C hardening — follow-up anchor" for the full rationale:
-// appliedAt alone is not sufficient once a confirmed employer-driven status change (e.g. into
+// appliedAt alone is not sufficient once a confirmed status change (e.g. into
 // APPLICATION_RECEIVED) happens well after the original submission — the clock must restart from
-// whichever is later.
+// whichever is later. This pure-engine layer only ever does the max()/threshold math on whatever
+// lastRelevantStatusActivityAt it is given — it has no knowledge of application_events, reverts,
+// or event sources at all; *which* events are "relevant" is decided entirely by the assembly
+// layer before this input is ever constructed (see apps/web/lib/dashboard.test.ts for the tests
+// that actually exercise revert-exclusion).
 // ================================================================================================
 
-describe('deriveNextAction — follow-up anchor accounts for a later employer interaction', () => {
-  // A. applied 6 days ago, no employer activity -> no follow-up.
-  it('A: 6 days since applied, no employer activity -> NO_ACTION', () => {
+describe('deriveNextAction — follow-up anchor accounts for a later relevant status activity', () => {
+  // A. applied 6 days ago, no later activity -> no follow-up.
+  it('A: 6 days since applied, no later activity -> NO_ACTION', () => {
     const result = deriveNextAction(
       input({ status: 'APPLIED', appliedAt: daysAgoIso(6) }),
     );
     expect(result.type).toBe('NO_ACTION');
   });
 
-  // B. applied exactly 7 days ago, no employer activity -> confirms the documented boundary.
-  it('B: exactly 7 days since applied, no employer activity -> CONSIDER_FOLLOW_UP (documented boundary)', () => {
+  // B. applied exactly 7 days ago, no later activity -> confirms the documented boundary.
+  it('B: exactly 7 days since applied, no later activity -> CONSIDER_FOLLOW_UP (documented boundary)', () => {
     const result = deriveNextAction(
       input({
         status: 'APPLIED',
@@ -286,8 +290,8 @@ describe('deriveNextAction — follow-up anchor accounts for a later employer in
     expect(result.daysSinceFollowUpAnchor).toBe(FOLLOW_UP_SUGGESTION_THRESHOLD_DAYS);
   });
 
-  // C. applied 10 days ago, no employer activity -> follow-up.
-  it('C: 10 days since applied, no employer activity -> CONSIDER_FOLLOW_UP', () => {
+  // C. applied 10 days ago, no later activity -> follow-up.
+  it('C: 10 days since applied, no later activity -> CONSIDER_FOLLOW_UP', () => {
     const result = deriveNextAction(
       input({ status: 'APPLIED', appliedAt: daysAgoIso(10) }),
     );
@@ -295,13 +299,13 @@ describe('deriveNextAction — follow-up anchor accounts for a later employer in
     expect(result.followUpAnchorAt).toBe(daysAgoIso(10));
   });
 
-  // D. applied 10 days ago, meaningful employer interaction yesterday -> NO follow-up.
-  it('D: applied 10 days ago, meaningful employer interaction yesterday -> NO_ACTION, not CONSIDER_FOLLOW_UP', () => {
+  // D. applied 10 days ago, relevant status activity yesterday -> NO follow-up.
+  it('D: applied 10 days ago, relevant status activity yesterday -> NO_ACTION, not CONSIDER_FOLLOW_UP', () => {
     const result = deriveNextAction(
       input({
         status: 'APPLICATION_RECEIVED',
         appliedAt: daysAgoIso(10),
-        lastMeaningfulEmployerActivityAt: daysAgoIso(1),
+        lastRelevantStatusActivityAt: daysAgoIso(1),
       }),
     );
     expect(result.type).toBe('NO_ACTION');
@@ -309,14 +313,14 @@ describe('deriveNextAction — follow-up anchor accounts for a later employer in
     expect(result.daysSinceFollowUpAnchor).toBe(1);
   });
 
-  // E. applied 10 days ago, meaningful employer interaction 8 days ago -> follow-up eligible
-  // again (the employer activity itself is now old enough).
-  it('E: applied 10 days ago, meaningful employer interaction 8 days ago -> CONSIDER_FOLLOW_UP, anchored to the employer activity', () => {
+  // E. applied 10 days ago, relevant status activity 8 days ago -> follow-up eligible
+  // again (that activity itself is now old enough).
+  it('E: applied 10 days ago, relevant status activity 8 days ago -> CONSIDER_FOLLOW_UP, anchored to that activity', () => {
     const result = deriveNextAction(
       input({
         status: 'APPLICATION_RECEIVED',
         appliedAt: daysAgoIso(10),
-        lastMeaningfulEmployerActivityAt: daysAgoIso(8),
+        lastRelevantStatusActivityAt: daysAgoIso(8),
       }),
     );
     expect(result.type).toBe('CONSIDER_FOLLOW_UP');
@@ -330,7 +334,7 @@ describe('deriveNextAction — follow-up anchor accounts for a later employer in
       input({
         status: 'APPLICATION_RECEIVED',
         appliedAt: daysAgoIso(10),
-        lastMeaningfulEmployerActivityAt: daysAgoIso(1),
+        lastRelevantStatusActivityAt: daysAgoIso(1),
       }),
     );
     expect(result.type).not.toBe('CONSIDER_FOLLOW_UP');
@@ -339,14 +343,16 @@ describe('deriveNextAction — follow-up anchor accounts for a later employer in
 
   // G. An unconfirmed/ambiguous Gmail signal structurally cannot reach this engine at all (only
   // a CONFIRMED/AUTO_APPLIED signal ever calls changeOwnApplicationStatus, the one function that
-  // creates a STATUS_CHANGE event) — so the caller-supplied lastMeaningfulEmployerActivityAt is
-  // simply null in that case, and the engine correctly falls back to appliedAt alone.
-  it('G: no employer-activity input supplied (as for an unconfirmed signal, which never produces one) -> falls back to appliedAt alone', () => {
+  // creates a STATUS_CHANGE event, and listOwnRelevantStatusChangeEvents further excludes
+  // reverted/SYSTEM-sourced events at the assembly layer — see dashboard.test.ts) — so the
+  // caller-supplied lastRelevantStatusActivityAt is simply null in that case, and this pure-
+  // engine layer correctly falls back to appliedAt alone.
+  it('G: no relevant-activity input supplied (as for an unconfirmed signal, which never produces one) -> falls back to appliedAt alone', () => {
     const withNoAnchorInput = deriveNextAction(
       input({
         status: 'APPLIED',
         appliedAt: daysAgoIso(10),
-        lastMeaningfulEmployerActivityAt: null,
+        lastRelevantStatusActivityAt: null,
       }),
     );
     const withExplicitAppliedAtOnly = deriveNextAction(
@@ -360,18 +366,16 @@ describe('deriveNextAction — follow-up anchor accounts for a later employer in
   // H. A user-only application edit (e.g. notes) never creates a STATUS_CHANGE event at all
   // (verified by inspection: updateOwnApplication only updates columns, never calls
   // recordApplicationEvent) — so it can never even be assembled into
-  // lastMeaningfulEmployerActivityAt in the first place. At the pure-engine level this means
-  // supplying a stale/absent anchor still correctly falls back to appliedAt, never masquerading
-  // as employer activity.
-  it('H: a merely-old/absent employer-activity input never masquerades as recent employer activity', () => {
+  // lastRelevantStatusActivityAt in the first place. At this pure-engine level that just means a
+  // null input correctly falls back to appliedAt — the *why* (a notes edit was never a candidate
+  // to begin with, distinct from a reverted status change being explicitly filtered out) is
+  // exercised at the assembly layer, not here (see dashboard.test.ts).
+  it('H: an absent relevant-activity input (as for a non-status edit) never masquerades as recent activity — falls back to appliedAt', () => {
     const result = deriveNextAction(
       input({
         status: 'APPLIED',
         appliedAt: daysAgoIso(10),
-        // Deliberately not "yesterday" — nothing in this engine's input construction can put a
-        // non-STATUS_CHANGE fact (like a notes edit) into this field; this asserts the pure
-        // fallback behavior when it is absent, which is what a notes-only edit always produces.
-        lastMeaningfulEmployerActivityAt: null,
+        lastRelevantStatusActivityAt: null,
       }),
     );
     expect(result.type).toBe('CONSIDER_FOLLOW_UP');
@@ -379,7 +383,7 @@ describe('deriveNextAction — follow-up anchor accounts for a later employer in
   });
 
   // I. ASSESSMENT/INTERVIEW/ACTION_REQUIRED/OFFER/REJECTED/WITHDRAWN are never replaced by the
-  // follow-up heuristic, even with a very recent "employer activity" input supplied — the
+  // follow-up heuristic, even with a very recent relevant-activity input supplied — the
   // follow-up branch is structurally unreachable for any of these statuses.
   it.each([
     ['ASSESSMENT', 'COMPLETE_ASSESSMENT'],
@@ -393,7 +397,7 @@ describe('deriveNextAction — follow-up anchor accounts for a later employer in
       input({
         status,
         appliedAt: daysAgoIso(30),
-        lastMeaningfulEmployerActivityAt: daysAgoIso(1),
+        lastRelevantStatusActivityAt: daysAgoIso(1),
       }),
     );
     expect(result.type).toBe(expectedType);
@@ -405,7 +409,7 @@ describe('deriveNextAction — follow-up anchor accounts for a later employer in
       input({
         status: 'APPLICATION_RECEIVED',
         appliedAt: daysAgoIso(10),
-        lastMeaningfulEmployerActivityAt: daysAgoIso(1),
+        lastRelevantStatusActivityAt: daysAgoIso(1),
       }),
     );
     expect(result.daysSinceApplied).toBe(10);

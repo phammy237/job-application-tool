@@ -29,10 +29,11 @@ export const nextActionTypeSchema = z.enum([
   'PREPARE_INTERVIEW',
   /** status = OFFER. */
   'REVIEW_OFFER',
-  /** status = APPLIED or APPLICATION_RECEIVED, and enough time has passed with no newer
-   * employer-driven status change for Career OS's follow-up heuristic to suggest checking in —
-   * see FOLLOW_UP_SUGGESTION_THRESHOLD_DAYS. Always a Career OS recommendation, never a claim
-   * about an employer deadline or promise. */
+  /** status = APPLIED or APPLICATION_RECEIVED, and enough time has passed with no newer relevant
+   * status activity (Gmail-confirmed or a user-recorded update — a reverted/corrected status
+   * change never counts, see next-action-rules.ts's `lastRelevantStatusActivityAt`) for Career
+   * OS's follow-up heuristic to suggest checking in — see FOLLOW_UP_SUGGESTION_THRESHOLD_DAYS.
+   * Always a Career OS recommendation, never a claim about an employer deadline or promise. */
   'CONSIDER_FOLLOW_UP',
   /** status = UNKNOWN — reachable in the type system (every ApplicationStatus must map to
    * something) but not written by any code path today; a safe fallback rather than a crash. */
@@ -72,10 +73,9 @@ export const nextActionSourceSchema = z.enum([
   'APPLICATION_STATUS',
   /** applications.unresolvedFields — a non-empty array. */
   'UNRESOLVED_FIELDS',
-  /** The follow-up heuristic's anchor (appliedAt, or a later meaningful employer-driven status
-   * change if one exists — see next-action-rules.ts's `lastMeaningfulEmployerActivityAt`)
-   * compared against "now". Always paired with a real, persisted timestamp; never a fabricated
-   * or inferred date. */
+  /** The follow-up heuristic's anchor (appliedAt, or a later relevant status activity if one
+   * exists — see next-action-rules.ts's `lastRelevantStatusActivityAt`) compared against "now".
+   * Always paired with a real, persisted timestamp; never a fabricated or inferred date. */
   'TIME_SINCE_APPLICATION',
   /** status = UNKNOWN, a reachable-but-unwritten enum value. */
   'UNKNOWN_STATUS',
@@ -109,17 +109,18 @@ export const nextActionSchema = z.object({
   daysSinceApplied: z.number().int().min(0).nullable(),
   /**
    * The timestamp the follow-up heuristic's threshold check is actually anchored to — `appliedAt`
-   * itself, unless a later, meaningful employer-driven status change reset it (e.g. a confirmed
-   * `APPLICATION_RECEIVED` transition that arrived well after the original submission). Null
-   * whenever `appliedAt` is null; equal to `appliedAt` whenever no later employer activity is
+   * itself, unless a later, relevant status activity reset it (e.g. a confirmed
+   * `APPLICATION_RECEIVED` transition that arrived well after the original submission — Gmail-
+   * confirmed or user-recorded; a reverted/corrected status change never resets it). Null
+   * whenever `appliedAt` is null; equal to `appliedAt` whenever no later relevant activity is
    * known. Deliberately a distinct field from `appliedAt` — `appliedAt` always stays the true
    * original-submission fact, this field is only the follow-up clock's own reference point,
-   * which may be later. See next-action-rules.ts's `lastMeaningfulEmployerActivityAt`.
+   * which may be later. See next-action-rules.ts's `lastRelevantStatusActivityAt`.
    */
   followUpAnchorAt: isoDateTimeSchema.nullable(),
   /** Days between `followUpAnchorAt` and "now" — what the `CONSIDER_FOLLOW_UP` threshold check
    * and its own "why" text actually use; may differ from `daysSinceApplied` when a later
-   * employer signal reset the clock. Null whenever `followUpAnchorAt` is null. */
+   * relevant status activity reset the clock. Null whenever `followUpAnchorAt` is null. */
   daysSinceFollowUpAnchor: z.number().int().min(0).nullable(),
   /** Always null today — see this field's own doc comment above. */
   dueAt: z.null(),

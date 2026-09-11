@@ -9,15 +9,22 @@ import type { NextAction } from '../schemas/next-action';
  *
  * Every `reason` string here follows docs/IMPLEMENTATION_PLAN.md "Phase 5C.1I"'s explicit
  * fact-vs-recommendation rule: a real persisted date is stated as a fact ("you applied N days
- * ago", or — once a later employer-driven status change has reset the clock — "Career OS last
- * saw an employer update N days ago"), and the *absence* of anything newer since that anchor is
- * stated as an observation ("Career OS has not detected a newer update") — but the suggestion
- * itself ("consider following up") is always phrased as Career OS's own recommendation, never as
- * an employer expectation, promise, or deadline. Nothing here ever says "overdue," "late," or
- * names a specific due date, because this codebase never persists one (see `NextAction.dueAt`'s
- * own doc comment). CONSIDER_FOLLOW_UP specifically uses `daysSinceFollowUpAnchor`/
- * `followUpAnchorAt`, never `daysSinceApplied` — see those fields' own doc comments in
- * next-action.ts for why they can differ.
+ * ago", or — once a later relevant status update has reset the clock — "Career OS has not
+ * recorded a newer application-status update in N days"), and the *absence* of anything newer
+ * since that anchor is stated as an observation — but the suggestion itself ("consider following
+ * up") is always phrased as Career OS's own recommendation, never as an employer expectation,
+ * promise, or deadline. Nothing here ever says "overdue," "late," or names a specific due date,
+ * because this codebase never persists one (see `NextAction.dueAt`'s own doc comment).
+ * CONSIDER_FOLLOW_UP specifically uses `daysSinceFollowUpAnchor`/`followUpAnchorAt`, never
+ * `daysSinceApplied` — see those fields' own doc comments in next-action.ts for why they can
+ * differ.
+ *
+ * Terminology note (Phase 5C hardening, second pass): the "anchor reset" case deliberately never
+ * says "the employer contacted you" or "Career OS saw an employer update" — the anchor can be
+ * satisfied by a user manually recording real progress (e.g. entering `APPLICATION_RECEIVED`
+ * after a phone call), not only by a confirmed Gmail signal, and this codebase has no way to
+ * distinguish the two once a status change is recorded. The copy says only what is actually known
+ * — "Career OS has not recorded a newer application-status update" — never more than that.
  */
 export interface FormattedNextAction {
   title: string;
@@ -65,20 +72,22 @@ export function formatNextAction(action: NextAction): FormattedNextAction {
       };
     case 'CONSIDER_FOLLOW_UP': {
       const days = action.daysSinceFollowUpAnchor;
-      // The anchor is later than appliedAt exactly when a confirmed employer-driven status
-      // change (e.g. APPLICATION_RECEIVED) happened after the original submission — say so,
-      // rather than claiming "you applied N days ago" when the clock actually restarted more
-      // recently than that.
-      const anchoredToEmployerActivity =
+      // The anchor is later than appliedAt exactly when a relevant status update (e.g. into
+      // APPLICATION_RECEIVED — Gmail-confirmed or manually recorded, a reverted/corrected status
+      // change never counts) happened after the original submission — say so, rather than
+      // claiming "you applied N days ago" when the clock actually restarted more recently than
+      // that. Never claims the *employer* did anything specifically — only that Career OS has no
+      // record of a newer status update, which is the actual, fully-known fact either way.
+      const anchoredToLaterActivity =
         action.followUpAnchorAt !== null && action.followUpAnchorAt !== action.appliedAt;
-      const clockDescription = anchoredToEmployerActivity
-        ? `Career OS last saw an employer update ${days} day${days === 1 ? '' : 's'} ago`
-        : `You applied ${days} day${days === 1 ? '' : 's'} ago`;
+      const clockDescription = anchoredToLaterActivity
+        ? `Career OS has not recorded a newer application-status update in ${days} day${days === 1 ? '' : 's'}`
+        : `You applied ${days} day${days === 1 ? '' : 's'} ago and Career OS has not recorded a newer application-status update since`;
       return {
         title: 'Consider following up',
         reason:
           days !== null
-            ? `${clockDescription} and Career OS has not detected anything newer since. Career OS suggests following up — this is a recommendation, not a known employer deadline.`
+            ? `${clockDescription}. Career OS suggests following up — this is a recommendation, not a known employer deadline.`
             : 'Career OS suggests following up — this is a recommendation, not a known employer deadline.',
       };
     }

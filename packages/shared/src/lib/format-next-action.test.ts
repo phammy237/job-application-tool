@@ -81,7 +81,7 @@ describe('formatNextAction', () => {
     expect(reason).not.toMatch(/\d+ days? ago/);
   });
 
-  it('CONSIDER_FOLLOW_UP says "Career OS last saw an employer update", not "you applied", when the anchor is later than appliedAt', () => {
+  it('CONSIDER_FOLLOW_UP says "Career OS has not recorded a newer application-status update", not "you applied" or "the employer", when the anchor is later than appliedAt', () => {
     const { reason } = formatNextAction(
       action({
         type: 'CONSIDER_FOLLOW_UP',
@@ -90,8 +90,14 @@ describe('formatNextAction', () => {
         daysSinceFollowUpAnchor: 8,
       }),
     );
-    expect(reason).toContain('Career OS last saw an employer update 8 days ago');
+    expect(reason).toContain(
+      'Career OS has not recorded a newer application-status update in 8 days',
+    );
     expect(reason).not.toContain('You applied');
+    // Never claims specifically employer behavior — the anchor could be a manually-recorded
+    // status update, not only a confirmed Gmail signal.
+    expect(reason.toLowerCase()).not.toContain('the employer contacted');
+    expect(reason.toLowerCase()).not.toContain('saw an employer');
   });
 
   it('never mentions a specific due date or "overdue" language for any action type', () => {

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CareerOsSupabaseClient } from '../types/client';
 import {
   listOwnRecentApplicationEvents,
-  listOwnStatusChangeEvents,
+  listOwnRelevantStatusChangeEvents,
   revertApplicationEvent,
 } from './application-events';
 
@@ -199,24 +199,32 @@ describe('listOwnRecentApplicationEvents', () => {
   });
 });
 
-describe('listOwnStatusChangeEvents', () => {
-  it('scopes by user_id and event_type=STATUS_CHANGE, orders newest first, with no per-user limit argument', async () => {
+describe('listOwnRelevantStatusChangeEvents', () => {
+  it('scopes by user_id, event_type=STATUS_CHANGE, excludes reverted_at is not null and source=SYSTEM, orders newest first', async () => {
     const eq = vi.fn().mockReturnThis();
+    const isFn = vi.fn().mockReturnThis();
+    const neq = vi.fn().mockReturnThis();
     const order = vi.fn().mockReturnThis();
     const limitFn = vi.fn();
     const chain: Record<string, unknown> = {};
     chain.select = vi.fn(() => chain);
     chain.eq = eq.mockImplementation(() => chain);
+    chain.is = isFn.mockImplementation(() => chain);
+    chain.neq = neq.mockImplementation(() => chain);
     chain.order = order.mockImplementation(() => chain);
     chain.limit = limitFn.mockImplementation(() =>
       Promise.resolve({ data: [NON_APPLIED_EVENT_ROW], error: null }),
     );
     const supabase = { from: vi.fn(() => chain) } as unknown as CareerOsSupabaseClient;
 
-    const result = await listOwnStatusChangeEvents(supabase, USER_ID);
+    const result = await listOwnRelevantStatusChangeEvents(supabase, USER_ID);
 
     expect(eq).toHaveBeenCalledWith('user_id', USER_ID);
     expect(eq).toHaveBeenCalledWith('event_type', 'STATUS_CHANGE');
+    // Real structured columns, not a text/description match — the actual revert marker
+    // (reverted_at) and the actual source enum (never inferred from strings).
+    expect(isFn).toHaveBeenCalledWith('reverted_at', null);
+    expect(neq).toHaveBeenCalledWith('source', 'SYSTEM');
     expect(order).toHaveBeenCalledWith('created_at', { ascending: false });
     // Unlike listOwnRecentApplicationEvents, the caller never chooses this limit — it is a fixed,
     // generous safety cap, not a correctness-affecting display bound.
@@ -224,15 +232,17 @@ describe('listOwnStatusChangeEvents', () => {
     expect(result).toHaveLength(1);
   });
 
-  it('returns an empty array rather than throwing when there are no status-change events at all', async () => {
+  it('returns an empty array rather than throwing when there are no relevant status-change events at all', async () => {
     const chain: Record<string, unknown> = {};
     chain.select = vi.fn(() => chain);
     chain.eq = vi.fn(() => chain);
+    chain.is = vi.fn(() => chain);
+    chain.neq = vi.fn(() => chain);
     chain.order = vi.fn(() => chain);
     chain.limit = vi.fn().mockResolvedValue({ data: null, error: null });
     const supabase = { from: vi.fn(() => chain) } as unknown as CareerOsSupabaseClient;
 
-    const result = await listOwnStatusChangeEvents(supabase, USER_ID);
+    const result = await listOwnRelevantStatusChangeEvents(supabase, USER_ID);
     expect(result).toEqual([]);
   });
 });

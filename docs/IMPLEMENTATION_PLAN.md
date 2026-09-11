@@ -38,8 +38,9 @@ phase depends on a later phase's output.
       pipeline stages, recent activity, and a next-action column on the applications list (no
       schema change — see "Phase 5C.2" below)
 - [x] Phase 5C hardening — corrects the follow-up heuristic to anchor on the more recent of
-      appliedAt and the last confirmed employer-driven status change, not appliedAt alone (see
-      "Phase 5C hardening — follow-up anchor" below)
+      appliedAt and the last legitimate (non-reverted, non-revert-bookkeeping) status change, not
+      appliedAt alone, and excludes reverted/correction events from resetting the clock (see
+      "Phase 5C hardening — follow-up anchor" and "— revert exclusion" below)
 - [ ] Phase 5C.3 — Follow-up drafting/interview-prep content (AI-assisted) — not started, out of
       scope for this pass by explicit instruction
 - [ ] Phase 6 — Multi-user beta hardening, privacy controls, testing, deployment
@@ -1492,7 +1493,7 @@ assuming was judged worth the low cost) — still 33/33.
   shapes), `ai-usage-event.ts` (widened `aiUsageEventTaskTypeSchema`)
 - `packages/ai/src/generate-unsupported-claims-check.ts` (new — the orchestrator),
   `contract/validate-unsupported-claim-contract.ts` (new), `prompt/build-unsupported-claim-
-  system-prompt.ts` + `build-unsupported-claim-user-prompt.ts` (new), `claude/call-claude.ts`
+system-prompt.ts` + `build-unsupported-claim-user-prompt.ts` (new), `claude/call-claude.ts`
   (added `callClaudeForUnsupportedClaimCheck`), `config.ts` (added the pipeline's token cap,
   prompt version, and answer-text char cap)
 - `apps/web/app/api/applications/[id]/unsupported-claims-check/route.ts` (new — the only call
@@ -1599,13 +1600,13 @@ creation, and the consistency firewall entirely. This does not cross the multi-t
 could defeat their own Consistency Firewall by going around the app.
 
 **Why not just block every UPDATE with `NEW.status = 'APPLIED'`**: that would also reject any
-ordinary edit (e.g. `notes`) to an application that is *already* APPLIED, since Postgres's `NEW`
+ordinary edit (e.g. `notes`) to an application that is _already_ APPLIED, since Postgres's `NEW`
 row reflects every unchanged column too — a real false-positive regression, not merely a
 theoretical one.
 
 **Enforcement chosen**: migration `0015_applied_transition_db_guard.sql` adds a `before insert or
 update on applications` trigger (`reject_direct_applied_transition`) that rejects a write only
-when it is an actual *transition*: `NEW.status = 'APPLIED'` and (`TG_OP = 'INSERT'` or `OLD.status
+when it is an actual _transition_: `NEW.status = 'APPLIED'` and (`TG_OP = 'INSERT'` or `OLD.status
 IS DISTINCT FROM 'APPLIED'`), or `applied_at`/`submission_packet_id` moving from null to
 non-null — and only when `current_user <> 'service_role'`. `current_user` (not `session_user`)
 was chosen and empirically verified live against the linked project (`set local role X; select
@@ -1628,12 +1629,12 @@ the same "privileged operation, independently `user_id`-scoped" pattern already 
 sufficient, though: `application_events` keeps its ordinary `authenticated` insert policy
 unchanged (legitimate code — `changeOwnApplicationStatus`'s move-away-from-APPLIED path — also
 inserts real events with `from_status='APPLIED'` via the session-scoped client), so a user could
-otherwise insert a *fabricated* event row (`event_type='STATUS_CHANGE', from_status='APPLIED',
+otherwise insert a _fabricated_ event row (`event_type='STATUS_CHANGE', from_status='APPLIED',
 reverted_at=null`) for an application that was never genuinely applied, then call the real revert
 flow on it to manufacture a fake APPLIED state without ever touching
 `mark_application_applied`. `revertApplicationEvent` (`packages/database/src/queries/
 application-events.ts`) now refuses to trust the event log's `fromStatus` claim alone: before
-restoring APPLIED, it additionally requires the *current* application row's own `applied_at` to
+restoring APPLIED, it additionally requires the _current_ application row's own `applied_at` to
 already be non-null — which, thanks to the same migration 0015 trigger, can only ever have been
 set by `mark_application_applied` in the first place, making it an unforgeable anchor. A
 genuinely-legacy pre-Phase-5B.1 application (which has `applied_at` set by whatever code produced
@@ -1703,7 +1704,7 @@ parameter types to a union of the old/new pairs, the `RELOCATION` call site, and
 **Tests**: new `RELOCATION_SELF_CONTRADICTION`/`RELOCATION_PROFILE_MISMATCH` describe blocks in
 `consistency-rules.test.ts` mirroring the `WORK_AUTHORIZATION` suite one-for-one, including a test
 proving the same answer ids under `RELOCATION` vs. `WORK_AUTHORIZATION` classification produce
-*different* finding ids (the whole point of the split) and a test proving the fixed existing
+_different_ finding ids (the whole point of the split) and a test proving the fixed existing
 `ELIGIBILITY_PROFILE_MISMATCH`/`RELOCATION` test now asserts the new dedicated id; two new
 backward-compatibility tests directly `.parse()`-ing a historical finding shaped with the old
 `ELIGIBILITY_*` ids and the old `PROFILE_CONTACT` source, proving they still validate.
@@ -1805,19 +1806,19 @@ them. Two findings directly shaped the design:
    to recommend: `status` alone tells it which of the two eligible statuses it's looking at, and
    whether that status changed at all is never ambiguous. Precedence therefore reduces to a
    straightforward per-status dispatch, not a multi-signal-fusion problem — because Phase 5B
-   already made `status` the sole reconciled input for *which stage* an application is in.
+   already made `status` the sole reconciled input for _which stage_ an application is in.
 
    **This finding was originally taken to mean the engine never needed `application_events`
    either — that was incomplete, and was corrected before this reached `origin/main` (see "Phase
-   5C hardening — follow-up anchor" below).** `status` being reconciled proves *whether* a
-   status change happened, but not *when* — and `APPLIED`/`APPLICATION_RECEIVED` are two distinct
+   5C hardening — follow-up anchor" below).** `status` being reconciled proves _whether_ a
+   status change happened, but not _when_ — and `APPLIED`/`APPLICATION_RECEIVED` are two distinct
    statuses being handled by the same follow-up branch, so "status is still `APPLIED`" and
    "status is now `APPLICATION_RECEIVED`" are not equivalent for timing purposes: the latter can
-   have happened well after the original `appliedAt`. The engine still needs zero *new* queries
+   have happened well after the original `appliedAt`. The engine still needs zero _new_ queries
    for the pure decision logic itself (it remains a plain function of its arguments), but the
-   *caller* now supplies one additional, already-reconciled fact —
-   `lastMeaningfulEmployerActivityAt` — assembled from one extra bounded query
-   (`listOwnStatusChangeEvents`). `listOwnApplications` alone is no longer sufficient on its own;
+   _caller_ now supplies one additional, already-reconciled fact —
+   `lastRelevantStatusActivityAt` — assembled from one extra bounded query
+   (`listOwnRelevantStatusChangeEvents`). `listOwnApplications` alone is no longer sufficient on its own;
    see the hardening section below for exactly what changed and why.
 
 ### 5C.1A — Domain model (`packages/shared/src/schemas/next-action.ts`)
@@ -1833,7 +1834,7 @@ them. Two findings directly shaped the design:
   `UNKNOWN_STATUS`. Every value corresponds to a field the engine actually reads; there is no
   `AI_JUDGMENT` source, because nothing here ever calls a model.
 - `NextAction` — `{type, priority, source, appliedAt, daysSinceApplied, followUpAnchorAt,
-  daysSinceFollowUpAnchor, dueAt}`. Deliberately has **no title/reason string fields** — see
+daysSinceFollowUpAnchor, dueAt}`. Deliberately has **no title/reason string fields** — see
   5C.1I. `followUpAnchorAt`/`daysSinceFollowUpAnchor` were added in the Phase 5C hardening pass
   (see below) — kept distinct from `appliedAt`/`daysSinceApplied`, which always stay the true
   original-submission fact, never the follow-up clock's own (possibly later) reference point.
@@ -1854,7 +1855,7 @@ WITHDRAWN       -> NO_ACTION              (NONE) -- never a follow-up suggestion
 SAVED/IN_PROGRESS      -> unresolved fields present?  -> REVIEW_UNRESOLVED_FIELDS (MEDIUM)
                           IN_PROGRESS, none left?      -> MARK_APPLIED             (MEDIUM)
                           SAVED, none left/never ran?  -> COMPLETE_APPLICATION     (LOW)
-APPLIED/APPLICATION_RECEIVED -> days since max(appliedAt, lastMeaningfulEmployerActivityAt)
+APPLIED/APPLICATION_RECEIVED -> days since max(appliedAt, lastRelevantStatusActivityAt)
                                 >= threshold? -> CONSIDER_FOLLOW_UP (LOW)
                                 otherwise      -> NO_ACTION         (NONE)
 UNKNOWN         -> REVIEW_APPLICATION     (LOW) -- reachable in the type, unwritten today
@@ -1914,9 +1915,11 @@ magic number at each call site). No existing product doc specifies a threshold (
 conservative default: long enough that a follow-up isn't premature, short enough to still be
 useful. `CONSIDER_FOLLOW_UP` only ever fires for an `APPLIED`/`APPLICATION_RECEIVED` application
 once at least `FOLLOW_UP_SUGGESTION_THRESHOLD_DAYS` whole days have passed **since the more
-recent of `appliedAt` and the most recent trustworthy employer-driven status change** (see "Phase
-5C hardening — follow-up anchor" below for the full anchor design — an earlier version of this
-heuristic used `appliedAt` alone, which was corrected before this reached `origin/main`). It is
+recent of `appliedAt` and the most recent legitimate (non-reverted, non-revert-bookkeeping)
+relevant status change** (see "Phase 5C hardening — follow-up anchor" and its "— revert
+exclusion" follow-up below for the full anchor design — an earlier version of this heuristic used
+`appliedAt` alone, then a version that used any status-change event including reverted/correction
+ones, both corrected before this reached `origin/main`). It is
 always `LOW` priority and always `type: 'CONSIDER_FOLLOW_UP'` — never conflated with a fact,
 never escalated to "overdue" past the threshold (there is no upper bound/escalation at all), and
 always suppressed outright by every higher-priority state (`ACTION_REQUIRED`/`ASSESSMENT`/
@@ -1936,7 +1939,7 @@ template for either.
 
 1. **Server-side data assembly** — `apps/web/lib/dashboard.ts`'s `attachNextActions`, wiring an
    already-fetched `Application[]` (plus, as of the Phase 5C hardening pass,
-   `listOwnStatusChangeEvents`'s results reduced via `buildLastStatusChangeMap`) into the rule
+   `listOwnRelevantStatusChangeEvents`'s results reduced via `buildLastRelevantStatusActivityMap`) into the rule
    engine. Never calls Supabase itself — the queries themselves are issued by the calling page.
 2. **Pure rule engine** — `packages/shared/src/lib/next-action-rules.ts`'s `deriveNextAction`. No
    database access, no network access, no Claude — a plain function of its arguments, the same
@@ -1949,16 +1952,19 @@ template for either.
 ### 5C.1I — Explainability
 
 Every `NextAction` carries a `source` naming the persisted fact it came from. `formatNextAction`'s
-`CONSIDER_FOLLOW_UP` text is the concrete example from the original spec — with one correction
-from the Phase 5C hardening pass: it now says "You applied N days ago and Career OS has not
-detected anything newer since" only when the follow-up anchor is actually `appliedAt` itself; when
-a later, confirmed employer-driven status change reset the clock, it instead says "Career OS last
-saw an employer update N days ago and Career OS has not detected anything newer since" — never
-claiming "no newer signal" when the implementation hasn't actually checked for one (see the
-hardening section below for why the original wording was inaccurate for an `APPLICATION_RECEIVED`
-application). Either way: the day count and which anchor produced it are fact (`followUpAnchorAt`
-is real, "now" is real, the absence of anything newer since that anchor is now genuinely
-observable — see the hardening section's `lastMeaningfulEmployerActivityAt`), while "suggests" and
+`CONSIDER_FOLLOW_UP` text is the concrete example from the original spec — corrected twice during
+the Phase 5C hardening passes: it now says "You applied N days ago and Career OS has not recorded
+a newer application-status update since" only when the follow-up anchor is actually `appliedAt`
+itself; when a later, legitimate status change reset the clock, it instead says "Career OS has
+not recorded a newer application-status update in N days" — deliberately never "the employer
+contacted you" or "Career OS saw an employer update," since the anchor can be satisfied by a
+user manually recording real progress, not only a confirmed Gmail signal, and never claiming "no
+newer signal" when the implementation hasn't actually checked for one (see the hardening sections
+below for why the original wording was first inaccurate for an `APPLICATION_RECEIVED`
+application, then overclaiming "employer" specifically). Either way: the day count and which
+anchor produced it are fact (`followUpAnchorAt` is real, "now" is real, the absence of anything
+newer since that anchor is now genuinely observable — see the hardening section's
+`lastRelevantStatusActivityAt`), while "suggests" and
 the explicit "not a known employer deadline" disclaimer keep the recommendation clearly separated
 from a fact. Nothing in `format-next-action.ts` ever says "overdue," "late," or implies an
 employer promise.
@@ -1979,7 +1985,9 @@ pass's own review — see "Phase 5C hardening — follow-up anchor" below.
 `packages/shared/src/lib/format-next-action.test.ts` (6 tests) covers every action type
 producing non-empty text, the exact singular/plural "N day(s) ago" wording, graceful degradation
 with no day count, the explicit fact-vs-recommendation phrasing, and (Phase 5C hardening) the
-"Career OS last saw an employer update" vs. "You applied" wording split.
+"Career OS has not recorded a newer application-status update" vs. "You applied" wording split —
+and, as of the second hardening pass, that neither phrase ever claims the employer specifically
+did anything (see "Phase 5C hardening — revert exclusion" below).
 
 ### Explicitly excluded from Phase 5C.1
 
@@ -2080,9 +2088,9 @@ risk exactly the "every old application becomes a warning" outcome the spec caut
 ### 5C.2H — Server/query architecture
 
 `/dashboard` issues three queries in parallel (`Promise.all`): `listOwnApplications`,
-`listOwnRecentApplicationEvents`, and (as of Phase 5C hardening) `listOwnStatusChangeEvents` — no
+`listOwnRecentApplicationEvents`, and (as of Phase 5C hardening) `listOwnRelevantStatusChangeEvents` — no
 per-application follow-up query, no N+1. `/applications` issues two, the same pattern.
-`listOwnStatusChangeEvents` is deliberately a *separate* query from `listOwnRecentApplicationEvents`
+`listOwnRelevantStatusChangeEvents` is deliberately a _separate_ query from `listOwnRecentApplicationEvents`
 even though both read `application_events` — see "Phase 5C hardening — follow-up anchor" below
 for why the display-oriented query's cap makes it unsafe to reuse for the follow-up anchor's
 correctness. Neither query nor the next-action computation ever touches `submission_packets` —
@@ -2159,60 +2167,75 @@ was pushed.
 
 `CONSIDER_FOLLOW_UP`'s original implementation computed elapsed time from `applications.appliedAt`
 alone. That is correct for an application still sitting at plain `APPLIED`, but
-`APPLIED`/`APPLICATION_RECEIVED` are handled by the *same* follow-up branch, and the reconciled-
+`APPLIED`/`APPLICATION_RECEIVED` are handled by the _same_ follow-up branch, and the reconciled-
 status finding (5C.1's own design rationale) proves only that a status change happened, not when.
 Concretely: an application applied to 10 days ago whose employer sent a confirmed
 `APPLICATION_RECEIVED` update yesterday would have immediately shown `CONSIDER_FOLLOW_UP` —
 because `daysSinceApplied` was still 10, computed with no awareness that something had just
 happened. The original implementation did have the bug.
 
-### What counts as "meaningful employer activity"
+### What counts as "relevant status activity"
 
-Exactly: **the `createdAt` of the most recent `application_events` row with `eventType:
-'STATUS_CHANGE'` for that specific application.** Not `updatedAt` — verified by inspection that
-`updateOwnApplication` (notes edits, company/title/résumé edits) updates `applications` directly
-with no `recordApplicationEvent` call at all, so `updatedAt` bumps on a plain notes edit and is
-not a safe proxy for anything employer-related, confirming the task's own suspicion. Not
-`email_signals` directly — a `PENDING` (unconfirmed) signal never creates a `STATUS_CHANGE` event
-in the first place (only `confirmOwnEmailSignal`'s CONFIRM branch and the sync pipeline's
-`AUTO_APPLIED` case ever call `changeOwnApplicationStatus`), so an unconfirmed/ambiguous signal
-structurally cannot influence this at all — there is no code path by which it could. `source`
-(`USER` vs. `GMAIL_SYNC`) is not distinguished: a manual status change the user recorded after a
-phone call carries the same real informational content as a Gmail-confirmed one, and — unlike a
-notes edit — a status change is exactly the reconciled fact this whole design already trusts
-completely elsewhere. `EMAIL_MATCHED`/`MANUAL_EDIT`/`NOTE` event types are defined in the schema
-but never written by any code path today (confirmed by inspection); nothing here depends on that
-staying true, since `listOwnStatusChangeEvents` filters to `event_type = 'STATUS_CHANGE'` at the
-database layer and `buildLastStatusChangeMap` filters again defensively in application code.
+**Revised in a second hardening pass — see "Phase 5C hardening — revert exclusion" below.** The
+original version of this section said "any `STATUS_CHANGE` event, regardless of source, including
+a revert" — that was itself too broad and has been corrected. The current, accurate definition
+is: **the `createdAt` of the most recent `application_events` row with `eventType:
+'STATUS_CHANGE'` for that specific application, excluding any event with `reverted_at` set and
+any event with `source = 'SYSTEM'`** (the bookkeeping event a revert itself creates — see the
+revert-exclusion section for exactly why both exclusions are necessary). Not `updatedAt` —
+verified by inspection that `updateOwnApplication` (notes edits, company/title/résumé edits)
+updates `applications` directly with no `recordApplicationEvent` call at all, so `updatedAt`
+bumps on a plain notes edit and is not a safe proxy for anything status-related, confirming the
+task's own suspicion. Not `email_signals` directly — a `PENDING` (unconfirmed) signal never
+creates a `STATUS_CHANGE` event in the first place (only `confirmOwnEmailSignal`'s CONFIRM branch
+and the sync pipeline's `AUTO_APPLIED` case ever call `changeOwnApplicationStatus`), so an
+unconfirmed/ambiguous signal structurally cannot influence this at all — there is no code path by
+which it could. `source` (`USER` vs. `GMAIL_SYNC`) is not distinguished _between those two_: a
+manual status change the user recorded after a phone call carries the same real informational
+content as a Gmail-confirmed one, and — unlike a notes edit — a status change is exactly the
+reconciled fact this whole design already trusts completely elsewhere. `source = 'SYSTEM'` is a
+third category, reserved exclusively for revert bookkeeping, and is excluded entirely (see below).
+`EMAIL_MATCHED`/`MANUAL_EDIT`/`NOTE` event types are defined in the schema but never written by
+any code path today (confirmed by inspection); nothing here depends on that staying true, since
+`listOwnRelevantStatusChangeEvents` filters to `event_type = 'STATUS_CHANGE'` (plus the two
+revert-related exclusions) at the database layer, and `buildLastRelevantStatusActivityMap` filters
+again defensively in application code.
 
 ### What does and does not reset the clock
 
-**Resets it:** any `STATUS_CHANGE` event for the application, regardless of `source` — a forward
-move (e.g. into `APPLICATION_RECEIVED`) or a revert back to `APPLIED`, since revert also logs its
-own new event.
-**Never resets it:** a notes/company/title/résumé edit (`updateOwnApplication` — no event
-created); an autofill save while still `SAVED`/`IN_PROGRESS` (irrelevant anyway, since the
+**Resets it:** a non-reverted `STATUS_CHANGE` event with `source` of `USER` or `GMAIL_SYNC` for
+the application — a forward move (e.g. into `APPLICATION_RECEIVED`), regardless of whether a
+human or Gmail sync recorded it.
+**Never resets it (revised):** a notes/company/title/résumé edit (`updateOwnApplication` — no
+event created); an autofill save while still `SAVED`/`IN_PROGRESS` (irrelevant anyway, since the
 follow-up branch is only reachable once `APPLIED`); the extension popup opening or a page reload
-(reads, not writes); any `PENDING`/`DECLINED` email signal (never reaches `changeOwnApplicationStatus`
-at all); internal housekeeping (nothing in this codebase performs any).
+(reads, not writes); any `PENDING`/`DECLINED` email signal (never reaches
+`changeOwnApplicationStatus` at all); internal housekeeping (nothing in this codebase performs
+any); **and, as of the second hardening pass: an event that has itself been reverted
+(`reverted_at` set), and the `SYSTEM`-sourced bookkeeping event a revert itself creates** — see
+"Phase 5C hardening — revert exclusion" below for exactly why the original "any STATUS_CHANGE
+event resets it" rule was wrong.
 
 ### Follow-up anchor calculation
 
 `packages/shared/src/lib/next-action-rules.ts`'s `deriveForSubmittedApplication` now anchors on
-`max(appliedAt, lastMeaningfulEmployerActivityAt)` (via a small `laterOf` helper) rather than
-`appliedAt` alone. `lastMeaningfulEmployerActivityAt` is a new, optional `NextActionRuleInput`
+`max(appliedAt, lastRelevantStatusActivityAt)` (via a small `laterOf` helper) rather than
+`appliedAt` alone. `lastRelevantStatusActivityAt` is a new, optional `NextActionRuleInput`
 field — the rule engine stays exactly as DB-free as before; the caller (`apps/web/lib/dashboard.ts`)
-supplies it, assembled from a new query (`listOwnStatusChangeEvents`) reduced by a new pure
-function (`buildLastStatusChangeMap`) to "most recent `STATUS_CHANGE` timestamp per
+supplies it, assembled from a new query (`listOwnRelevantStatusChangeEvents`) reduced by a new pure
+function (`buildLastRelevantStatusActivityMap`) to "most recent `STATUS_CHANGE` timestamp per
 `applicationId`". `NextAction` gained two new fields to carry the result honestly:
 `followUpAnchorAt` (the timestamp actually used for the threshold check) and
 `daysSinceFollowUpAnchor` (days between that anchor and "now") — kept structurally distinct from
 `appliedAt`/`daysSinceApplied`, which always remain the true original-submission fact even when
 the anchor is later. `formatNextAction`'s `CONSIDER_FOLLOW_UP` text now reads from the anchor
-fields, not `daysSinceApplied`, and says "Career OS last saw an employer update N days ago"
-instead of "You applied N days ago" whenever the anchor is later than `appliedAt` — otherwise the
+fields, not `daysSinceApplied`, whenever the anchor is later than `appliedAt` — otherwise the
 "why" text would have kept citing the original application date even after the real reason the
-suggestion fired was a stale confirmation, not a stale application.
+suggestion fired was a stale confirmation, not a stale application. (The exact wording used here
+was corrected again in the second hardening pass — see "Phase 5C hardening — revert exclusion"
+below — because "Career OS last saw an employer update" overclaimed that the anchor was always
+employer-sourced, which is not true once a manually-recorded `USER` status change is allowed to
+set it.)
 
 ### The 7-day boundary, unchanged
 
@@ -2228,13 +2251,13 @@ have passed since that more recent anchor, not since the original `appliedAt`.
 
 ### Query architecture
 
-`listOwnStatusChangeEvents` (`packages/database/src/queries/application-events.ts`) is a new,
-*separate* query from `listOwnRecentApplicationEvents` — deliberately not reused, because that
+`listOwnRelevantStatusChangeEvents` (`packages/database/src/queries/application-events.ts`) is a new,
+_separate_ query from `listOwnRecentApplicationEvents` — deliberately not reused, because that
 query is capped to a small globally-most-recent window for the dashboard's own "Recent activity"
 display, and an older application's own most recent status change could easily fall outside that
-global top-N window while still being the most recent thing that ever happened to *that*
+global top-N window while still being the most recent thing that ever happened to _that_
 application. Reusing it would have silently produced an incomplete/wrong anchor for exactly the
-applications most likely to need a correct one. `listOwnStatusChangeEvents` fetches every
+applications most likely to need a correct one. `listOwnRelevantStatusChangeEvents` fetches every
 `STATUS_CHANGE` event for the user in one query (`STATUS_CHANGE_EVENT_SAFETY_LIMIT = 5000` is a
 defensive cap against pathological growth, not a realistic bound at this product's current
 solo/beta scale — not the same class of risk as the display cap). `/dashboard` and `/applications`
@@ -2260,26 +2283,31 @@ Re-examined as requested, not silently altered:
   instruction not to change priority semantics unilaterally; worth a deliberate product decision
   later, not a silent fix here.
 
-### Files changed (Phase 5C hardening)
+### Files changed (Phase 5C hardening, first pass)
+
+_This list and the test counts below are a snapshot of the first hardening pass only — the one
+that introduced the anchor concept but still treated every `STATUS_CHANGE` event (including
+reverted ones and revert bookkeeping) as valid. See "Phase 5C hardening — revert exclusion" below
+for the second pass's own file list and corrected test counts._
 
 - `packages/shared/src/schemas/next-action.ts` (`followUpAnchorAt`/`daysSinceFollowUpAnchor`
   fields, updated `TIME_SINCE_APPLICATION` doc comment)
-- `packages/shared/src/lib/next-action-rules.ts` (`lastMeaningfulEmployerActivityAt` input field,
+- `packages/shared/src/lib/next-action-rules.ts` (`lastRelevantStatusActivityAt` input field,
   `laterOf` helper, corrected `deriveForSubmittedApplication`)
 - `packages/shared/src/lib/next-action-rules.test.ts` (+15 tests: the full A-I case list)
 - `packages/shared/src/lib/format-next-action.ts` (`CONSIDER_FOLLOW_UP` now reads the anchor
   fields; the anchored-to-employer-activity wording branch)
 - `packages/shared/src/lib/format-next-action.test.ts` (updated existing cases for the new
   fields, +1 new case for the wording split)
-- `packages/database/src/queries/application-events.ts` (new `listOwnStatusChangeEvents` +
+- `packages/database/src/queries/application-events.ts` (new `listOwnRelevantStatusChangeEvents` +
   `STATUS_CHANGE_EVENT_SAFETY_LIMIT`)
 - `packages/database/src/queries/application-events.test.ts` (+2 tests)
-- `apps/web/lib/dashboard.ts` (`buildLastStatusChangeMap`, `attachNextActions` now takes a
+- `apps/web/lib/dashboard.ts` (`buildLastRelevantStatusActivityMap`, `attachNextActions` now takes a
   `statusChangeEvents` parameter)
 - `apps/web/lib/dashboard.test.ts` (+5 tests: map reduction, defensive event-type filtering,
   wiring through `attachNextActions`)
 - `apps/web/app/(app)/dashboard/page.tsx` and `apps/web/app/(app)/applications/page.tsx` (fetch
-  `listOwnStatusChangeEvents` alongside the existing queries, pass it through)
+  `listOwnRelevantStatusChangeEvents` alongside the existing queries, pass it through)
 - `docs/IMPLEMENTATION_PLAN.md` (this section, plus corrections to 5C.1F/5C.1H/5C.1I/5C.2H's now-
   inaccurate claims)
 
@@ -2298,3 +2326,168 @@ Phase 5C.3 — not started. No redesign of the dashboard's sections/layout. No A
 change to `MARK_APPLIED`/`COMPLETE_APPLICATION`'s priority (flagged above, left for a deliberate
 product decision). No attempt to distinguish `USER`-sourced from `GMAIL_SYNC`-sourced status
 changes for the anchor — both are equally trustworthy reconciled facts, per the rationale above.
+
+## Phase 5C hardening — revert exclusion
+
+A second, narrower correctness pass on top of the one above. The first pass anchored the
+follow-up clock on the most recent `STATUS_CHANGE` event, but did not account for **reverts**:
+`revertApplicationEvent` (`packages/database/src/queries/application-events.ts`) marks the
+_original_ undone event's `reverted_at`, but then inserts a **brand-new**, never-reverted
+`source: 'SYSTEM'` event to log the revert itself. That new event was indistinguishable from a
+real status update by the first pass's "any `STATUS_CHANGE` event" rule, so it would win as "most
+recent" and incorrectly reset the follow-up clock to the moment of the revert, not to any actual
+activity.
+
+### The issue, concretely
+
+Sep 1: user marks an application `APPLIED`. Sep 10: user accidentally changes its status (e.g. to
+`INTERVIEW`). Sep 11: user notices and reverts it back to `APPLIED`. Under the first pass's rule,
+Sep 11's revert-logging event would become the anchor, silently pushing the earliest possible
+follow-up suggestion out to Sep 18 — a week of suppressed follow-up caused entirely by correcting
+a mistake, with zero real employer or applicant activity behind it.
+
+### Event fields inspected (not assumed)
+
+Confirmed by direct inspection of `packages/database/src/queries/application-events.ts` and a
+repo-wide grep for every `recordApplicationEvent`/`source:` call site, rather than inferring
+anything from event text:
+
+- `event_type` — only `'STATUS_CHANGE'` was ever relevant here; `NOTE`/`MANUAL_EDIT`/`EMAIL_MATCHED`
+  are defined but never written by any code path today.
+- `reverted_at` — set on the _original_ event a revert undoes; never set on the revert-logging
+  event itself, and never set on any event that was never reverted.
+- `source` — `'USER'`, `'GMAIL_SYNC'`, or `'SYSTEM'`. Grepping every call site in
+  `packages/database/src` and `packages/email/src` confirmed `source: 'SYSTEM'` is written by
+  **exactly one** call site in the entire codebase: `revertApplicationEvent`'s own trailing
+  `recordApplicationEvent` call. No other code path ever uses `'SYSTEM'`.
+- `from_status`/`to_status` — inspected to confirm `changeOwnApplicationStatus` explicitly rejects
+  `toStatus === 'APPLIED'` at runtime, so `APPLIED` is only ever reached via `mark_application_applied`
+  (a genuine new transition) or `revertApplicationEvent` (a genuine historical restoration) — there
+  is no third, "arbitrary correction," class of event reaching `APPLIED` that this fix needs to
+  separately guard against.
+- `metadata`/`email_signal_id` — not needed for this fix; `PENDING`/`DECLINED` email signals were
+  already confirmed (first pass) to never call `changeOwnApplicationStatus` at all, so they were
+  never part of this problem.
+
+### Final definition of the follow-up anchor
+
+`max(appliedAt, lastRelevantStatusActivityAt)`, where `lastRelevantStatusActivityAt` (renamed
+from `lastMeaningfulEmployerActivityAt` — see "Terminology" below) is the `createdAt` of the most
+recent `application_events` row for the application where `event_type = 'STATUS_CHANGE'`,
+`reverted_at IS NULL`, **and** `source != 'SYSTEM'`. Both exclusions are applied twice: once at
+the database layer (`listOwnRelevantStatusChangeEvents`'s query itself) and once defensively in
+application code (`buildLastRelevantStatusActivityMap`), matching this codebase's established
+double-filtering posture (`toRecentActivity` does the same).
+
+Why both filters, not just one: `reverted_at IS NULL` alone is insufficient because the
+`SYSTEM`-sourced revert-logging event is never itself marked `reverted_at` — it would still pass
+that filter alone. `source != 'SYSTEM'` alone would (in the abstract) miss a case where an older
+event was reverted out of order while a newer non-`SYSTEM` event existed — though on inspection
+this specific edge case is already safe regardless, since reverting an event never changes its
+`created_at`, so a genuinely newer non-reverted event still wins on timestamp either way. Applying
+both together is the minimal, structurally sound fix, not belt-and-suspenders for its own sake.
+
+### Do `USER`-sourced status changes count? Yes — decided explicitly, not assumed
+
+Once the revert and `SYSTEM` exclusions are applied, a `USER`-sourced and a `GMAIL_SYNC`-sourced
+`STATUS_CHANGE` event are trusted equally, for the same reason the first pass already gave: a
+status change — unlike a notes edit — is exactly the kind of reconciled fact this system already
+treats as authoritative everywhere else (e.g. `changeOwnApplicationStatus` is the same code path
+regardless of who calls it), and a user manually recording real progress (e.g. after a phone call)
+carries the same informational weight as a Gmail-confirmed one. This pass does **not** blanket-
+distrust `USER` events, per the explicit instruction not to assume all `USER` events are invalid —
+instead it narrows what counts by two real structural markers (revert status, source `SYSTEM`)
+that have nothing to do with whether a human or Gmail recorded the change. There is no separate
+"arbitrary correction" category to worry about, because (per the `from_status`/`to_status`
+inspection above) the only ways to reach `APPLIED` are a genuine mark-applied transition or a
+genuine revert restoration, and the only way to reach `APPLICATION_RECEIVED` is a genuine
+Gmail-confirmed or manually-recorded transition — both already handled correctly by this rule.
+
+### Revert behavior (the fix itself)
+
+At minimum, and exactly as required: a reverted `STATUS_CHANGE` event never resets the follow-up
+clock, and neither does the `SYSTEM`-sourced event a revert creates to log itself. Concretely, for
+the Sep 1 / Sep 10 / Sep 11 scenario above: the Sep 10 event is excluded because `reverted_at` is
+now set on it; the Sep 11 event is excluded because its `source` is `'SYSTEM'`; the anchor falls
+through to Sep 1's original mark-applied transition (or to `appliedAt` directly if no other
+qualifying event exists) — exactly matching the required test case ("applied 10 days ago, status
+changed 1 day ago, that event subsequently reverted, current status `APPLIED`" → the reverted
+event does not reset the anchor, follow-up remains eligible based on the last legitimate anchor).
+
+### `APPLICATION_RECEIVED` behavior — unchanged and re-verified
+
+The first pass's core scenario — applied 10 days ago, `APPLICATION_RECEIVED` update from
+yesterday → `NO_ACTION` today, not a false-positive follow-up — is unaffected by this pass and
+was re-verified by both the existing and new tests: it holds identically whether that
+`APPLICATION_RECEIVED` transition came from a Gmail-confirmed sync or an explicit manual entry,
+as long as it is a real (non-reverted, non-`SYSTEM`) `STATUS_CHANGE` event, since the repo already
+treats the resulting `applications.status` value as authoritative regardless of `source`.
+
+### Terminology
+
+Renamed throughout, because the old names actively overclaimed what the value represents (it can
+be satisfied by a user manually recording real progress, not only a literal employer email):
+
+- `lastMeaningfulEmployerActivityAt` → `lastRelevantStatusActivityAt` (`NextActionRuleInput`)
+- `listOwnStatusChangeEvents` → `listOwnRelevantStatusChangeEvents` (query)
+- `buildLastStatusChangeMap` → `buildLastRelevantStatusActivityMap` (`apps/web/lib/dashboard.ts`)
+
+`formatNextAction`'s `CONSIDER_FOLLOW_UP` copy was corrected from "Career OS last saw an employer
+update N days ago" to **"Career OS has not recorded a newer application-status update in N
+days"** — it deliberately never says "the employer contacted you" or "Career OS saw an employer
+update," since the anchor may just as well be a manually-recorded user update, and the product has
+no actual confirmation of employer behavior to claim either way.
+
+### Query architecture — unchanged
+
+No new table, no N+1, no AI. `listOwnRelevantStatusChangeEvents` keeps the same shape as the first
+pass's query (one call per page, in parallel with the page's other queries) — this pass only added
+two `.is('reverted_at', null)` / `.neq('source', 'SYSTEM')` filters to its existing Supabase query
+builder chain and renamed it. `deriveNextAction` remains pure and DB-free; all of the new filtering
+logic lives upstream, in the query and in `buildLastRelevantStatusActivityMap`.
+
+### Files changed (Phase 5C hardening, second pass)
+
+- `packages/database/src/queries/application-events.ts` (renamed `listOwnRelevantStatusChangeEvents`;
+  added `.is('reverted_at', null)` and `.neq('source', 'SYSTEM')` filters)
+- `packages/database/src/queries/application-events.test.ts` (renamed describe block; new
+  assertions for both filters)
+- `packages/shared/src/schemas/next-action.ts` (doc-comment corrections for the rename; no field
+  shape change)
+- `packages/shared/src/lib/next-action-rules.ts` (renamed `lastRelevantStatusActivityAt`; doc
+  comments clarifying revert/`SYSTEM` exclusion happens upstream)
+- `packages/shared/src/lib/next-action-rules.test.ts` (renamed field throughout; corrected
+  comments — the pure-engine layer has no knowledge of reverts/sources, so no new pure-engine test
+  cases were needed here; the math is unchanged from the first pass)
+- `packages/shared/src/lib/format-next-action.ts` (`CONSIDER_FOLLOW_UP` wording corrected to avoid
+  overclaiming employer behavior)
+- `packages/shared/src/lib/format-next-action.test.ts` (updated wording assertions; explicit
+  assertions that neither phrase claims the employer specifically did anything)
+- `apps/web/lib/dashboard.ts` (`buildLastRelevantStatusActivityMap` renamed, with `reverted_at`
+  and `source === 'SYSTEM'` exclusion filters added)
+- `apps/web/lib/dashboard.test.ts` (new tests: a Gmail-confirmed and a manual `APPLICATION_RECEIVED`
+  transition both reset the anchor; a reverted event is excluded even when most recent by
+  `createdAt`; the `SYSTEM`-sourced revert-logging event is excluded; a non-`STATUS_CHANGE` event
+  has no effect; an empty event list has no effect; a full Sep 1/Sep 11 revert scenario end to end)
+- `apps/web/app/(app)/dashboard/page.tsx`, `apps/web/app/(app)/applications/page.tsx` (renamed
+  import/variable references only — no behavior change)
+- `docs/IMPLEMENTATION_PLAN.md` (this section, plus corrections to the first pass's now-inaccurate
+  "what counts"/"what resets the clock" claims above)
+
+### Tests (Phase 5C hardening, second pass)
+
+`packages/shared`: 195 tests (unchanged count — only renames/comments, no new pure-engine cases
+needed). `packages/database`: 86 tests (unchanged count — existing tests extended with new
+assertions rather than new tests added). `apps/web`: 144 tests (5 more than the first pass's 139:
+new `dashboard.test.ts` cases for the Gmail/manual `APPLICATION_RECEIVED` reset, the reverted-event
+exclusion, the `SYSTEM`-sourced exclusion, the non-`STATUS_CHANGE`/empty-list no-effect cases, and
+the end-to-end Sep 1/Sep 11 scenario). Full monorepo sweep also re-run: `packages/ai` 118 tests,
+`apps/extension` 125 tests, `packages/email` 19 tests — all unaffected and passing. Typecheck
+clean across all six workspaces; `next lint` and the extension's `eslint` both zero warnings;
+prettier clean; `git diff --check` clean.
+
+### Explicitly excluded from this pass
+
+Phase 5C.3 — not started. No dashboard redesign. No AI. No change to
+`MARK_APPLIED`/`COMPLETE_APPLICATION` priority — left exactly as flagged in the first pass, for a
+deliberate product decision later.

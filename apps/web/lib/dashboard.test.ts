@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Application, ApplicationEvent } from '@career-os/shared';
 import {
   attachNextActions,
-  buildLastStatusChangeMap,
+  buildLastRelevantStatusActivityMap,
   needsAttention,
   sortApplicationsByAttention,
   stageGroupForStatus,
@@ -66,7 +66,8 @@ describe('attachNextActions', () => {
     expect(result[1]!.nextAction.type).toBe('NO_ACTION');
   });
 
-  it('wires a matching STATUS_CHANGE event into the follow-up anchor (Phase 5C hardening)', () => {
+  // F. Gmail-confirmed APPLICATION_RECEIVED resets the anchor.
+  it('F: a Gmail-confirmed (source=GMAIL_SYNC) APPLICATION_RECEIVED transition resets the follow-up anchor', () => {
     const apps = [
       application({
         id: 'app-1',
@@ -77,6 +78,7 @@ describe('attachNextActions', () => {
     const events = [
       event({
         applicationId: 'app-1',
+        source: 'GMAIL_SYNC',
         toStatus: 'APPLICATION_RECEIVED',
         createdAt: '2026-06-14T00:00:00.000Z', // 1 day before NOW
       }),
@@ -86,7 +88,30 @@ describe('attachNextActions', () => {
     expect(result!.nextAction.followUpAnchorAt).toBe('2026-06-14T00:00:00.000Z');
   });
 
-  it('an application with no matching status-change event falls back to appliedAt alone', () => {
+  // G. A manual, authoritative (source=USER, non-reverted) APPLICATION_RECEIVED transition
+  // counts exactly the same way — the user is explicitly recording real progress.
+  it('G: a manual (source=USER) non-reverted APPLICATION_RECEIVED transition also resets the follow-up anchor', () => {
+    const apps = [
+      application({
+        id: 'app-1',
+        status: 'APPLICATION_RECEIVED',
+        appliedAt: '2026-06-05T00:00:00.000Z',
+      }),
+    ];
+    const events = [
+      event({
+        applicationId: 'app-1',
+        source: 'USER',
+        toStatus: 'APPLICATION_RECEIVED',
+        createdAt: '2026-06-14T00:00:00.000Z',
+      }),
+    ];
+    const [result] = attachNextActions(apps, events, NOW);
+    expect(result!.nextAction.type).toBe('NO_ACTION');
+    expect(result!.nextAction.followUpAnchorAt).toBe('2026-06-14T00:00:00.000Z');
+  });
+
+  it('an application with no matching relevant status-change event falls back to appliedAt alone', () => {
     const apps = [
       application({
         id: 'app-1',
@@ -100,20 +125,82 @@ describe('attachNextActions', () => {
   });
 });
 
-describe('buildLastStatusChangeMap', () => {
+describe('buildLastRelevantStatusActivityMap', () => {
   it('keeps only the most recent event per application when the input is ordered newest-first', () => {
     const events = [
       event({ applicationId: 'app-1', createdAt: '2026-06-10T00:00:00.000Z' }),
       event({ applicationId: 'app-1', createdAt: '2026-06-01T00:00:00.000Z' }),
       event({ applicationId: 'app-2', createdAt: '2026-06-05T00:00:00.000Z' }),
     ];
-    const map = buildLastStatusChangeMap(events);
+    const map = buildLastRelevantStatusActivityMap(events);
     expect(map.get('app-1')).toBe('2026-06-10T00:00:00.000Z');
     expect(map.get('app-2')).toBe('2026-06-05T00:00:00.000Z');
   });
 
-  it('ignores a non-STATUS_CHANGE event defensively — it can never masquerade as employer activity', () => {
-    const map = buildLastStatusChangeMap([
+  // B. A reverted STATUS_CHANGE event does NOT reset the anchor — even though it may be the
+  // chronologically most recent event, `reverted_at` being set means it no longer represents
+  // current history.
+  it('B: a reverted event (reverted_at set) is excluded even when it is the most recent by createdAt', () => {
+    const events = [
+      event({
+        applicationId: 'app-1',
+        createdAt: '2026-06-14T00:00:00.000Z', // most recent by time
+        revertedAt: '2026-06-14T00:00:01.000Z', // but reverted a moment later
+      }),
+      event({
+        applicationId: 'app-1',
+        createdAt: '2026-06-01T00:00:00.000Z',
+        revertedAt: null,
+      }),
+    ];
+    const map = buildLastRelevantStatusActivityMap(events);
+    expect(map.get('app-1')).toBe('2026-06-01T00:00:00.000Z');
+  });
+
+  // The exact Sep 1 / Sep 11 scenario from the task: applied Sep 1, an accidental status change,
+  // reverted back to APPLIED on Sep 11 (which logs its own SYSTEM-sourced event on Sep 11). The
+  // SYSTEM event must not become the anchor.
+  it('excludes the SYSTEM-sourced event revertApplicationEvent itself creates to log a revert', () => {
+    const events = [
+      // The revert's own bookkeeping event — newest by createdAt, but source=SYSTEM.
+      event({
+        applicationId: 'app-1',
+        source: 'SYSTEM',
+        fromStatus: 'INTERVIEW',
+        toStatus: 'APPLIED',
+        createdAt: '2026-06-14T00:00:00.000Z', // Sep 11-equivalent: 1 day before NOW
+        revertedAt: null,
+      }),
+      // The original (now-reverted) accidental change.
+      event({
+        applicationId: 'app-1',
+        source: 'USER',
+        fromStatus: 'APPLIED',
+        toStatus: 'INTERVIEW',
+        createdAt: '2026-06-10T00:00:00.000Z',
+        revertedAt: '2026-06-14T00:00:00.000Z',
+      }),
+      // The original mark-applied transition.
+      event({
+        applicationId: 'app-1',
+        source: 'USER',
+        fromStatus: 'IN_PROGRESS',
+        toStatus: 'APPLIED',
+        createdAt: '2026-06-05T00:00:00.000Z', // Sep 1-equivalent: 10 days before NOW
+        revertedAt: null,
+      }),
+    ];
+    const map = buildLastRelevantStatusActivityMap(events);
+    // Neither the SYSTEM revert-logging event nor the reverted event count — the map falls
+    // through to the original, still-legitimate mark-applied event.
+    expect(map.get('app-1')).toBe('2026-06-05T00:00:00.000Z');
+  });
+
+  // D. A user edit unrelated to status (e.g. notes) never creates a STATUS_CHANGE event at all
+  // (updateOwnApplication never calls recordApplicationEvent) — defensively asserted here too,
+  // even though the real query already filters to event_type=STATUS_CHANGE server-side.
+  it('D: a non-STATUS_CHANGE event (e.g. a NOTE, standing in for an unrelated user edit) has no effect', () => {
+    const map = buildLastRelevantStatusActivityMap([
       event({
         applicationId: 'app-1',
         eventType: 'NOTE',
@@ -123,8 +210,53 @@ describe('buildLastStatusChangeMap', () => {
     expect(map.has('app-1')).toBe(false);
   });
 
+  // E. An unconfirmed/ambiguous Gmail signal never creates any application_events row at all
+  // (only confirmOwnEmailSignal's CONFIRM branch and the sync pipeline's AUTO_APPLIED case ever
+  // call changeOwnApplicationStatus) — so it structurally cannot appear in this function's input
+  // to begin with; an empty events array is exactly what that produces, and it must have no
+  // effect (the anchor map stays empty, and the caller falls back to appliedAt alone).
+  it('E: no events at all (as an unconfirmed Gmail signal produces) has no effect — empty map', () => {
+    expect(buildLastRelevantStatusActivityMap([]).size).toBe(0);
+  });
+
   it('returns an empty map for an empty input, never throwing', () => {
-    expect(buildLastStatusChangeMap([]).size).toBe(0);
+    expect(buildLastRelevantStatusActivityMap([]).size).toBe(0);
+  });
+});
+
+describe('the Sep 1 / Sep 11 revert scenario end to end (deriveNextAction + assembly together)', () => {
+  // A/C combined: applied Sep 1 (10 days ago), an accidental change reverted back to APPLIED on
+  // Sep 11 (1 day ago) — the reverted event and its SYSTEM-sourced revert-logging event must
+  // both be excluded, so the follow-up anchor falls back to the original, still-old appliedAt,
+  // and a follow-up suggestion remains eligible rather than being incorrectly suppressed for
+  // another 7 days.
+  it('C: old appliedAt + a reverted recent event -> follow-up remains eligible based on the last legitimate anchor', () => {
+    const apps = [
+      application({
+        id: 'app-1',
+        status: 'APPLIED',
+        appliedAt: '2026-06-05T00:00:00.000Z',
+      }),
+    ];
+    const events = [
+      event({
+        applicationId: 'app-1',
+        source: 'SYSTEM',
+        toStatus: 'APPLIED',
+        createdAt: '2026-06-14T00:00:00.000Z',
+        revertedAt: null,
+      }),
+      event({
+        applicationId: 'app-1',
+        source: 'USER',
+        toStatus: 'INTERVIEW',
+        createdAt: '2026-06-10T00:00:00.000Z',
+        revertedAt: '2026-06-14T00:00:00.000Z',
+      }),
+    ];
+    const [result] = attachNextActions(apps, events, NOW);
+    expect(result!.nextAction.type).toBe('CONSIDER_FOLLOW_UP');
+    expect(result!.nextAction.followUpAnchorAt).toBe('2026-06-05T00:00:00.000Z');
   });
 });
 
