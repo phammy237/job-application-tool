@@ -25,15 +25,16 @@ phase depends on a later phase's output.
       dashboard + extension review UI (see "Phase 5B.2" below)
 - [x] Phase 5B.3 — Explicit, user-triggered AI-assisted unsupported-claim check, advisory-only
       (migration 0014, ephemeral, never part of the authoritative gate — see "Phase 5B.3" below)
+- [x] Phase 5B.4 — Historical "what you submitted" viewer, including the requirement-mapping-run
+      summary and component test coverage deferred out of 5B.2's first pass (see "Phase 5B.4"
+      below)
 - [ ] Phase 6 — Multi-user beta hardening, privacy controls, testing, deployment
 - [ ] Phase 7 — Optional mypham.space integration, public onboarding, future sharing
 
 **Not yet started:** Phase 5C (next actions/deadlines, dashboard overview) — out of scope for 5A,
 unscoped beyond its name, and not yet slotted into the numbered sequence relative to Phase 5's
-Gmail work. That ordering decision is intentionally left open rather than assumed here. Phase 5B.4
-(the historical submission viewer) has a working first version already, built alongside 5B.1/5B.2's
-UI work rather than as a separately-staged slice — see "Phase 5B.2" below for what shipped and
-what is still explicitly deferred to a dedicated 5B.4 pass.
+Gmail work. That ordering decision is intentionally left open rather than assumed here. The whole
+Phase 5B line (5B.0 through 5B.4) is now complete.
 
 Phase 4A shipped: the popup classifies every detected field into a review state (sensitive /
 unsupported / already-completed / pending-suggestion / ready / suggested / needs-input),
@@ -1441,6 +1442,126 @@ extension's `eslint` both zero warnings.
 
 ### Explicitly excluded from Phase 5B.2
 
-AI-assisted unsupported-claim checking (Phase 5B.3, not started — `UNSUPPORTED_CLAIM` remains an
-unused enum value). Résumé-version selection. Full 5B.4 viewer polish (requirement-mapping-run
-summary, broader design pass) beyond the first-pass `SubmissionPacketSection` shipped here.
+AI-assisted unsupported-claim checking — shipped separately as Phase 5B.3, below. Résumé-version
+selection remains out of scope for the whole 5B line.
+
+## Phase 5B.3 — Explicit AI-assisted unsupported-claim check (advisory only)
+
+See `docs/AI_GROUNDING.md` §9 for the full pipeline design (retrieval, prompting, contract,
+citation allowlist, retry policy, telemetry, and the ephemeral/advisory design rationale) — not
+duplicated here. In short: `POST /api/applications/:id/unsupported-claims-check` is the only call
+site for `generateUnsupportedClaimsCheck`; every finding is `severity: 'WARNING'`
+(`ruleId: 'UNSUPPORTED_CLAIM'`), never fed into `markOwnApplicationApplied`'s
+`acknowledgedFindingIds` gate, and never frozen into `submission_packets.consistencyFindings` —
+the deterministic gate (Phase 5B.2) remains the sole authority over what a submission is actually
+required to satisfy. The dashboard's `MarkAppliedPanel` exposes it as a separate, clearly-labeled
+"Check unsupported claims" button inside the review step — explicit click only, never auto-fired
+alongside the deterministic `GET /consistency-check` that opens the review step. No extension UI
+was added for this phase (optional per the original scoping — the dashboard's review step is the
+one place a user reviews before submitting either way).
+
+Migration `0014` widens `ai_usage_events.task_type` to accept `'unsupported_claim_check'` —
+live-verified against the linked Supabase project (`supabase db push --linked` succeeded after
+fixing an initial oversight that would have dropped the already-live `'email_classification'`
+value out of the CHECK constraint; caught by the push itself failing with `SQLSTATE 23514` before
+any damage, root-caused via a live `select task_type, count(*) ... group by task_type` query
+against real data from the Phase 5 Gmail verification pass). The existing 33-assertion
+`0019_submission_packets.test.sql` pgTAP suite was re-run live after the migration as a
+regression check (it does not touch `ai_usage_events` at all, but re-verifying rather than
+assuming was judged worth the low cost) — still 33/33.
+
+### Files changed (Phase 5B.3)
+
+- `supabase/migrations/0014_ai_usage_events_unsupported_claim_check.sql` (new)
+- `packages/shared/src/schemas/unsupported-claim-contract.ts` (new — model response contract),
+  `consistency-finding.ts` (added `unsupportedClaimCheckResponseSchema`, a three-way
+  discriminated union matching the route's actual `ok`/`no_claims_to_check`/`unavailable`
+  shapes), `ai-usage-event.ts` (widened `aiUsageEventTaskTypeSchema`)
+- `packages/ai/src/generate-unsupported-claims-check.ts` (new — the orchestrator),
+  `contract/validate-unsupported-claim-contract.ts` (new), `prompt/build-unsupported-claim-
+  system-prompt.ts` + `build-unsupported-claim-user-prompt.ts` (new), `claude/call-claude.ts`
+  (added `callClaudeForUnsupportedClaimCheck`), `config.ts` (added the pipeline's token cap,
+  prompt version, and answer-text char cap)
+- `apps/web/app/api/applications/[id]/unsupported-claims-check/route.ts` (new — the only call
+  site), `apps/web/app/(app)/applications/mark-applied-panel.tsx` (added the optional AI-check
+  affordance, entirely separate state from the deterministic acknowledgement flow)
+
+### Tests (Phase 5B.3)
+
+`packages/ai`: 40 new tests (orchestrator: rate limit, retrieval short-circuits, success path,
+contract-rejection + one-retry-only policy, `provider_error` never retried, usage telemetry
+including the `'wrong_length'` → `'validation_failed'` mapping; contract validator: 12 cases;
+system/user prompt builders: 14 cases covering untrusted-data tagging, truncation, and the
+positional-no-echoed-id contract). `apps/web`: 13 new tests (10 route-level status-mapping cases,
+3 `MarkAppliedPanel` cases covering no-auto-fire, rendered findings, and unavailable handling).
+Typecheck clean across shared/database/ai/web/extension/email; `next lint` and the extension's
+`eslint` both zero warnings; prettier clean.
+
+### Definition of done (Phase 5B.3)
+
+- No caller anywhere in the codebase invokes `generateUnsupportedClaimsCheck` except the one
+  route — verified by inspection (only call site) and by the "never fires automatically" UI test.
+- Every finding this pipeline can produce is `severity: 'WARNING'` — enforced in code (hardcoded
+  in `generate-unsupported-claims-check.ts`, not read from the model), not just convention.
+- A malformed model response, an unallowlisted citation, or a length mismatch is rejected and
+  retried once, never surfaced as a fabricated finding — verified by the contract-validator and
+  orchestrator test suites.
+- A `provider_error`, rate limit, or any exhausted rejection maps to HTTP 200
+  `status: 'unavailable'`, never an error the client has to specially handle to keep the
+  Mark-Applied flow usable — verified by the route's status-mapping tests.
+- This pipeline's output never reaches `submission_packets` — confirmed by inspection (no write
+  path from `generate-unsupported-claims-check.ts` or its route touches
+  `markApplicationAppliedAtomic`/`mark_application_applied` at all).
+
+### Explicitly excluded from Phase 5B.3
+
+Extension UI for this check (dashboard-only for now). A persisted run history for AI-assisted
+checks (deliberately ephemeral — see `docs/AI_GROUNDING.md` §9's rationale). Freezing AI-assisted
+findings into the submission packet under any circumstance.
+
+## Phase 5B.4 — Historical "what you submitted" viewer (polish pass)
+
+A first-pass `SubmissionPacketSection` shipped already, alongside 5B.1/5B.2's UI work (see "Phase
+5B.2" above). This pass closes the two items that section's own doc comment left explicitly
+deferred:
+
+- **Requirement-mapping-run summary**: `submission_packets.requirementMappingRunId`, when set, is
+  now resolved and summarized — requirement count (via the new, count-only
+  `countOwnRequirementMappingsForRun`, which deliberately does not re-fetch mapping content or
+  re-resolve live fact validity the way `listCurrentOwnRequirementMappings` does, since a frozen
+  historical record doesn't need a live-refreshed breakdown) and the run's original analysis
+  date. Looked up by the new `getOwnRequirementMappingRunById` (by id, not "current for this
+  snapshot" — unlike `getCurrentOwnRequirementMappingRun`), since the run a packet references may
+  since have been superseded by a newer analysis of the same job posting. Honest in every
+  direction this can go: a still-`CURRENT` run is summarized plainly; a `SUPERSEDED` run is
+  summarized with an explicit "a newer analysis has since replaced this run" note rather than
+  silently implying it's still current; a run id that somehow no longer resolves (should not
+  normally happen, since runs are never deleted, but nothing here assumes it) states that
+  honestly instead of fabricating a count.
+- **Component test coverage**: `submission-packet-section.test.tsx` (new — previously untested)
+  covers the legacy-no-packet state, reviewed-answer rendering (including the edited-vs-original
+  text distinction), résumé-id honesty, all three requirement-analysis-summary states above, and
+  consistency-finding/acknowledgement rendering.
+
+### Files changed (Phase 5B.4)
+
+- `packages/database/src/queries/requirement-mapping-runs.ts` (added
+  `getOwnRequirementMappingRunById`), `requirement-evidence-mappings.ts` (added
+  `countOwnRequirementMappingsForRun`) — both with new unit tests
+- `apps/web/app/(app)/applications/submission-packet-section.tsx` (requirement-analysis summary
+  block), `submission-packet-section.test.tsx` (new)
+
+### Tests (Phase 5B.4)
+
+`packages/database`: 4 new tests (2 for `getOwnRequirementMappingRunById`, 2 for
+`countOwnRequirementMappingsForRun`). `apps/web`: 9 new tests (the previously-untested
+`SubmissionPacketSection`, all five states above). Typecheck clean across database/web; `next
+lint` zero warnings; prettier clean.
+
+### Explicitly excluded from Phase 5B.4
+
+Any broader visual/design pass beyond this content addition — `SubmissionPacketSection` still
+uses the same plain bordered-card layout as its first pass. No résumé-version display beyond the
+existing honest "not recorded" state (no résumé-versioning system exists yet to display). No
+extension-side historical viewer (dashboard-only, consistent with the extension's popup being a
+review-and-fill surface, not a records surface).

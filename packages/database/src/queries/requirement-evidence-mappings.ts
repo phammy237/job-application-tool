@@ -66,7 +66,16 @@ async function resolveLiveFactStates(
   const results = await Promise.all(
     FACT_SOURCE_TABLES.map(async (table) => {
       const ids = idsByTable.get(table);
-      if (!ids || ids.size === 0) return { table, rows: [] as { id: string; updated_at: string; user_approved: boolean; approved_for_applications: boolean }[] };
+      if (!ids || ids.size === 0)
+        return {
+          table,
+          rows: [] as {
+            id: string;
+            updated_at: string;
+            user_approved: boolean;
+            approved_for_applications: boolean;
+          }[],
+        };
       const { data, error } = await supabase
         .from(table)
         .select('id, updated_at, user_approved, approved_for_applications')
@@ -127,10 +136,32 @@ export async function listCurrentOwnRequirementMappings(
       ...mapping,
       matchedFacts: mapping.matchedFacts.map((fact) => ({
         ...fact,
-        validity: resolveValidity(liveState.get(`${fact.sourceTable}:${fact.factId}`), fact.factUpdatedAt),
+        validity: resolveValidity(
+          liveState.get(`${fact.sourceTable}:${fact.factId}`),
+          fact.factUpdatedAt,
+        ),
       })),
     }),
   );
+}
+
+/** A lightweight count-only read for a specific run's mapping total — deliberately does not
+ * fetch mapping content or re-resolve live fact validity (unlike
+ * listCurrentOwnRequirementMappings), since the historical submission-packet viewer
+ * (docs/IMPLEMENTATION_PLAN.md Phase 5B.4) only needs "how many requirements were analyzed",
+ * not a live-refreshed breakdown of a frozen historical record. */
+export async function countOwnRequirementMappingsForRun(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+  runId: string,
+): Promise<number> {
+  const { count, error } = await supabase
+    .from('requirement_evidence_mappings')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .eq('run_id', runId);
+  assertNoError(error, 'countOwnRequirementMappingsForRun');
+  return count ?? 0;
 }
 
 export interface PromoteRequirementMappingRunResult {

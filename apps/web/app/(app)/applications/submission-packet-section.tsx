@@ -1,4 +1,6 @@
 import {
+  countOwnRequirementMappingsForRun,
+  getOwnRequirementMappingRunById,
   getOwnSubmissionPacketByApplicationId,
   type CareerOsSupabaseClient,
 } from '@career-os/database';
@@ -25,6 +27,21 @@ export async function SubmissionPacketSection({
     userId,
     applicationId,
   );
+
+  // The requirement-mapping run this packet froze a reference to, if any — looked up by id
+  // (not "current"), since a later re-analysis may have since superseded it. Honest either way:
+  // if the run no longer exists at all (should not normally happen, since runs are never
+  // deleted, but nothing here assumes it), the summary is simply omitted rather than guessed.
+  const requirementMappingRun = packet?.requirementMappingRunId
+    ? await getOwnRequirementMappingRunById(
+        supabase,
+        userId,
+        packet.requirementMappingRunId,
+      )
+    : null;
+  const requirementMappingCount = requirementMappingRun
+    ? await countOwnRequirementMappingsForRun(supabase, userId, requirementMappingRun.id)
+    : null;
 
   return (
     <section className="space-y-3">
@@ -126,6 +143,29 @@ export async function SubmissionPacketSection({
               </ul>
             )}
           </div>
+
+          {packet.requirementMappingRunId ? (
+            <div>
+              <h3 className="text-xs font-semibold uppercase tracking-wide">
+                Requirement analysis
+              </h3>
+              {requirementMappingRun ? (
+                <p className="text-muted-foreground mt-1 text-xs">
+                  {requirementMappingCount ?? 0} requirement
+                  {requirementMappingCount === 1 ? '' : 's'} analyzed on{' '}
+                  {new Date(requirementMappingRun.createdAt).toLocaleString()}
+                  {requirementMappingRun.status !== 'CURRENT'
+                    ? ' — a newer analysis has since replaced this run for this job posting.'
+                    : '.'}
+                </p>
+              ) : (
+                <p className="text-muted-foreground mt-1 text-xs">
+                  This application referenced a requirement analysis run that is no longer
+                  available.
+                </p>
+              )}
+            </div>
+          ) : null}
 
           <div>
             <h3 className="text-xs font-semibold uppercase tracking-wide">Résumé</h3>

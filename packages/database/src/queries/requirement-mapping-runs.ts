@@ -1,4 +1,7 @@
-import { requirementMappingRunSchema, type RequirementMappingRun } from '@career-os/shared';
+import {
+  requirementMappingRunSchema,
+  type RequirementMappingRun,
+} from '@career-os/shared';
 import { assertNoError, unwrapRow } from '../errors';
 import type { Database } from '../types/database.types';
 import type { CareerOsSupabaseClient } from '../types/client';
@@ -38,6 +41,27 @@ export async function getCurrentOwnRequirementMappingRun(
     .eq('status', 'CURRENT')
     .maybeSingle();
   assertNoError(error, 'getCurrentOwnRequirementMappingRun');
+  return data ? rowToRun(data) : null;
+}
+
+/** Fetches one specific run by id, regardless of its status (CURRENT/SUPERSEDED/FAILED) —
+ * unlike getCurrentOwnRequirementMappingRun, which only ever finds the live CURRENT run for a
+ * snapshot. Used by the historical submission-packet viewer (docs/IMPLEMENTATION_PLAN.md Phase
+ * 5B.4) to look up the specific run a submission_packets row froze a reference to at mark-applied
+ * time — that run may since have been superseded by a newer analysis, and the caller is
+ * responsible for surfacing that honestly rather than implying the frozen run is still current. */
+export async function getOwnRequirementMappingRunById(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+  runId: string,
+): Promise<RequirementMappingRun | null> {
+  const { data, error } = await supabase
+    .from('requirement_mapping_runs')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('id', runId)
+    .maybeSingle();
+  assertNoError(error, 'getOwnRequirementMappingRunById');
   return data ? rowToRun(data) : null;
 }
 

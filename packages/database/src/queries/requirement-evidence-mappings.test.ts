@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { CareerOsSupabaseClient } from '../types/client';
-import { listCurrentOwnRequirementMappings, promoteOwnRequirementMappingRun } from './requirement-evidence-mappings';
+import {
+  countOwnRequirementMappingsForRun,
+  listCurrentOwnRequirementMappings,
+  promoteOwnRequirementMappingRun,
+} from './requirement-evidence-mappings';
 
 const USER_ID = '22222222-2222-4222-8222-222222222222';
 const RUN_ID = '66666666-6666-4666-8666-666666666666';
@@ -43,7 +47,12 @@ function fakeSupabase() {
 
   const factRowsByTable: Record<string, unknown[]> = {
     experiences: [
-      { id: FACT_VALID, updated_at: CAPTURED_AT, user_approved: true, approved_for_applications: true },
+      {
+        id: FACT_VALID,
+        updated_at: CAPTURED_AT,
+        user_approved: true,
+        approved_for_applications: true,
+      },
       {
         id: FACT_CHANGED,
         updated_at: '2026-02-01T00:00:00.000Z', // edited since generation
@@ -52,7 +61,12 @@ function fakeSupabase() {
       },
     ],
     skills: [
-      { id: FACT_UNAPPROVED, updated_at: CAPTURED_AT, user_approved: true, approved_for_applications: false },
+      {
+        id: FACT_UNAPPROVED,
+        updated_at: CAPTURED_AT,
+        user_approved: true,
+        approved_for_applications: false,
+      },
     ],
     education: [], // FACT_DELETED intentionally absent
     candidate_facts: [],
@@ -63,11 +77,15 @@ function fakeSupabase() {
     const chain: Record<string, unknown> = {};
     chain.select = vi.fn(() => chain);
     chain.eq = vi.fn(() => chain);
-    chain.in = vi.fn().mockResolvedValue({ data: factRowsByTable[table] ?? [], error: null });
+    chain.in = vi
+      .fn()
+      .mockResolvedValue({ data: factRowsByTable[table] ?? [], error: null });
     return chain;
   }
 
-  const from = vi.fn((table: string) => (table === 'requirement_evidence_mappings' ? mappingsChain : factChain(table)));
+  const from = vi.fn((table: string) =>
+    table === 'requirement_evidence_mappings' ? mappingsChain : factChain(table),
+  );
   return { from } as unknown as CareerOsSupabaseClient;
 }
 
@@ -86,18 +104,56 @@ describe('listCurrentOwnRequirementMappings', () => {
   it('never queries a fact-source table that no mapping actually references', async () => {
     const supabase = fakeSupabase();
     await listCurrentOwnRequirementMappings(supabase, USER_ID, RUN_ID);
-    const calledTables = (supabase.from as unknown as { mock: { calls: unknown[][] } }).mock.calls.map(
-      (call) => call[0],
-    );
+    const calledTables = (
+      supabase.from as unknown as { mock: { calls: unknown[][] } }
+    ).mock.calls.map((call) => call[0]);
     // projects and candidate_facts are never referenced by MAPPING_ROW's matched_facts.
     expect(calledTables).not.toContain('projects');
     expect(calledTables).not.toContain('candidate_facts');
   });
 });
 
+describe('countOwnRequirementMappingsForRun', () => {
+  /** select().eq().eq() is awaited directly (no maybeSingle/order terminator), so the chain
+   * object itself must be thenable, while still supporting chained .eq() calls beforehand. */
+  function countChain(result: { count: number | null; error: null }) {
+    const chain: Record<string, unknown> & PromiseLike<typeof result> = {
+      then: (resolve: (value: typeof result) => unknown) => resolve(result),
+    } as never;
+    chain.select = vi.fn((columns: string, opts: unknown) => {
+      expect(columns).toBe('id');
+      expect(opts).toEqual({ count: 'exact', head: true });
+      return chain;
+    });
+    chain.eq = vi.fn(() => chain);
+    return chain;
+  }
+
+  it('scopes by user_id and run_id and returns the exact count, without fetching row content', async () => {
+    const chain = countChain({ count: 7, error: null });
+    const supabase = { from: vi.fn(() => chain) } as unknown as CareerOsSupabaseClient;
+
+    const result = await countOwnRequirementMappingsForRun(supabase, USER_ID, RUN_ID);
+
+    expect(chain.eq).toHaveBeenCalledWith('user_id', USER_ID);
+    expect(chain.eq).toHaveBeenCalledWith('run_id', RUN_ID);
+    expect(result).toBe(7);
+  });
+
+  it('returns 0 when count comes back null rather than throwing', async () => {
+    const chain = countChain({ count: null, error: null });
+    const supabase = { from: vi.fn(() => chain) } as unknown as CareerOsSupabaseClient;
+
+    const result = await countOwnRequirementMappingsForRun(supabase, USER_ID, RUN_ID);
+    expect(result).toBe(0);
+  });
+});
+
 describe('promoteOwnRequirementMappingRun', () => {
   it('calls the server-only promotion RPC and returns the mapping count', async () => {
-    const single = vi.fn().mockResolvedValue({ data: { run_id: RUN_ID, mapping_count: 3 }, error: null });
+    const single = vi
+      .fn()
+      .mockResolvedValue({ data: { run_id: RUN_ID, mapping_count: 3 }, error: null });
     const rpc = vi.fn(() => ({ single }));
     const supabase = { rpc } as unknown as CareerOsSupabaseClient;
 

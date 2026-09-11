@@ -3,6 +3,7 @@ import type { CareerOsSupabaseClient } from '../types/client';
 import {
   createOwnPendingRequirementMappingRun,
   getCurrentOwnRequirementMappingRun,
+  getOwnRequirementMappingRunById,
   markOwnRequirementMappingRunFailed,
 } from './requirement-mapping-runs';
 
@@ -35,7 +36,11 @@ describe('getCurrentOwnRequirementMappingRun', () => {
     });
     const supabase = { from: vi.fn(() => chain) } as unknown as CareerOsSupabaseClient;
 
-    const result = await getCurrentOwnRequirementMappingRun(supabase, USER_ID, SNAPSHOT_ID);
+    const result = await getCurrentOwnRequirementMappingRun(
+      supabase,
+      USER_ID,
+      SNAPSHOT_ID,
+    );
 
     expect(eq).toHaveBeenCalledWith('user_id', USER_ID);
     expect(eq).toHaveBeenCalledWith('job_snapshot_id', SNAPSHOT_ID);
@@ -50,7 +55,56 @@ describe('getCurrentOwnRequirementMappingRun', () => {
     chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
     const supabase = { from: vi.fn(() => chain) } as unknown as CareerOsSupabaseClient;
 
-    const result = await getCurrentOwnRequirementMappingRun(supabase, USER_ID, SNAPSHOT_ID);
+    const result = await getCurrentOwnRequirementMappingRun(
+      supabase,
+      USER_ID,
+      SNAPSHOT_ID,
+    );
+    expect(result).toBeNull();
+  });
+});
+
+describe('getOwnRequirementMappingRunById', () => {
+  it('scopes the query by user_id and id (no status filter — finds a SUPERSEDED run too)', async () => {
+    const eq = vi.fn().mockReturnThis();
+    const chain: Record<string, unknown> = {};
+    chain.select = vi.fn(() => chain);
+    chain.eq = eq.mockImplementation(() => chain);
+    chain.maybeSingle = vi.fn().mockResolvedValue({
+      data: {
+        id: RUN_ID,
+        user_id: USER_ID,
+        job_snapshot_id: SNAPSHOT_ID,
+        status: 'SUPERSEDED',
+        provider: 'anthropic',
+        model: 'claude-sonnet-5',
+        prompt_version: 'requirement-evidence-v1',
+        retrieval_fact_count: 10,
+        failure_category: null,
+        created_at: '2026-01-01T00:00:00.000Z',
+        completed_at: '2026-01-01T00:01:00.000Z',
+        failed_at: null,
+      },
+      error: null,
+    });
+    const supabase = { from: vi.fn(() => chain) } as unknown as CareerOsSupabaseClient;
+
+    const result = await getOwnRequirementMappingRunById(supabase, USER_ID, RUN_ID);
+
+    expect(eq).toHaveBeenCalledWith('user_id', USER_ID);
+    expect(eq).toHaveBeenCalledWith('id', RUN_ID);
+    expect(eq).not.toHaveBeenCalledWith('status', expect.anything());
+    expect(result?.status).toBe('SUPERSEDED');
+  });
+
+  it('returns null when no run with that id is owned by this user', async () => {
+    const chain: Record<string, unknown> = {};
+    chain.select = vi.fn(() => chain);
+    chain.eq = vi.fn(() => chain);
+    chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+    const supabase = { from: vi.fn(() => chain) } as unknown as CareerOsSupabaseClient;
+
+    const result = await getOwnRequirementMappingRunById(supabase, USER_ID, RUN_ID);
     expect(result).toBeNull();
   });
 });
@@ -80,14 +134,24 @@ describe('markOwnRequirementMappingRunFailed', () => {
   it('returns true when the run actually transitioned', async () => {
     const rpc = vi.fn().mockResolvedValue({ data: true, error: null });
     const supabase = { rpc } as unknown as CareerOsSupabaseClient;
-    const result = await markOwnRequirementMappingRunFailed(supabase, USER_ID, RUN_ID, 'provider_error');
+    const result = await markOwnRequirementMappingRunFailed(
+      supabase,
+      USER_ID,
+      RUN_ID,
+      'provider_error',
+    );
     expect(result).toBe(true);
   });
 
   it('returns false (idempotent no-op) when the run was already terminal', async () => {
     const rpc = vi.fn().mockResolvedValue({ data: false, error: null });
     const supabase = { rpc } as unknown as CareerOsSupabaseClient;
-    const result = await markOwnRequirementMappingRunFailed(supabase, USER_ID, RUN_ID, 'refusal');
+    const result = await markOwnRequirementMappingRunFailed(
+      supabase,
+      USER_ID,
+      RUN_ID,
+      'refusal',
+    );
     expect(result).toBe(false);
   });
 });
