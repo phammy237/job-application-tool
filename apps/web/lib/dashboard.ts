@@ -18,16 +18,48 @@ export interface ApplicationWithNextAction {
   nextAction: NextAction;
 }
 
+/**
+ * Reduces every STATUS_CHANGE event for the user (from `listOwnStatusChangeEvents` — see that
+ * query's own doc comment for why it must NOT be the capped "recent activity" query) down to,
+ * per application, the single most recent one's `createdAt` — exactly "when did this
+ * application's current status get set" (Phase 5C hardening: the follow-up heuristic's anchor;
+ * see docs/IMPLEMENTATION_PLAN.md "Phase 5C hardening — follow-up anchor"). Assumes the input is
+ * already ordered newest-first (as `listOwnStatusChangeEvents` returns it) and simply keeps the
+ * first timestamp seen per `applicationId`; correct regardless of whether that latest event was
+ * a forward move (e.g. into APPLICATION_RECEIVED) or a revert, and regardless of `source`
+ * (`USER` or `GMAIL_SYNC`) — see next-action-rules.ts's `lastMeaningfulEmployerActivityAt` doc
+ * comment for why both are trustworthy here.
+ */
+export function buildLastStatusChangeMap(
+  statusChangeEvents: ApplicationEvent[],
+): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const event of statusChangeEvents) {
+    // Defensive, even though listOwnStatusChangeEvents already filters server-side: a notes
+    // edit or any other non-STATUS_CHANGE event must never be able to masquerade as employer
+    // activity, no matter what the caller passes in.
+    if (event.eventType !== 'STATUS_CHANGE') continue;
+    if (!map.has(event.applicationId)) {
+      map.set(event.applicationId, event.createdAt);
+    }
+  }
+  return map;
+}
+
 export function attachNextActions(
   applications: Application[],
+  statusChangeEvents: ApplicationEvent[],
   now: string,
 ): ApplicationWithNextAction[] {
+  const lastStatusChangeByApplication = buildLastStatusChangeMap(statusChangeEvents);
   return applications.map((application) => ({
     application,
     nextAction: deriveNextAction({
       status: application.status,
       unresolvedFields: application.unresolvedFields,
       appliedAt: application.appliedAt,
+      lastMeaningfulEmployerActivityAt:
+        lastStatusChangeByApplication.get(application.id) ?? null,
       now,
     }),
   }));

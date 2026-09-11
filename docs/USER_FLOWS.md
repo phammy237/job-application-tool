@@ -112,9 +112,12 @@ false`, `visibleOnPublicProfile = false`. Nothing extracted is usable until step
 
 0. User opens `/dashboard` (Phase 5C.1/5C.2). Every tracked application has one deterministically
    derived "next action" (e.g. "Review unresolved fields," "Prepare for the interview," "Consider
-   following up") — computed from already-persisted state (status, unresolved fields, how long
-   ago the application was actually submitted), never from a model call, and never inventing a
-   deadline. The dashboard groups applications by attention rather than showing a flat list:
+   following up") — computed from already-persisted state (status, unresolved fields, and how
+   long it has been since the more recent of the original submission and the last confirmed
+   employer-driven status update), never from a model call, and never inventing a deadline. A
+   just-applied-to job whose employer confirmed receipt yesterday does not immediately prompt a
+   follow-up just because the original submission was over a week ago. The dashboard groups
+   applications by attention rather than showing a flat list:
    **Attention needed** (anything with an urgent/high/medium-priority next action, sorted so the
    longest-waiting urgent items surface first), **Follow-up suggestions** (a separate, explicitly
    labeled "Career OS recommendation — not a known employer deadline" section — a follow-up

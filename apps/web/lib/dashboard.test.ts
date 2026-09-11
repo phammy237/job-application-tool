@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Application, ApplicationEvent } from '@career-os/shared';
 import {
   attachNextActions,
+  buildLastStatusChangeMap,
   needsAttention,
   sortApplicationsByAttention,
   stageGroupForStatus,
@@ -58,11 +59,72 @@ describe('attachNextActions', () => {
       application({ id: 'a', status: 'OFFER' }),
       application({ id: 'b', status: 'REJECTED' }),
     ];
-    const result = attachNextActions(apps, NOW);
+    const result = attachNextActions(apps, [], NOW);
     expect(result).toHaveLength(2);
     expect(result[0]!.application.id).toBe('a');
     expect(result[0]!.nextAction.type).toBe('REVIEW_OFFER');
     expect(result[1]!.nextAction.type).toBe('NO_ACTION');
+  });
+
+  it('wires a matching STATUS_CHANGE event into the follow-up anchor (Phase 5C hardening)', () => {
+    const apps = [
+      application({
+        id: 'app-1',
+        status: 'APPLICATION_RECEIVED',
+        appliedAt: '2026-06-05T00:00:00.000Z', // 10 days before NOW
+      }),
+    ];
+    const events = [
+      event({
+        applicationId: 'app-1',
+        toStatus: 'APPLICATION_RECEIVED',
+        createdAt: '2026-06-14T00:00:00.000Z', // 1 day before NOW
+      }),
+    ];
+    const [result] = attachNextActions(apps, events, NOW);
+    expect(result!.nextAction.type).toBe('NO_ACTION');
+    expect(result!.nextAction.followUpAnchorAt).toBe('2026-06-14T00:00:00.000Z');
+  });
+
+  it('an application with no matching status-change event falls back to appliedAt alone', () => {
+    const apps = [
+      application({
+        id: 'app-1',
+        status: 'APPLIED',
+        appliedAt: '2026-06-05T00:00:00.000Z',
+      }),
+    ];
+    const events = [event({ applicationId: 'some-other-app' })];
+    const [result] = attachNextActions(apps, events, NOW);
+    expect(result!.nextAction.followUpAnchorAt).toBe('2026-06-05T00:00:00.000Z');
+  });
+});
+
+describe('buildLastStatusChangeMap', () => {
+  it('keeps only the most recent event per application when the input is ordered newest-first', () => {
+    const events = [
+      event({ applicationId: 'app-1', createdAt: '2026-06-10T00:00:00.000Z' }),
+      event({ applicationId: 'app-1', createdAt: '2026-06-01T00:00:00.000Z' }),
+      event({ applicationId: 'app-2', createdAt: '2026-06-05T00:00:00.000Z' }),
+    ];
+    const map = buildLastStatusChangeMap(events);
+    expect(map.get('app-1')).toBe('2026-06-10T00:00:00.000Z');
+    expect(map.get('app-2')).toBe('2026-06-05T00:00:00.000Z');
+  });
+
+  it('ignores a non-STATUS_CHANGE event defensively — it can never masquerade as employer activity', () => {
+    const map = buildLastStatusChangeMap([
+      event({
+        applicationId: 'app-1',
+        eventType: 'NOTE',
+        createdAt: '2026-06-14T00:00:00.000Z',
+      }),
+    ]);
+    expect(map.has('app-1')).toBe(false);
+  });
+
+  it('returns an empty map for an empty input, never throwing', () => {
+    expect(buildLastStatusChangeMap([]).size).toBe(0);
   });
 });
 
@@ -73,6 +135,7 @@ describe('sortApplicationsByAttention', () => {
         application({ id: 'rejected', status: 'REJECTED' }),
         application({ id: 'action-required', status: 'ACTION_REQUIRED' }),
       ],
+      [],
       NOW,
     );
     const sorted = sortApplicationsByAttention(items).map((i) => i.application.id);
@@ -85,6 +148,7 @@ describe('sortApplicationsByAttention', () => {
         application({ id: 'a', status: 'REJECTED' }),
         application({ id: 'b', status: 'OFFER' }),
       ],
+      [],
       NOW,
     );
     const original = [...items];
@@ -120,6 +184,7 @@ describe('needsAttention', () => {
           }),
           application({ id: 'complete', status: 'SAVED' }),
         ],
+        [],
         NOW,
       );
     expect(needsAttention(actionRequired!)).toBe(true);

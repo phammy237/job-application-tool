@@ -1,4 +1,4 @@
-import { listOwnApplications } from '@career-os/database';
+import { listOwnApplications, listOwnStatusChangeEvents } from '@career-os/database';
 import {
   APPLICATION_STATUSES,
   CREATABLE_APPLICATION_STATUSES,
@@ -22,11 +22,18 @@ export default async function ApplicationsPage({
   const user = await requireUser();
   const supabase = await createClient();
 
-  const applications = await listOwnApplications(supabase, user.id, {
-    status: status ? (status as ApplicationStatus) : undefined,
-    search: q || undefined,
-  });
-  const withNextActions = attachNextActions(applications, new Date().toISOString());
+  const [applications, statusChangeEvents] = await Promise.all([
+    listOwnApplications(supabase, user.id, {
+      status: status ? (status as ApplicationStatus) : undefined,
+      search: q || undefined,
+    }),
+    listOwnStatusChangeEvents(supabase, user.id),
+  ]);
+  const withNextActions = attachNextActions(
+    applications,
+    statusChangeEvents,
+    new Date().toISOString(),
+  );
 
   return (
     <div className="space-y-6">

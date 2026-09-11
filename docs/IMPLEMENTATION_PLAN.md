@@ -37,6 +37,9 @@ phase depends on a later phase's output.
 - [x] Phase 5C.2 — Dashboard intelligence: attention-sorted overview, follow-up suggestions,
       pipeline stages, recent activity, and a next-action column on the applications list (no
       schema change — see "Phase 5C.2" below)
+- [x] Phase 5C hardening — corrects the follow-up heuristic to anchor on the more recent of
+      appliedAt and the last confirmed employer-driven status change, not appliedAt alone (see
+      "Phase 5C hardening — follow-up anchor" below)
 - [ ] Phase 5C.3 — Follow-up drafting/interview-prep content (AI-assisted) — not started, out of
       scope for this pass by explicit instruction
 - [ ] Phase 6 — Multi-user beta hardening, privacy controls, testing, deployment
@@ -1798,13 +1801,24 @@ them. Two findings directly shaped the design:
    (`confirmOwnEmailSignal`'s CONFIRM branch, the sync pipeline's AUTO_APPLIED case) routes
    through `changeOwnApplicationStatus`, which writes `status` directly — a `PENDING`
    (unconfirmed) `email_signals` row never touches `status` at all, and neither does a `DECLINED`
-   one. This means the engine does not need to separately consult `email_signals` or
-   `application_events` to decide what to recommend: if `status` is still exactly `APPLIED`,
-   that alone proves no employer-classified signal has been confirmed since the original
-   transition. Precedence therefore reduces to a straightforward per-status dispatch, not a
-   multi-signal-fusion problem — because Phase 5B already made `status` the sole reconciled
-   input. This is also why 5C.1 needed **zero new database queries** for correctness:
-   `listOwnApplications` (already existing) returns everything the rule engine needs.
+   one. This means the engine does not need to separately consult `email_signals` to decide what
+   to recommend: `status` alone tells it which of the two eligible statuses it's looking at, and
+   whether that status changed at all is never ambiguous. Precedence therefore reduces to a
+   straightforward per-status dispatch, not a multi-signal-fusion problem — because Phase 5B
+   already made `status` the sole reconciled input for *which stage* an application is in.
+
+   **This finding was originally taken to mean the engine never needed `application_events`
+   either — that was incomplete, and was corrected before this reached `origin/main` (see "Phase
+   5C hardening — follow-up anchor" below).** `status` being reconciled proves *whether* a
+   status change happened, but not *when* — and `APPLIED`/`APPLICATION_RECEIVED` are two distinct
+   statuses being handled by the same follow-up branch, so "status is still `APPLIED`" and
+   "status is now `APPLICATION_RECEIVED`" are not equivalent for timing purposes: the latter can
+   have happened well after the original `appliedAt`. The engine still needs zero *new* queries
+   for the pure decision logic itself (it remains a plain function of its arguments), but the
+   *caller* now supplies one additional, already-reconciled fact —
+   `lastMeaningfulEmployerActivityAt` — assembled from one extra bounded query
+   (`listOwnStatusChangeEvents`). `listOwnApplications` alone is no longer sufficient on its own;
+   see the hardening section below for exactly what changed and why.
 
 ### 5C.1A — Domain model (`packages/shared/src/schemas/next-action.ts`)
 
@@ -1818,8 +1832,11 @@ them. Two findings directly shaped the design:
 - `NextActionSource` — `APPLICATION_STATUS`/`UNRESOLVED_FIELDS`/`TIME_SINCE_APPLICATION`/
   `UNKNOWN_STATUS`. Every value corresponds to a field the engine actually reads; there is no
   `AI_JUDGMENT` source, because nothing here ever calls a model.
-- `NextAction` — `{type, priority, source, appliedAt, daysSinceApplied, dueAt}`. Deliberately has
-  **no title/reason string fields** — see 5C.1I.
+- `NextAction` — `{type, priority, source, appliedAt, daysSinceApplied, followUpAnchorAt,
+  daysSinceFollowUpAnchor, dueAt}`. Deliberately has **no title/reason string fields** — see
+  5C.1I. `followUpAnchorAt`/`daysSinceFollowUpAnchor` were added in the Phase 5C hardening pass
+  (see below) — kept distinct from `appliedAt`/`daysSinceApplied`, which always stay the true
+  original-submission fact, never the follow-up clock's own (possibly later) reference point.
 
 ### 5C.1B — Rule precedence
 
@@ -1837,8 +1854,9 @@ WITHDRAWN       -> NO_ACTION              (NONE) -- never a follow-up suggestion
 SAVED/IN_PROGRESS      -> unresolved fields present?  -> REVIEW_UNRESOLVED_FIELDS (MEDIUM)
                           IN_PROGRESS, none left?      -> MARK_APPLIED             (MEDIUM)
                           SAVED, none left/never ran?  -> COMPLETE_APPLICATION     (LOW)
-APPLIED/APPLICATION_RECEIVED -> days since appliedAt >= threshold? -> CONSIDER_FOLLOW_UP (LOW)
-                                otherwise                          -> NO_ACTION         (NONE)
+APPLIED/APPLICATION_RECEIVED -> days since max(appliedAt, lastMeaningfulEmployerActivityAt)
+                                >= threshold? -> CONSIDER_FOLLOW_UP (LOW)
+                                otherwise      -> NO_ACTION         (NONE)
 UNKNOWN         -> REVIEW_APPLICATION     (LOW) -- reachable in the type, unwritten today
 ```
 
@@ -1894,12 +1912,16 @@ overlooked — noted as a considered-and-declined option below.
 magic number at each call site). No existing product doc specifies a threshold (checked
 `docs/PRODUCT_SPEC.md`, `docs/USER_FLOWS.md`, and this file before choosing one) — 7 days is a
 conservative default: long enough that a follow-up isn't premature, short enough to still be
-useful. `CONSIDER_FOLLOW_UP` only ever fires when: the application is `APPLIED`/
-`APPLICATION_RECEIVED` (which, per the reconciled-status finding, already implies "no
-newer employer-driven status change exists"), `appliedAt` is a real persisted fact, and at least
-`FOLLOW_UP_SUGGESTION_THRESHOLD_DAYS` whole days have passed. It is always `LOW` priority and
-always `type: 'CONSIDER_FOLLOW_UP'` — never conflated with a fact, never escalated to "overdue"
-past the threshold (there is no upper bound/escalation at all).
+useful. `CONSIDER_FOLLOW_UP` only ever fires for an `APPLIED`/`APPLICATION_RECEIVED` application
+once at least `FOLLOW_UP_SUGGESTION_THRESHOLD_DAYS` whole days have passed **since the more
+recent of `appliedAt` and the most recent trustworthy employer-driven status change** (see "Phase
+5C hardening — follow-up anchor" below for the full anchor design — an earlier version of this
+heuristic used `appliedAt` alone, which was corrected before this reached `origin/main`). It is
+always `LOW` priority and always `type: 'CONSIDER_FOLLOW_UP'` — never conflated with a fact,
+never escalated to "overdue" past the threshold (there is no upper bound/escalation at all), and
+always suppressed outright by every higher-priority state (`ACTION_REQUIRED`/`ASSESSMENT`/
+`INTERVIEW`/`OFFER` are their own switch branches and never reach the follow-up computation at
+all; `REJECTED`/`WITHDRAWN` always resolve to `NO_ACTION`).
 
 ### 5C.1G — Real known dates only
 
@@ -1913,7 +1935,9 @@ template for either.
 ### 5C.1H — Architecture: three separated layers
 
 1. **Server-side data assembly** — `apps/web/lib/dashboard.ts`'s `attachNextActions`, wiring an
-   already-fetched `Application[]` into the rule engine. Never calls Supabase itself.
+   already-fetched `Application[]` (plus, as of the Phase 5C hardening pass,
+   `listOwnStatusChangeEvents`'s results reduced via `buildLastStatusChangeMap`) into the rule
+   engine. Never calls Supabase itself — the queries themselves are issued by the calling page.
 2. **Pure rule engine** — `packages/shared/src/lib/next-action-rules.ts`'s `deriveNextAction`. No
    database access, no network access, no Claude — a plain function of its arguments, the same
    posture as `consistency-rules.ts`.
@@ -1925,28 +1949,37 @@ template for either.
 ### 5C.1I — Explainability
 
 Every `NextAction` carries a `source` naming the persisted fact it came from. `formatNextAction`'s
-`CONSIDER_FOLLOW_UP` text is the concrete example from the original spec: "You applied N days ago
-and Career OS has not detected a newer employer update. Career OS suggests following up — this is
-a recommendation, not a known employer deadline." — `N` and "applied" are fact (`appliedAt` is
-real, "now" is real, the absence of a newer signal is observable from `status` alone), while
-"suggests" and the explicit "not a known employer deadline" disclaimer keep the recommendation
-clearly separated from a fact. Nothing in `format-next-action.ts` ever says "overdue," "late," or
-implies an employer promise.
+`CONSIDER_FOLLOW_UP` text is the concrete example from the original spec — with one correction
+from the Phase 5C hardening pass: it now says "You applied N days ago and Career OS has not
+detected anything newer since" only when the follow-up anchor is actually `appliedAt` itself; when
+a later, confirmed employer-driven status change reset the clock, it instead says "Career OS last
+saw an employer update N days ago and Career OS has not detected anything newer since" — never
+claiming "no newer signal" when the implementation hasn't actually checked for one (see the
+hardening section below for why the original wording was inaccurate for an `APPLICATION_RECEIVED`
+application). Either way: the day count and which anchor produced it are fact (`followUpAnchorAt`
+is real, "now" is real, the absence of anything newer since that anchor is now genuinely
+observable — see the hardening section's `lastMeaningfulEmployerActivityAt`), while "suggests" and
+the explicit "not a known employer deadline" disclaimer keep the recommendation clearly separated
+from a fact. Nothing in `format-next-action.ts` ever says "overdue," "late," or implies an
+employer promise.
 
 ### 5C.1J — Tests
 
-`packages/shared/src/lib/next-action-rules.test.ts` (31 tests): one case per `ApplicationStatus`
+`packages/shared/src/lib/next-action-rules.test.ts` (46 tests): one case per `ApplicationStatus`
 value (table-driven), the unresolved-field override (including the `null` vs. `[]` distinction
 for both `SAVED` and `IN_PROGRESS`), the follow-up threshold's exact boundary (`>= threshold`
 fires, one millisecond short does not, well past the threshold still fires with no escalation,
 `APPLICATION_RECEIVED` uses the same threshold, a null `appliedAt` never fires it), explicit
 precedence assertions (`REJECTED`/`WITHDRAWN` never produce a follow-up regardless of elapsed
 time; `ACTION_REQUIRED`/`ASSESSMENT`/`INTERVIEW`/`OFFER` each short-circuit before any follow-up
-computation runs at all; unresolved fields outrank `MARK_APPLIED`), and a safety sweep asserting
-every status is handled without throwing even with every optional field null.
-`packages/shared/src/lib/format-next-action.test.ts` (5 tests) covers every action type
+computation runs at all; unresolved fields outrank `MARK_APPLIED`), a safety sweep asserting
+every status is handled without throwing even with every optional field null, and (Phase 5C
+hardening) a dedicated "follow-up anchor" describe block with the full A-I case list from that
+pass's own review — see "Phase 5C hardening — follow-up anchor" below.
+`packages/shared/src/lib/format-next-action.test.ts` (6 tests) covers every action type
 producing non-empty text, the exact singular/plural "N day(s) ago" wording, graceful degradation
-with no day count, and the explicit fact-vs-recommendation phrasing.
+with no day count, the explicit fact-vs-recommendation phrasing, and (Phase 5C hardening) the
+"Career OS last saw an employer update" vs. "You applied" wording split.
 
 ### Explicitly excluded from Phase 5C.1
 
@@ -2046,13 +2079,17 @@ risk exactly the "every old application becomes a warning" outcome the spec caut
 
 ### 5C.2H — Server/query architecture
 
-`/dashboard` issues exactly two queries in parallel (`Promise.all`): `listOwnApplications` and
-`listOwnRecentApplicationEvents` — no per-application follow-up query, no N+1. Neither query nor
-the next-action computation ever touches `submission_packets` — the packet-existence signal the
-original spec considered was found unnecessary once `applications.submissionPacketId` (already
-present on the `Application` row from Phase 5B.1) was confirmed sufficient as a boolean-only
-signal, so Phase 5C.2 was able to avoid querying that table at all rather than needing to trim a
-"just a boolean" projection from it.
+`/dashboard` issues three queries in parallel (`Promise.all`): `listOwnApplications`,
+`listOwnRecentApplicationEvents`, and (as of Phase 5C hardening) `listOwnStatusChangeEvents` — no
+per-application follow-up query, no N+1. `/applications` issues two, the same pattern.
+`listOwnStatusChangeEvents` is deliberately a *separate* query from `listOwnRecentApplicationEvents`
+even though both read `application_events` — see "Phase 5C hardening — follow-up anchor" below
+for why the display-oriented query's cap makes it unsafe to reuse for the follow-up anchor's
+correctness. Neither query nor the next-action computation ever touches `submission_packets` —
+the packet-existence signal the original spec considered was found unnecessary once
+`applications.submissionPacketId` (already present on the `Application` row from Phase 5B.1) was
+confirmed sufficient as a boolean-only signal, so Phase 5C.2 was able to avoid querying that
+table at all rather than needing to trim a "just a boolean" projection from it.
 
 ### 5C.2I — Empty states
 
@@ -2112,3 +2149,152 @@ match" next-action/dashboard surface (5C.1E) — that flow already exists on the
 was deliberately not duplicated. Any Kanban-board view (`docs/PRODUCT_SPEC.md` §7 mentions one as
 an aspirational dashboard surface; it does not exist in this codebase today and building one was
 out of scope for this pass — noted here rather than silently left inconsistent with that doc).
+
+## Phase 5C hardening — follow-up anchor
+
+A focused correctness pass on the already-committed Phase 5C.1/5C.2 stack, before either commit
+was pushed.
+
+### The bug
+
+`CONSIDER_FOLLOW_UP`'s original implementation computed elapsed time from `applications.appliedAt`
+alone. That is correct for an application still sitting at plain `APPLIED`, but
+`APPLIED`/`APPLICATION_RECEIVED` are handled by the *same* follow-up branch, and the reconciled-
+status finding (5C.1's own design rationale) proves only that a status change happened, not when.
+Concretely: an application applied to 10 days ago whose employer sent a confirmed
+`APPLICATION_RECEIVED` update yesterday would have immediately shown `CONSIDER_FOLLOW_UP` —
+because `daysSinceApplied` was still 10, computed with no awareness that something had just
+happened. The original implementation did have the bug.
+
+### What counts as "meaningful employer activity"
+
+Exactly: **the `createdAt` of the most recent `application_events` row with `eventType:
+'STATUS_CHANGE'` for that specific application.** Not `updatedAt` — verified by inspection that
+`updateOwnApplication` (notes edits, company/title/résumé edits) updates `applications` directly
+with no `recordApplicationEvent` call at all, so `updatedAt` bumps on a plain notes edit and is
+not a safe proxy for anything employer-related, confirming the task's own suspicion. Not
+`email_signals` directly — a `PENDING` (unconfirmed) signal never creates a `STATUS_CHANGE` event
+in the first place (only `confirmOwnEmailSignal`'s CONFIRM branch and the sync pipeline's
+`AUTO_APPLIED` case ever call `changeOwnApplicationStatus`), so an unconfirmed/ambiguous signal
+structurally cannot influence this at all — there is no code path by which it could. `source`
+(`USER` vs. `GMAIL_SYNC`) is not distinguished: a manual status change the user recorded after a
+phone call carries the same real informational content as a Gmail-confirmed one, and — unlike a
+notes edit — a status change is exactly the reconciled fact this whole design already trusts
+completely elsewhere. `EMAIL_MATCHED`/`MANUAL_EDIT`/`NOTE` event types are defined in the schema
+but never written by any code path today (confirmed by inspection); nothing here depends on that
+staying true, since `listOwnStatusChangeEvents` filters to `event_type = 'STATUS_CHANGE'` at the
+database layer and `buildLastStatusChangeMap` filters again defensively in application code.
+
+### What does and does not reset the clock
+
+**Resets it:** any `STATUS_CHANGE` event for the application, regardless of `source` — a forward
+move (e.g. into `APPLICATION_RECEIVED`) or a revert back to `APPLIED`, since revert also logs its
+own new event.
+**Never resets it:** a notes/company/title/résumé edit (`updateOwnApplication` — no event
+created); an autofill save while still `SAVED`/`IN_PROGRESS` (irrelevant anyway, since the
+follow-up branch is only reachable once `APPLIED`); the extension popup opening or a page reload
+(reads, not writes); any `PENDING`/`DECLINED` email signal (never reaches `changeOwnApplicationStatus`
+at all); internal housekeeping (nothing in this codebase performs any).
+
+### Follow-up anchor calculation
+
+`packages/shared/src/lib/next-action-rules.ts`'s `deriveForSubmittedApplication` now anchors on
+`max(appliedAt, lastMeaningfulEmployerActivityAt)` (via a small `laterOf` helper) rather than
+`appliedAt` alone. `lastMeaningfulEmployerActivityAt` is a new, optional `NextActionRuleInput`
+field — the rule engine stays exactly as DB-free as before; the caller (`apps/web/lib/dashboard.ts`)
+supplies it, assembled from a new query (`listOwnStatusChangeEvents`) reduced by a new pure
+function (`buildLastStatusChangeMap`) to "most recent `STATUS_CHANGE` timestamp per
+`applicationId`". `NextAction` gained two new fields to carry the result honestly:
+`followUpAnchorAt` (the timestamp actually used for the threshold check) and
+`daysSinceFollowUpAnchor` (days between that anchor and "now") — kept structurally distinct from
+`appliedAt`/`daysSinceApplied`, which always remain the true original-submission fact even when
+the anchor is later. `formatNextAction`'s `CONSIDER_FOLLOW_UP` text now reads from the anchor
+fields, not `daysSinceApplied`, and says "Career OS last saw an employer update N days ago"
+instead of "You applied N days ago" whenever the anchor is later than `appliedAt` — otherwise the
+"why" text would have kept citing the original application date even after the real reason the
+suggestion fired was a stale confirmation, not a stale application.
+
+### The 7-day boundary, unchanged
+
+`FOLLOW_UP_SUGGESTION_THRESHOLD_DAYS` is still 7 and still applies identically — only the anchor
+it's measured from changed, not the threshold value or its `>=`-fires/no-upper-bound semantics.
+
+### `APPLICATION_RECEIVED` behavior, corrected
+
+An application applied to 10 days ago with a confirmed `APPLICATION_RECEIVED` update from
+yesterday now correctly resolves to `NO_ACTION`, with `followUpAnchorAt` equal to yesterday's
+timestamp — it becomes `CONSIDER_FOLLOW_UP`-eligible again only once `FOLLOW_UP_SUGGESTION_THRESHOLD_DAYS`
+have passed since that more recent anchor, not since the original `appliedAt`.
+
+### Query architecture
+
+`listOwnStatusChangeEvents` (`packages/database/src/queries/application-events.ts`) is a new,
+*separate* query from `listOwnRecentApplicationEvents` — deliberately not reused, because that
+query is capped to a small globally-most-recent window for the dashboard's own "Recent activity"
+display, and an older application's own most recent status change could easily fall outside that
+global top-N window while still being the most recent thing that ever happened to *that*
+application. Reusing it would have silently produced an incomplete/wrong anchor for exactly the
+applications most likely to need a correct one. `listOwnStatusChangeEvents` fetches every
+`STATUS_CHANGE` event for the user in one query (`STATUS_CHANGE_EVENT_SAFETY_LIMIT = 5000` is a
+defensive cap against pathological growth, not a realistic bound at this product's current
+solo/beta scale — not the same class of risk as the display cap). `/dashboard` and `/applications`
+each issue it once, in parallel with their other queries — still no N+1.
+
+### MARK_APPLIED / COMPLETE_APPLICATION in "Attention needed" — reviewed, not changed
+
+Re-examined as requested, not silently altered:
+
+- **`MARK_APPLIED`** is `MEDIUM` priority, so `needsAttention` (URGENT/HIGH/MEDIUM) already
+  includes it — a ready-to-submit application does **not** disappear from "Attention needed."
+  No issue found here.
+- **`COMPLETE_APPLICATION`** is `LOW` priority, so it is excluded from both "Attention needed"
+  and the header's "N applications need attention" count — it appears only as an unlabeled
+  individual row on the separate `/applications` list, and as a bare number inside the "Preparing"
+  pipeline-overview count on `/dashboard` itself. **Flagging, not changing:** for a user whose
+  applications are mostly still in "not started" state, this means `/dashboard` — whose stated
+  goal is literally "what should I do next?" — shows nothing actionable about most of their
+  applications beyond a bare count, even though "go work on this" is a genuine next step for each
+  one. This is a real, defensible-but-debatable product tension between "don't manufacture false
+  urgency for something with no real time pressure" (the original 5C.2 rationale) and "don't let
+  the dashboard go silent about applications that do have a next step." Left as-is per explicit
+  instruction not to change priority semantics unilaterally; worth a deliberate product decision
+  later, not a silent fix here.
+
+### Files changed (Phase 5C hardening)
+
+- `packages/shared/src/schemas/next-action.ts` (`followUpAnchorAt`/`daysSinceFollowUpAnchor`
+  fields, updated `TIME_SINCE_APPLICATION` doc comment)
+- `packages/shared/src/lib/next-action-rules.ts` (`lastMeaningfulEmployerActivityAt` input field,
+  `laterOf` helper, corrected `deriveForSubmittedApplication`)
+- `packages/shared/src/lib/next-action-rules.test.ts` (+15 tests: the full A-I case list)
+- `packages/shared/src/lib/format-next-action.ts` (`CONSIDER_FOLLOW_UP` now reads the anchor
+  fields; the anchored-to-employer-activity wording branch)
+- `packages/shared/src/lib/format-next-action.test.ts` (updated existing cases for the new
+  fields, +1 new case for the wording split)
+- `packages/database/src/queries/application-events.ts` (new `listOwnStatusChangeEvents` +
+  `STATUS_CHANGE_EVENT_SAFETY_LIMIT`)
+- `packages/database/src/queries/application-events.test.ts` (+2 tests)
+- `apps/web/lib/dashboard.ts` (`buildLastStatusChangeMap`, `attachNextActions` now takes a
+  `statusChangeEvents` parameter)
+- `apps/web/lib/dashboard.test.ts` (+5 tests: map reduction, defensive event-type filtering,
+  wiring through `attachNextActions`)
+- `apps/web/app/(app)/dashboard/page.tsx` and `apps/web/app/(app)/applications/page.tsx` (fetch
+  `listOwnStatusChangeEvents` alongside the existing queries, pass it through)
+- `docs/IMPLEMENTATION_PLAN.md` (this section, plus corrections to 5C.1F/5C.1H/5C.1I/5C.2H's now-
+  inaccurate claims)
+
+### Tests (Phase 5C hardening)
+
+`packages/shared`: 195 tests total (18 new — 15 in `next-action-rules.test.ts`, 1 updated + 2 new
+in `format-next-action.test.ts`... net +1 test count there since one existing case was extended
+rather than duplicated). `packages/database`: 86 tests total (2 new). `apps/web`: 139 tests total
+(5 new in `dashboard.test.ts`). Typecheck clean across shared/database/web/extension/ai/email;
+`next lint` and the extension's `eslint` both zero warnings; prettier clean; `git diff --check`
+clean.
+
+### Explicitly excluded from this hardening pass
+
+Phase 5C.3 — not started. No redesign of the dashboard's sections/layout. No AI of any kind. No
+change to `MARK_APPLIED`/`COMPLETE_APPLICATION`'s priority (flagged above, left for a deliberate
+product decision). No attempt to distinguish `USER`-sourced from `GMAIL_SYNC`-sourced status
+changes for the anchor — both are equally trustworthy reconciled facts, per the rationale above.

@@ -9,6 +9,8 @@ function action(overrides: Partial<NextAction> = {}): NextAction {
     source: 'APPLICATION_STATUS',
     appliedAt: null,
     daysSinceApplied: null,
+    followUpAnchorAt: null,
+    daysSinceFollowUpAnchor: null,
     dueAt: null,
     ...overrides,
   };
@@ -38,7 +40,12 @@ describe('formatNextAction', () => {
 
   it('CONSIDER_FOLLOW_UP states the real day count as fact, and explicitly disclaims — never asserts — an employer deadline', () => {
     const { reason } = formatNextAction(
-      action({ type: 'CONSIDER_FOLLOW_UP', daysSinceApplied: 10 }),
+      action({
+        type: 'CONSIDER_FOLLOW_UP',
+        appliedAt: '2026-01-01T00:00:00.000Z',
+        followUpAnchorAt: '2026-01-01T00:00:00.000Z',
+        daysSinceFollowUpAnchor: 10,
+      }),
     );
     expect(reason).toContain('10 days ago');
     expect(reason).toContain('recommendation');
@@ -52,7 +59,12 @@ describe('formatNextAction', () => {
 
   it('CONSIDER_FOLLOW_UP with a singular day count says "1 day", not "1 days"', () => {
     const { reason } = formatNextAction(
-      action({ type: 'CONSIDER_FOLLOW_UP', daysSinceApplied: 1 }),
+      action({
+        type: 'CONSIDER_FOLLOW_UP',
+        appliedAt: '2026-01-01T00:00:00.000Z',
+        followUpAnchorAt: '2026-01-01T00:00:00.000Z',
+        daysSinceFollowUpAnchor: 1,
+      }),
     );
     expect(reason).toContain('1 day ago');
     expect(reason).not.toContain('1 days ago');
@@ -60,9 +72,26 @@ describe('formatNextAction', () => {
 
   it('CONSIDER_FOLLOW_UP degrades gracefully with no day count rather than fabricating one', () => {
     const { reason } = formatNextAction(
-      action({ type: 'CONSIDER_FOLLOW_UP', daysSinceApplied: null }),
+      action({
+        type: 'CONSIDER_FOLLOW_UP',
+        followUpAnchorAt: null,
+        daysSinceFollowUpAnchor: null,
+      }),
     );
     expect(reason).not.toMatch(/\d+ days? ago/);
+  });
+
+  it('CONSIDER_FOLLOW_UP says "Career OS last saw an employer update", not "you applied", when the anchor is later than appliedAt', () => {
+    const { reason } = formatNextAction(
+      action({
+        type: 'CONSIDER_FOLLOW_UP',
+        appliedAt: '2026-01-01T00:00:00.000Z',
+        followUpAnchorAt: '2026-01-10T00:00:00.000Z',
+        daysSinceFollowUpAnchor: 8,
+      }),
+    );
+    expect(reason).toContain('Career OS last saw an employer update 8 days ago');
+    expect(reason).not.toContain('You applied');
   });
 
   it('never mentions a specific due date or "overdue" language for any action type', () => {

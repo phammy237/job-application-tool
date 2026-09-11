@@ -64,6 +64,38 @@ export async function listOwnRecentApplicationEvents(
   return (data ?? []).map(rowToEvent);
 }
 
+/** Defensive-only safety cap, not a correctness-affecting bound — see
+ * listOwnStatusChangeEvents's own doc comment. */
+export const STATUS_CHANGE_EVENT_SAFETY_LIMIT = 5000;
+
+/**
+ * Every STATUS_CHANGE event for the user, across every application — the source the Phase 5C.1
+ * follow-up heuristic's "has something newer than appliedAt happened to this specific
+ * application" anchor is computed from (docs/IMPLEMENTATION_PLAN.md "Phase 5C hardening —
+ * follow-up anchor"). Deliberately a *separate* query from `listOwnRecentApplicationEvents`,
+ * which is capped to a small globally-most-recent window for the dashboard's own "Recent
+ * activity" display — that cap makes it unsafe to reuse here: an older application's own most
+ * recent status change could easily fall outside that global top-N window while still being the
+ * most recent thing that ever happened to *that* application specifically. One query, not one
+ * per application — `STATUS_CHANGE_EVENT_SAFETY_LIMIT` (5000) is a defensive cap against
+ * pathological growth, not a realistic bound for this product's current solo/beta scale; it is
+ * not the same class of "silently incomplete" risk as the display cap above.
+ */
+export async function listOwnStatusChangeEvents(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+): Promise<ApplicationEvent[]> {
+  const { data, error } = await supabase
+    .from('application_events')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('event_type', 'STATUS_CHANGE')
+    .order('created_at', { ascending: false })
+    .limit(STATUS_CHANGE_EVENT_SAFETY_LIMIT);
+  assertNoError(error, 'listOwnStatusChangeEvents');
+  return (data ?? []).map(rowToEvent);
+}
+
 export async function recordApplicationEvent(
   supabase: CareerOsSupabaseClient,
   userId: string,

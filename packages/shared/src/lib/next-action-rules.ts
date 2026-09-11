@@ -18,14 +18,20 @@ import type {
  * this engine. Every code path that could change it based on an email signal
  * (confirmOwnEmailSignal, the sync pipeline's AUTO_APPLIED case) routes through
  * changeOwnApplicationStatus, which writes `status` directly — a PENDING (unconfirmed)
- * email_signals row never touches `status` at all. This means the engine does not need to
- * separately consult email_signals or application_events to decide what to recommend: if
- * `status` is still exactly `APPLIED`, that alone proves no employer-classified signal has
- * been confirmed since the original transition, which is exactly what the follow-up heuristic
- * needs to know. Precedence therefore reduces to a straightforward per-status dispatch — not a
- * multi-signal-fusion problem — because Phase 5B already made `status` the sole reconciled
- * input. See docs/IMPLEMENTATION_PLAN.md "Phase 5C.1" for the full rationale, including why this
- * means Phase 5C.1 adds no new database query for correctness.
+ * email_signals row never touches `status` at all. This means the engine never needs to
+ * separately consult email_signals to decide *which stage* an application is in: `status` alone
+ * always answers that. Precedence therefore reduces to a straightforward per-status dispatch —
+ * not a multi-signal-fusion problem — because Phase 5B already made `status` the sole reconciled
+ * input for that question.
+ *
+ * That finding does NOT mean `status` alone is sufficient to know *when* the current stage was
+ * reached, though (Phase 5C hardening — see docs/IMPLEMENTATION_PLAN.md "Phase 5C hardening —
+ * follow-up anchor"): `APPLIED` and `APPLICATION_RECEIVED` share one follow-up branch, and
+ * "status is now APPLICATION_RECEIVED" can be true well after the original `appliedAt`. This
+ * engine stays exactly as DB-free as ever — it still only ever computes from what it's given —
+ * but its caller now supplies one more already-reconciled fact,
+ * `lastMeaningfulEmployerActivityAt` (see that field's own doc comment below), assembled from one
+ * additional bounded query the caller issues itself.
  */
 
 /**
@@ -44,8 +50,31 @@ export interface NextActionRuleInput {
    * for this application (never conflated with an empty array, which means the flow ran and
    * found nothing left to resolve). */
   unresolvedFields: UnresolvedFieldSummary[] | null;
-  /** Exactly `applications.appliedAt` — the one real fact this engine treats as a date. */
+  /** Exactly `applications.appliedAt` — the one real fact this engine treats as the original
+   * submission date. */
   appliedAt: string | null;
+  /**
+   * The `createdAt` of the most recent `application_events` row with `eventType:
+   * 'STATUS_CHANGE'` for this application, if any is known to the caller — the follow-up
+   * heuristic's "has something newer than appliedAt happened to this specific application"
+   * signal (Phase 5C hardening; see docs/IMPLEMENTATION_PLAN.md "Phase 5C hardening — follow-up
+   * anchor" for the full rationale). Deliberately narrow: because `applications.status` only
+   * ever changes via a recorded `STATUS_CHANGE` event (Phase 5B's canonical-transition
+   * architecture, and Phase 5B hardening's database-level guard against any other path), the
+   * *latest* such event's timestamp is exactly "when did this application's current status get
+   * set" — regardless of whether that event's `source` was `USER` or `GMAIL_SYNC`, and
+   * regardless of whether it represents a forward move (e.g. into `APPLICATION_RECEIVED`) or a
+   * revert. It is never a notes edit, an autofill save, or any other non-`STATUS_CHANGE` event —
+   * those never create an `application_events` row at all (confirmed by inspection: `notes`
+   * updates go through `updateOwnApplication`'s plain column update, no event). An *unconfirmed*
+   * (`PENDING`) `email_signals` row can never influence this either, since only a `CONFIRMED` or
+   * `AUTO_APPLIED` signal ever reaches `changeOwnApplicationStatus` in the first place — the one
+   * function that creates a `STATUS_CHANGE` event from a Gmail-driven signal. Null when the
+   * caller has no such event (a genuinely brand-new application, or a caller that intentionally
+   * omits this input) — the engine then falls back to `appliedAt` alone, the same behavior as
+   * before this field existed.
+   */
+  lastMeaningfulEmployerActivityAt: string | null;
   /** Injected, never read internally via `Date.now()`/`new Date()` — keeps this function a pure,
    * deterministically-testable function of its arguments. */
   now: string;
@@ -56,14 +85,25 @@ function daysBetween(earlierIso: string, laterIso: string): number {
   return Math.max(0, Math.floor(ms / (24 * 60 * 60 * 1000)));
 }
 
+/** The later of a known ISO timestamp and a possibly-null candidate — never null, since `base`
+ * itself is always a real timestamp. */
+function laterOf(base: string, candidate: string | null): string {
+  if (!candidate) return base;
+  return new Date(candidate).getTime() > new Date(base).getTime() ? candidate : base;
+}
+
 function buildAction(
   type: NextActionType,
   priority: NextActionPriority,
   source: NextActionSource,
   input: NextActionRuleInput,
+  followUpAnchorAt: string | null = null,
 ): NextAction {
   const daysSinceApplied = input.appliedAt
     ? daysBetween(input.appliedAt, input.now)
+    : null;
+  const daysSinceFollowUpAnchor = followUpAnchorAt
+    ? daysBetween(followUpAnchorAt, input.now)
     : null;
   return {
     type,
@@ -71,6 +111,8 @@ function buildAction(
     source,
     appliedAt: input.appliedAt,
     daysSinceApplied,
+    followUpAnchorAt,
+    daysSinceFollowUpAnchor,
     dueAt: null,
   };
 }
@@ -100,6 +142,13 @@ function deriveForUnsubmittedApplication(input: NextActionRuleInput): NextAction
 /**
  * APPLIED/APPLICATION_RECEIVED — see docs/IMPLEMENTATION_PLAN.md "Phase 5C.1F" for the follow-up
  * heuristic's full rationale and its explicit fact-vs-recommendation framing.
+ *
+ * Phase 5C hardening: the eligibility clock is anchored to
+ * `max(appliedAt, lastMeaningfulEmployerActivityAt)`, not `appliedAt` alone. Without this, an
+ * application that sat at plain `APPLIED` for 10 days and then received a confirmed
+ * `APPLICATION_RECEIVED` update yesterday would immediately suggest following up — even though
+ * the employer had just interacted. Anchoring to whichever is later means a fresh employer-
+ * driven status change always restarts the "has it been quiet for a while" clock.
  */
 function deriveForSubmittedApplication(input: NextActionRuleInput): NextAction {
   if (!input.appliedAt) {
@@ -108,11 +157,18 @@ function deriveForSubmittedApplication(input: NextActionRuleInput): NextAction {
     // no appliedAt means no follow-up-timing decision can be made at all.
     return buildAction('NO_ACTION', 'NONE', 'APPLICATION_STATUS', input);
   }
-  const daysSinceApplied = daysBetween(input.appliedAt, input.now);
-  if (daysSinceApplied >= FOLLOW_UP_SUGGESTION_THRESHOLD_DAYS) {
-    return buildAction('CONSIDER_FOLLOW_UP', 'LOW', 'TIME_SINCE_APPLICATION', input);
+  const anchor = laterOf(input.appliedAt, input.lastMeaningfulEmployerActivityAt);
+  const daysSinceAnchor = daysBetween(anchor, input.now);
+  if (daysSinceAnchor >= FOLLOW_UP_SUGGESTION_THRESHOLD_DAYS) {
+    return buildAction(
+      'CONSIDER_FOLLOW_UP',
+      'LOW',
+      'TIME_SINCE_APPLICATION',
+      input,
+      anchor,
+    );
   }
-  return buildAction('NO_ACTION', 'NONE', 'TIME_SINCE_APPLICATION', input);
+  return buildAction('NO_ACTION', 'NONE', 'TIME_SINCE_APPLICATION', input, anchor);
 }
 
 /**

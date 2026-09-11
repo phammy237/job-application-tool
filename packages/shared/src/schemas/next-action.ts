@@ -72,8 +72,10 @@ export const nextActionSourceSchema = z.enum([
   'APPLICATION_STATUS',
   /** applications.unresolvedFields — a non-empty array. */
   'UNRESOLVED_FIELDS',
-  /** applications.appliedAt compared against "now" — the follow-up heuristic. Always paired
-   * with a real, persisted appliedAt; never a fabricated or inferred date. */
+  /** The follow-up heuristic's anchor (appliedAt, or a later meaningful employer-driven status
+   * change if one exists — see next-action-rules.ts's `lastMeaningfulEmployerActivityAt`)
+   * compared against "now". Always paired with a real, persisted timestamp; never a fabricated
+   * or inferred date. */
   'TIME_SINCE_APPLICATION',
   /** status = UNKNOWN, a reachable-but-unwritten enum value. */
   'UNKNOWN_STATUS',
@@ -102,8 +104,23 @@ export const nextActionSchema = z.object({
    * APPLIED, or null if it never did. Never a deadline; always the original submission moment. */
   appliedAt: isoDateTimeSchema.nullable(),
   /** Derived from appliedAt/now when both are known; null otherwise. Purely observational
-   * ("this many days have passed"), never itself a claim that anything is "overdue". */
+   * ("this many days have passed"), never itself a claim that anything is "overdue". Always the
+   * real appliedAt fact — never the follow-up anchor below, even when they differ. */
   daysSinceApplied: z.number().int().min(0).nullable(),
+  /**
+   * The timestamp the follow-up heuristic's threshold check is actually anchored to — `appliedAt`
+   * itself, unless a later, meaningful employer-driven status change reset it (e.g. a confirmed
+   * `APPLICATION_RECEIVED` transition that arrived well after the original submission). Null
+   * whenever `appliedAt` is null; equal to `appliedAt` whenever no later employer activity is
+   * known. Deliberately a distinct field from `appliedAt` — `appliedAt` always stays the true
+   * original-submission fact, this field is only the follow-up clock's own reference point,
+   * which may be later. See next-action-rules.ts's `lastMeaningfulEmployerActivityAt`.
+   */
+  followUpAnchorAt: isoDateTimeSchema.nullable(),
+  /** Days between `followUpAnchorAt` and "now" — what the `CONSIDER_FOLLOW_UP` threshold check
+   * and its own "why" text actually use; may differ from `daysSinceApplied` when a later
+   * employer signal reset the clock. Null whenever `followUpAnchorAt` is null. */
+  daysSinceFollowUpAnchor: z.number().int().min(0).nullable(),
   /** Always null today — see this field's own doc comment above. */
   dueAt: z.null(),
 });
