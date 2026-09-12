@@ -41,14 +41,19 @@ phase depends on a later phase's output.
       appliedAt and the last legitimate (non-reverted, non-revert-bookkeeping) status change, not
       appliedAt alone, and excludes reverted/correction events from resetting the clock (see
       "Phase 5C hardening — follow-up anchor" and "— revert exclusion" below)
-- [ ] Phase 5C.3 — Follow-up drafting/interview-prep content (AI-assisted) — not started, out of
-      scope for this pass by explicit instruction
+- [x] Phase 5C.3 — AI action assistance: explicit, user-triggered grounded follow-up drafting and
+      interview preparation layered on top of (never replacing) the deterministic next-action
+      engine's decision (migration 0016, both pipelines ephemeral — see "Phase 5C.3" below)
 - [ ] Phase 6 — Multi-user beta hardening, privacy controls, testing, deployment
 - [ ] Phase 7 — Optional mypham.space integration, public onboarding, future sharing
 
 The whole Phase 5B line (5B.0 through 5B.4, plus the hardening pass) is complete. Phase 5C.1/5C.2
 are now complete too; only 5C.3 (AI-assisted follow-up/interview-prep content drafting) remains
 unstarted within Phase 5C.
+
+Phase 5C.3 is now shipped too: explicit, user-triggered AI action assistance (grounded follow-up
+drafting, grounded interview preparation) layered on top of the Phase 5C.1 deterministic engine —
+see "Phase 5C.3 — AI action assistance" at the end of this file for the full writeup.
 
 Phase 4A shipped: the popup classifies every detected field into a review state (sensitive /
 unsupported / already-completed / pending-suggestion / ready / suggested / needs-input),
@@ -2491,3 +2496,368 @@ prettier clean; `git diff --check` clean.
 Phase 5C.3 — not started. No dashboard redesign. No AI. No change to
 `MARK_APPLIED`/`COMPLETE_APPLICATION` priority — left exactly as flagged in the first pass, for a
 deliberate product decision later.
+
+## Phase 5C.3 — AI action assistance
+
+Answers a different question than Phase 5C.1/5C.2. Those answer "what should I do next?" —
+entirely deterministically, no model call. This phase answers "help me do it" for exactly two of
+those next actions where a grounded AI draft is genuinely useful: `CONSIDER_FOLLOW_UP` (draft a
+follow-up message) and `PREPARE_INTERVIEW` (generate interview-prep material). The deterministic
+engine is untouched and remains fully authoritative — this phase never lets AI decide whether to
+follow up, when to follow up, or how urgent anything is; it only helps execute a decision the
+engine already made.
+
+### Domain boundary — `ActionAssistanceType`
+
+`packages/shared/src/schemas/action-assistance.ts` defines `ActionAssistanceType` (`FOLLOW_UP_DRAFT`
+| `INTERVIEW_PREP`) and `actionAssistanceFor(nextActionType): ActionAssistanceType | null` — the
+single place that maps a `NextActionType` to an assistance feature, reused by both pipelines'
+eligibility checks (not reimplemented per pipeline) and by its own unit test. Deliberately not one
+assistance type per `NextActionType`: `REVIEW_ACTION_REQUIRED`, `REVIEW_OFFER`,
+`COMPLETE_ASSESSMENT`, etc. have no AI-assistance feature in this pass — adding one "to make the
+enum symmetrical" was explicitly out of scope.
+
+### 5C.3A — Follow-up drafting
+
+`packages/ai/src/generate-follow-up-draft.ts` (`generateFollowUpDraft`), called from the one route
+`POST /api/applications/:id/follow-up-draft`. Pipeline shape:
+
+1. **Eligibility gate, before anything billed.** `packages/ai/src/derive-eligible-next-action.ts`
+   (`deriveEligibleNextAction`) re-fetches the application and its relevant status-change events
+   and re-derives the current `NextAction` from scratch, using the exact same
+   `deriveNextAction`/exclusion logic as `apps/web/lib/dashboard.ts`'s `buildLastRelevantStatusActivityMap`
+   (re-expressed rather than imported — `packages/ai` cannot depend on `apps/web`). If the
+   application doesn't exist or isn't owned by the caller: `application_not_found`. If
+   `actionAssistanceFor(nextAction.type) !== 'FOLLOW_UP_DRAFT'`: `action_not_current` — this is the
+   server recomputing/validating the decision itself; the client never gets to assert an
+   `actionType` and have it trusted.
+2. **Rate limit** (`incrementOwnAiRequestUsage`) — only now, after the free eligibility check
+   passes. This ordering deliberately differs from the Phase 5A/5B pipelines (which rate-limit
+   first): a structurally ineligible request was never going to produce a result, so it should
+   never cost the user's quota either.
+3. **Retrieval** — `application.company/title/status/appliedAt` (already trusted, on the row);
+   `getOwnJobSnapshot` if `jobSnapshotId` is set; the most recent `CONFIRMED`/`AUTO_APPLIED` (never
+   `PENDING`/`DECLINED`) email signal for this application via `listOwnEmailSignalsForApplication`
+   — sender/subject/classification/receivedAt only, never a body (this codebase never stores email
+   bodies at all); `getOwnProfile` for a `fullName` to sign with.
+4. **One Claude attempt, validate, at most one retry on rejection** — `callClaudeForFollowUpDraft`
+   (`packages/ai/src/claude/call-claude.ts`), `validateFollowUpDraftContract`
+   (`packages/ai/src/contract/validate-follow-up-draft-contract.ts`).
+5. **Telemetry** — `recordAiUsageEvent` with `taskType: 'follow_up_draft'`, best-effort (never
+   fails the request if the insert itself throws).
+6. **Server-computed `usedContext`** — a closed set of tags (`APPLICATION_STATUS`,
+   `APPLICATION_DATE`, `FOLLOW_UP_TIMING`, `JOB_SNAPSHOT`, `CONFIRMED_EMPLOYER_EMAIL`,
+   `CANDIDATE_NAME`) reflecting exactly what was actually retrieved above — never a model claim
+   about what it used. This is a deliberate departure from the phase brief's illustrative
+   `{ groundingNotes, usedContext }` model-output schema: a model-written "grounding note" is free
+   text and could itself fabricate a source ("grounded in your call with the recruiter"), exactly
+   the invention risk this phase's own hard rule (5C.3M) exists to prevent. This codebase's
+   established pattern is that provenance is always server-derived, never model-generated (see
+   `matchedFactProvenanceSchema`'s own doc comment) — the model here is only ever asked for
+   `{ subject, body }`.
+
+**Preventing a fabricated interaction.** The model is never given a recruiter name, contact email,
+referral relationship, interview date, or prior conversation to work with — there is nothing in
+this schema to invent from in the first place. On top of that, the system prompt explicitly lists
+the disallowed claim shapes, and `validateFollowUpDraftContract` scans the generated body against a
+fixed denylist of fabrication-risk phrases (`spoke with`, `referred by`, `our interview`,
+`completed the assessment`, etc. — `packages/ai/src/contract/validate-follow-up-draft-contract.ts`)
+and rejects (with one retry) any match. This is sound specifically because drafting is only ever
+eligible while the deterministic action is `CONSIDER_FOLLOW_UP` — i.e. status is `APPLIED`/
+`APPLICATION_RECEIVED`, strictly before any interview/assessment stage — so a claim like "after our
+interview" is self-contradictory by construction, not merely unverifiable.
+
+**No recipient field, no send.** The output contract has no `to`/recipient field at all — the UI
+never claims to know an email address to send to. There is no send action anywhere in this feature;
+Gmail integration in this codebase remains read/sync-only (`gmail.readonly`), and this phase adds
+no new scope. The draft is copy/editable text only.
+
+### 5C.3B — Interview preparation
+
+`packages/ai/src/generate-interview-prep.ts` (`generateInterviewPrep`), called from
+`POST /api/applications/:id/interview-prep`. Same eligibility-gate-before-rate-limit shape as
+5C.3A, checking `actionAssistanceFor(nextAction.type) === 'INTERVIEW_PREP'`. If the application has
+no `jobSnapshotId`, or the snapshot lookup fails: `insufficient_context` (before rate limiting) —
+there is nothing role-specific to prepare from at all.
+
+**Reuses Phase 5A's grounding architecture directly**, never a loose free-text call:
+- If a `CURRENT` requirement-mapping run exists for the snapshot (`getCurrentOwnRequirementMappingRun`
+  + `listCurrentOwnRequirementMappings`), its real mapping ids and matched-fact ids become the
+  allowlist for `sourceRequirementId(s)`/`sourceFactIds`. If none exists, the prompt is told so
+  explicitly and instructed to derive `rolePriorities`/`gapsToPrepare` directly from the job
+  snapshot's own qualification/responsibility lists instead, with every requirement id left
+  null/empty — **this pipeline never triggers requirement-mapping generation itself**, silently or
+  otherwise; reusing an existing analysis is the only thing "reuse" means here.
+- `listOwnApprovedFactsForGeneration` — the same retrieval every other pipeline in this package
+  uses. No approved facts at all degrades gracefully (empty `evidenceToEmphasize`/
+  `starStoryPrompts`, not a hard stop) — only a missing job snapshot blocks the request entirely.
+- If `application.submissionPacketId` is set, `getOwnSubmissionPacketByApplicationId`'s immutable
+  `answersSnapshot` becomes `submittedAnswersToReview` — read-only, truncated for prompt size, and
+  entirely server-assembled (never sent through the model at all as an output field the model could
+  alter) — "be prepared to discuss the answer you gave about X." Never fetched when there's no
+  packet; never reconstructed from current profile data if one is missing.
+
+**Structured contract**: `rolePriorities`, `evidenceToEmphasize`, `starStoryPrompts`,
+`possibleQuestions`, `questionsToAsk`, `gapsToPrepare` — see
+`packages/shared/src/schemas/action-assistance.ts` for the full per-field shape.
+`validateInterviewPrepContract` (`packages/ai/src/contract/validate-interview-prep-contract.ts`)
+rejects (with one retry) any `sourceFactIds` entry outside the offered fact ids or any
+`sourceRequirementId`/`sourceRequirementIds` entry outside the offered mapping ids — including the
+case where no mapping section was offered at all, so every id must then be null/empty. The system
+prompt explicitly forbids "they will ask you..." / "this company's interview includes N rounds" /
+any claimed real interview fact, and instructs "likely area to prepare based on the role
+requirements" phrasing instead — the UI's copy matches this (see 5C.3F/5C.3G below).
+`usedCurrentRequirementMapping` and `provenanceSummary` (e.g. "Based on 6 job requirements and 8
+approved profile facts.") are entirely server-computed, same "provenance is never a model claim"
+posture as the follow-up pipeline's `usedContext`.
+
+### 5C.3C — Architecture / API design
+
+Both routes (`apps/web/app/api/applications/[id]/follow-up-draft/route.ts`,
+`.../interview-prep/route.ts`) follow the exact shape every existing `app/api` route in this
+codebase uses: `getCurrentUser()` for the session-derived userId (never client-supplied),
+`createAdminClient()` for DB access (every query underneath still explicitly filters by that
+userId — RLS is the backstop, not the only check, per CLAUDE.md), no request body at all — the
+only input is the application id already in the URL. A not-owned or nonexistent application id
+produces the identical `application_not_found`/404 response, so this route can never be used to
+probe for another user's application. Status mapping: `ok` → 200 with the result; `action_not_current`
+→ 200 with the current action type (a legitimate, expected outcome, not an error); `insufficient_context`
+(interview prep only) → 200; `rate_limited` → 429 with usage; `provider_error`/`validation_failed`
+→ 502; `application_not_found` → 404; no session → 401.
+
+### 5C.3D — Model routing
+
+No new routing infrastructure was introduced. Confirmed by inspection
+(`packages/ai/src/claude/client.ts`, `config.ts`) that this codebase has exactly one provider
+(Anthropic) and one model constant (`MODEL_ID = 'claude-sonnet-5'`), used by every existing
+pipeline — `ai_usage_events.provider`/`ladder`'s multi-provider shape is forward-looking groundwork
+(migration 0005's own comment), never a live routing system. Introducing a second, cheaper model
+for follow-up drafting alone would be new routing infrastructure this repo doesn't have anywhere
+else — inconsistent with "reuse existing AI infrastructure," not an application of it. Both new
+pipelines reuse `MODEL_ID`; the actual cost lever applied is `max_tokens`:
+`FOLLOW_UP_DRAFT_MAX_OUTPUT_TOKENS = 1024` (short single-object output) vs.
+`INTERVIEW_PREP_MAX_OUTPUT_TOKENS = 8192` (a larger multi-section synthesis, closer to the
+requirement-mapping pipeline's own budget).
+
+### 5C.3E — Persistence
+
+Neither pipeline persists anything beyond the existing `ai_usage_events` telemetry row — same
+ephemeral posture as `generate-unsupported-claims-check.ts` (Phase 5B.3). No new table, no
+run-lifecycle table. Rationale: a follow-up draft is cheaply regenerable and has no reason to
+survive a page reload; an interview-prep result is somewhat more expensive to regenerate but
+persisting it would require tracking staleness against job-snapshot/requirement-mapping/
+candidate-fact changes (per this phase's own explicit concern) for a v1 feature whose value is
+"help me think, right now" — ephemeral was judged sufficient and is explicitly the accepted
+simpler option, not a shortcut taken under pressure.
+
+### 5C.3F — Follow-up UI
+
+`apps/web/app/(app)/applications/follow-up-draft-panel.tsx`, rendered on the application detail
+page only when the page's own server-computed `nextAction.type === 'CONSIDER_FOLLOW_UP'`
+(`apps/web/app/(app)/applications/[id]/page.tsx` — this is a UX nicety only; the route
+independently re-derives and re-verifies eligibility regardless of what the page showed). No fetch
+of any kind on mount — the only network call is the POST triggered by clicking "Draft follow-up" (or
+"Regenerate"). On success: an editable subject/body, a "Copy" button (`navigator.clipboard.writeText`),
+a clear "AI-generated draft — review and edit... Career OS never sends this for you" label, and the
+provenance line rendered from `usedContext`. **No send button exists anywhere in this component.**
+The page also always renders `formatNextAction(nextAction).reason` above these panels (e.g. "You
+applied 8 days ago and Career OS has not recorded a newer application-status update since") — the
+deterministic reason is never hidden behind or replaced by the AI assistance layered on top of it.
+
+### 5C.3G — Interview-prep UI
+
+`apps/web/app/(app)/applications/interview-prep-panel.tsx`, same posture: shown only when
+`nextAction.type === 'PREPARE_INTERVIEW'`, no fetch on mount, one POST per explicit "Generate
+interview prep"/"Regenerate" click. Renders one grouped section per non-empty array in the result
+(an empty section is omitted entirely, never rendered as an empty heading) — Role priorities, What
+to emphasize, STAR stories to prepare, Possible questions, Questions to ask, Gaps to prepare,
+Answers you already submitted — plus the short `provenanceSummary` line rather than raw ids. Since
+the result is ephemeral, a page refresh simply loses it — there is no "stale persisted result" case
+to handle in this UI, by construction.
+
+### 5C.3H — Extension scope
+
+No extension changes were made. The extension popup's limited space and existing
+`activeTab`/`scripting`/`storage`-only permission set (CLAUDE.md) make a full AI-assistance UI a
+poor fit there; a deep-link from the popup into the web app's application detail page was
+considered but judged unnecessary complexity for a v1 feature whose primary surface is already the
+web dashboard/application detail page — left as a future polish item, not implemented, per the
+phase brief's own "do not force it" guidance. No new extension permission of any kind was added.
+
+### 5C.3I — Job-context summarization
+
+No standalone "summarize this job" feature was added. Interview prep's own job-snapshot section
+(role priorities, likely themes, gaps) already serves this need as part of an explicit,
+user-triggered generation — never a separate automatic per-job-page AI call.
+
+### 5C.3J — Prompt-injection defense
+
+Both system prompts (`build-follow-up-draft-system-prompt.ts`, `build-interview-prep-system-prompt.ts`)
+follow the exact tagged-content convention every existing prompt in this package already uses:
+content inside `<application_context>`/`<job_snapshot>`/`<confirmed_employer_email>`/
+`<candidate_facts>`/`<requirement_mappings>`/`<submitted_answers>` is explicitly DATA, not
+instructions; the model is told to ignore any embedded instructions, requests to reveal the system
+prompt, claims of being from Anthropic/a developer, or requests to change output format/behavior.
+Both Claude calls (`callClaudeForFollowUpDraft`, `callClaudeForInterviewPrep`) have no `tools`
+array and `thinking: { type: 'disabled' }` — the same "nothing for injected text to invoke, and no
+adaptive reasoning to route around the instructions" posture as every other call in this file.
+
+### 5C.3K — Grounding validation
+
+`validateFollowUpDraftContract` and `validateInterviewPrepContract` both: (1) parse and Zod-validate
+the raw response; (2) for interview prep, check every `sourceFactIds`/`sourceRequirementId(s)` entry
+against the exact ids placed in that specific prompt (never a global "any real id" check) — an
+invalid id is rejected, with one retry, matching the existing `validateRequirementMappingContract`/
+`validateUnsupportedClaimContract` convention exactly. Follow-up drafting has no id-citation
+mechanism at all (the model is never given ids to cite), so its equivalent gate is the
+fabrication-phrase denylist described in 5C.3A.
+
+### 5C.3L — Failure behavior
+
+Every failure mode returns a structured status rather than a generic 500 where avoidable:
+`application_not_found` (404), `action_not_current` (200 — an expected outcome, not an error),
+`insufficient_context` (200, interview prep only), `rate_limited` (429 with usage),
+`provider_error`/`validation_failed` (502). In every case the application's own status, priority,
+and deterministic next action are completely unaffected — nothing in either pipeline ever calls
+`changeOwnApplicationStatus`/`markOwnApplicationApplied` or writes to `applications` at all. Both
+panels degrade to a plain error/status message with the rest of the page (status controls, notes,
+timeline, mark-applied flow) fully usable regardless.
+
+### 5C.3M — No user-fact invention (verification)
+
+Covered in depth in 5C.3A (follow-up) and 5C.3B (interview prep) above. Summary: neither pipeline
+is ever given a fact to invent from — no recruiter/contact name, no referral relationship, no
+interview date, no assessment deadline is ever placed in a prompt (none exists anywhere in this
+schema to place), and interview prep's evidence/story suggestions are always tied to a real,
+allowlist-validated fact id, never free-standing invented content. Where evidence is missing, the
+contract produces a "gap to prepare" entry, never a fabricated answer.
+
+### 5C.3N — Tests
+
+- `packages/shared/src/schemas/action-assistance.test.ts` — `actionAssistanceFor` mapping,
+  including "every other `NextActionType` maps to null."
+- `packages/ai/src/contract/validate-follow-up-draft-contract.test.ts` — schema validity,
+  fabrication-phrase rejection (one case per denylist category), case-insensitivity.
+- `packages/ai/src/contract/validate-interview-prep-contract.test.ts` — schema validity, every
+  citation-allowlist rejection path (fact ids in two different field shapes, requirement ids in
+  three different field shapes, including the "no mapping offered at all" case).
+- `packages/ai/src/generate-follow-up-draft.test.ts` — eligibility gate (not found, wrong action
+  type, below threshold, a later status-change event making it no-longer-current), rate limit,
+  success + server-computed `usedContext`, confirmed-vs-pending email-signal exclusion,
+  fabrication-rejection + retry, malformed-JSON retry, refusal retry, provider-error no-retry,
+  telemetry recording + never-fails-on-telemetry-throw.
+- `packages/ai/src/generate-interview-prep.test.ts` — eligibility gate (not found, wrong action
+  type, no snapshot), rate limit, never-triggers-mapping-generation, safe degrade with/without a
+  current mapping, graceful reduced result with zero facts, frozen-answer inclusion only when a
+  packet exists, citation-allowlist rejection + retry (including the empty-allowlist case),
+  malformed-JSON retry, provider-error no-retry, telemetry recording.
+- `packages/database/src/queries/application-events.test.ts` — the new
+  `listOwnRelevantStatusChangeEventsForApplication` scoped query (same two exclusions as the bulk
+  query, no safety-cap `.limit()` needed at this scope).
+- `apps/web/app/api/applications/[id]/follow-up-draft/route.test.ts` and
+  `.../interview-prep/route.test.ts` — 401 unauthenticated, no-body/no-trusted-`actionType`
+  input, every result-status → HTTP-status mapping, 404 on not-found/not-owned.
+- `apps/web/app/(app)/applications/follow-up-draft-panel.test.tsx` and
+  `interview-prep-panel.test.tsx` — no fetch on render, fetch fires only from the explicit button
+  click, loading/success/error/rate-limit/action-not-current states, copy-to-clipboard, no send
+  button, per-section conditional rendering (interview prep), never a "they will ask" claim
+  surfaced in the DOM.
+
+**Cost/auto-run regression review** (explicitly performed, not just asserted): a repo-wide search
+for every reference to `follow-up-draft`/`interview-prep` and to `generateFollowUpDraft`/
+`generateInterviewPrep` found exactly the two panel components' `onClick`-bound `generate()`
+callbacks and the two routes/pipelines/their own tests/exports — no `useEffect`, no dashboard data
+loader, no `deriveNextAction`/query-layer code path, no Gmail sync step, and no extension code path
+references either new endpoint or pipeline function anywhere in this repository.
+
+### 5C.3O — Security / privacy review
+
+- Every new query call filters by the session-derived `user_id` (all pre-existing, already-audited
+  query functions — no new query function was added except the scoped
+  `listOwnRelevantStatusChangeEventsForApplication`, which follows the identical pattern).
+  Ownership of a not-owned/nonexistent application is never distinguishable from either route's
+  response.
+- No client-supplied `user_id` anywhere; both routes derive it exclusively from `getCurrentUser()`.
+- No public route: both require a session.
+- No new logging was added anywhere in either pipeline — no `console.log` of prompt content, facts,
+  answers, or model output exists in any new file (verified by search). `ai_usage_events` stores
+  only the same metadata shape every existing task type already stores (provider, model, token
+  counts, outcome, timing) — never prompt/response content.
+- `ai_usage_events.task_type` was widened (migration 0016) to add `'follow_up_draft'` and
+  `'interview_prep'`, preserving every existing value (`field_suggestion`, `requirement_mapping`,
+  `email_classification`, `unsupported_claim_check`) — verified against migration 0014's own
+  widening and against the current `aiUsageEventTaskTypeSchema` before writing the migration, per
+  the explicit caution that a CHECK-widening migration must never accidentally drop an existing
+  value.
+- Gmail scope was not touched or widened in any way — no file under `apps/web/app/api/gmail/` or
+  `apps/web/lib/gmail-oauth-config.ts` was modified in this phase. No email body is ever read or
+  stored by either new pipeline — only the existing `email_signals` metadata columns.
+- No submission-packet content beyond the specific fields surfaced as `submittedAnswersToReview`
+  (label + truncated answer text) ever leaves `generate-interview-prep.ts` — the full packet object
+  is never passed to the prompt builder or returned to the client.
+
+### 5C.3P — Cost review
+
+Follow-up draft: at most 2 provider calls (one attempt + at most one retry on rejection only; a
+hard `provider_error` never retries). Interview prep: same, at most 2 calls. Neither pipeline is
+ever called automatically — confirmed by the regression review above; every call is gated by an
+explicit user click *and* the rate limit (`incrementOwnAiRequestUsage`), which is the same shared
+per-user quota every other pipeline in this codebase already uses — no new quota dimension was
+added. No dollar-cost figures are stated here since no per-token pricing table exists anywhere in
+this repo's docs to cite honestly.
+
+### 5C.3Q — `COMPLETE_APPLICATION` priority — re-reviewed, still unchanged
+
+Re-examined as requested, not touched. The tension flagged in the "Phase 5C hardening — follow-up
+anchor" section stands as previously described: `COMPLETE_APPLICATION` is `LOW` priority, so it
+never appears in "Attention needed" or the header's count, showing only as a bare number inside the
+"Preparing" pipeline-overview bucket. Nothing about adding AI action-assistance changes this
+analysis — this phase added no AI feature for `COMPLETE_APPLICATION`/`MARK_APPLIED` at all
+(deliberately: 5C.3's scope is only `CONSIDER_FOLLOW_UP`/`PREPARE_INTERVIEW`), so there is no new
+information bearing on the decision. Left exactly as flagged before, for a deliberate product
+decision later, not folded into this AI-focused pass.
+
+### Files changed (Phase 5C.3)
+
+- `packages/shared/src/schemas/action-assistance.ts` (+test) — `ActionAssistanceType`,
+  `actionAssistanceFor`, both pipelines' model/result contracts.
+- `packages/shared/src/schemas/ai-usage-event.ts` — widened `aiUsageEventTaskTypeSchema`.
+- `packages/shared/src/index.ts` — barrel export for the new schema module.
+- `supabase/migrations/0016_ai_usage_events_action_assistance.sql` — additive `task_type` CHECK
+  widening, preserving every existing value.
+- `packages/database/src/queries/application-events.ts` (+test) —
+  `listOwnRelevantStatusChangeEventsForApplication`.
+- `packages/ai/src/derive-eligible-next-action.ts` — shared eligibility re-derivation.
+- `packages/ai/src/generate-follow-up-draft.ts` (+test), `generate-interview-prep.ts` (+test).
+- `packages/ai/src/contract/validate-follow-up-draft-contract.ts` (+test),
+  `validate-interview-prep-contract.ts` (+test).
+- `packages/ai/src/prompt/build-follow-up-draft-{system,user}-prompt.ts`,
+  `build-interview-prep-{system,user}-prompt.ts`.
+- `packages/ai/src/claude/call-claude.ts` — `callClaudeForFollowUpDraft`, `callClaudeForInterviewPrep`.
+- `packages/ai/src/config.ts` — new caps/prompt-version constants for both pipelines.
+- `packages/ai/src/index.ts` — new public exports.
+- `apps/web/app/api/applications/[id]/follow-up-draft/route.ts` (+test),
+  `.../interview-prep/route.ts` (+test).
+- `apps/web/app/(app)/applications/follow-up-draft-panel.tsx` (+test),
+  `interview-prep-panel.tsx` (+test).
+- `apps/web/app/(app)/applications/[id]/page.tsx` — wires in both panels + the always-shown
+  deterministic reason line.
+
+### Tests (Phase 5C.3)
+
+`packages/shared`: 198 tests (+3). `packages/database`: 88 tests (+2). `packages/ai`: 172 tests
+(+54: 14 follow-up-draft pipeline, 15 interview-prep pipeline, 15 follow-up-draft contract, 10
+interview-prep contract). `apps/web`: 180 tests (+36: 8 follow-up-draft route, 9 interview-prep
+route, 10 follow-up-draft panel, 9 interview-prep panel). `packages/extension`: 125 tests
+(unaffected). `packages/email`: 19 tests (unaffected). Typecheck clean across all seven workspaces
+(`shared`/`database`/`ai`/`web`/`extension`/`email`/`ui`); `next lint` and the extension's `eslint`
+both zero warnings; Prettier clean; `git diff --check` clean (only pre-existing LF/CRLF advisory
+warnings, no real whitespace errors).
+
+### Explicitly excluded from this pass
+
+Assessment prep, offer review, and rejection reflection (mentioned as possible future
+`ActionAssistanceType` values in the phase brief) — not implemented; only `FOLLOW_UP_DRAFT` and
+`INTERVIEW_PREP` were judged useful v1 actions. No Gmail send integration or scope widening. No
+dashboard redesign. No change to `MARK_APPLIED`/`COMPLETE_APPLICATION` priority. No extension UI.
+No persistence beyond `ai_usage_events` telemetry.

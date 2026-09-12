@@ -119,8 +119,7 @@ false`, `visibleOnPublicProfile = false`. Nothing extracted is usable until step
    updated to reflect the employer's receipt confirmation yesterday does not immediately prompt a
    follow-up just because the original submission was over a week ago, and correcting an
    accidental status change back to its prior value never resets that clock either. The dashboard
-   groups
-   applications by attention rather than showing a flat list:
+   groups applications by attention rather than showing a flat list:
    **Attention needed** (anything with an urgent/high/medium-priority next action, sorted so the
    longest-waiting urgent items surface first), **Follow-up suggestions** (a separate, explicitly
    labeled "Career OS recommendation — not a known employer deadline" section — a follow-up
@@ -146,6 +145,18 @@ false`, `visibleOnPublicProfile = false`. Nothing extracted is usable until step
    currently approved, changed since this analysis, no longer approved, or no longer available
    — never presented as verified once it's gone stale. A failed or rate-limited attempt leaves
    whatever result already existed untouched.
+5. (Phase 5C.3) When the next action shown is **Consider following up**, the detail page shows a
+   **Draft follow-up** button. Clicking it sends one request to Career OS, which independently
+   re-confirms the next action is still `CONSIDER_FOLLOW_UP` before drafting anything, and returns
+   an editable subject/body the user can copy — Career OS never sends anything on the user's
+   behalf, and the draft never claims a conversation, referral, interview, or assessment that
+   never happened. When the next action is **Prepare for the interview**, an equivalent
+   **Generate interview prep** button produces role priorities, evidence to emphasize, STAR-story
+   prompts, possible question *topics* (never claimed real questions), questions to ask, and gaps
+   to prepare — grounded in the job posting, any existing requirement analysis, and the user's own
+   approved facts, never claiming to know what the employer's interview will actually contain.
+   Neither button does anything on page load; both require an explicit click, and neither result
+   is persisted — refreshing the page loses it.
 
 ## 7. Gmail sync (optional)
 
@@ -183,7 +194,9 @@ Each of the following is a first-class, discoverable action (not "contact suppor
 
 ## 9. Out of scope for these flows
 
-- Any flow where the system submits, signs, or attests on the user's behalf.
+- Any flow where the system submits, signs, or attests on the user's behalf. This includes the
+  Phase 5C.3 follow-up draft and interview prep — Career OS drafts/suggests, the user always sends
+  or acts. No Gmail send scope exists anywhere in this product.
 - Any flow that runs without a preceding, attended user action. Extension analysis and
   autofill are strictly click-triggered. Gmail sync is either click-triggered (**Sync
   Gmail**) or a throttled auto-check on `/settings` page load/reload — both require the

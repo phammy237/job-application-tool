@@ -26,4 +26,15 @@ export type {
   GenerateUnsupportedClaimsCheckParams,
   GenerateUnsupportedClaimsCheckResult,
 } from './generate-unsupported-claims-check';
+export { generateFollowUpDraft } from './generate-follow-up-draft';
+export type {
+  GenerateFollowUpDraftParams,
+  GenerateFollowUpDraftResult,
+} from './generate-follow-up-draft';
+export { generateInterviewPrep } from './generate-interview-prep';
+export type {
+  GenerateInterviewPrepParams,
+  GenerateInterviewPrepResult,
+} from './generate-interview-prep';
+export { deriveEligibleNextAction } from './derive-eligible-next-action';
 export { NEVER_SUGGEST_CLASSIFICATIONS } from './config';

@@ -131,6 +131,15 @@ location/date filters, or rate-based summary metrics (interview rate, offer rate
 yet — Phase 5C.2 deliberately preferred plain counts over percentages for a v1 with a small
 per-user sample size; a rate metric may be added later if it can be computed transparently.
 
+The application detail page also offers explicit, user-triggered AI *assistance* on top of two
+next actions (Phase 5C.3, see `docs/IMPLEMENTATION_PLAN.md` "Phase 5C.3" for the full design): a
+grounded follow-up-message draft when the next action is "Consider following up," and grounded
+interview-preparation material (role priorities, evidence to emphasize, STAR-story prompts,
+possible question topics, questions to ask, gaps to prepare) when the next action is "Prepare for
+the interview." Neither feature runs automatically, neither changes an application's status or
+priority, and neither can send anything — Career OS drafts, the user sends. AI never decides
+whether or when to follow up; that stays entirely deterministic.
+
 ## 8. Initial beta constraints
 
 - Account registration is invite/approval-gated via a `public_signups_enabled` feature flag,

@@ -52,12 +52,18 @@ export type AiUsageEventEscalationReason = z.infer<
  * messages the deterministic classifier in packages/email can't confidently resolve.
  * 'unsupported_claim_check' added in migration 0014 (Phase 5B.3) for packages/ai's
  * generate-unsupported-claims-check.ts — the explicit, user-triggered advisory check, never
- * called automatically and never part of the authoritative mark-applied gate. */
+ * called automatically and never part of the authoritative mark-applied gate. 'follow_up_draft'
+ * and 'interview_prep' added in migration 0016 (Phase 5C.3) for packages/ai's
+ * generate-follow-up-draft.ts / generate-interview-prep.ts — both explicit, user-triggered AI
+ * *assistance* on top of the deterministic next-action engine's decision, never the thing that
+ * makes the decision itself (docs/IMPLEMENTATION_PLAN.md "Phase 5C.3"). */
 export const aiUsageEventTaskTypeSchema = z.enum([
   'field_suggestion',
   'requirement_mapping',
   'email_classification',
   'unsupported_claim_check',
+  'follow_up_draft',
+  'interview_prep',
 ]);
 export type AiUsageEventTaskType = z.infer<typeof aiUsageEventTaskTypeSchema>;
 

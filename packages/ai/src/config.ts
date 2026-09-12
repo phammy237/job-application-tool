@@ -67,3 +67,32 @@ export const EMAIL_SNIPPET_CHAR_CAP = 1000;
 export const UNSUPPORTED_CLAIM_CHECK_MAX_OUTPUT_TOKENS = 4096;
 export const UNSUPPORTED_CLAIM_CHECK_PROMPT_VERSION = 'unsupported-claim-check-v1';
 export const ANSWER_TEXT_CHAR_CAP = 2000;
+
+/**
+ * Phase 5C.3A explicit, user-triggered follow-up message drafting
+ * (packages/ai/src/generate-follow-up-draft.ts) — a short single-object response (subject/body),
+ * so a small output-token budget is enough; smaller than every other structured pipeline in this
+ * file. No separate model here: this codebase has no multi-provider/cost-routing infrastructure
+ * beyond the single `MODEL_ID` above (confirmed by inspection of packages/ai/src/claude/client.ts
+ * and config.ts — `ai_usage_events.provider`/`ladder` are forward-looking groundwork, per
+ * migration 0005's own comment, not a live routing system), so introducing a second, cheaper model
+ * for this pipeline alone would be a new piece of routing infrastructure this repo doesn't have
+ * anywhere else — inconsistent with "reuse existing AI infrastructure," not an application of it.
+ * The actual cost lever available today is a smaller `max_tokens` budget, applied here.
+ */
+export const FOLLOW_UP_DRAFT_MAX_OUTPUT_TOKENS = 1024;
+export const FOLLOW_UP_DRAFT_PROMPT_VERSION = 'follow-up-draft-v1';
+
+/**
+ * Phase 5C.3B explicit, user-triggered interview preparation
+ * (packages/ai/src/generate-interview-prep.ts) — a larger structured response synthesizing job
+ * requirements, requirement/evidence mappings, and approved facts, so it gets a larger output
+ * budget than follow-up drafting, matching this pipeline's own larger array-of-sections contract
+ * (closer to REQUIREMENT_MAPPING_MAX_OUTPUT_TOKENS than to the short single-answer pipelines).
+ * Same single-model reasoning as FOLLOW_UP_DRAFT_MAX_OUTPUT_TOKENS above.
+ */
+export const INTERVIEW_PREP_MAX_OUTPUT_TOKENS = 8192;
+export const INTERVIEW_PREP_PROMPT_VERSION = 'interview-prep-v1';
+/** Bounds worst-case injected content volume from a single frozen submission-packet answer
+ * surfaced for consistency review — same rationale as ANSWER_TEXT_CHAR_CAP. */
+export const SUBMITTED_ANSWER_CHAR_CAP = 1000;

@@ -3,6 +3,7 @@ import type { CareerOsSupabaseClient } from '../types/client';
 import {
   listOwnRecentApplicationEvents,
   listOwnRelevantStatusChangeEvents,
+  listOwnRelevantStatusChangeEventsForApplication,
   revertApplicationEvent,
 } from './application-events';
 
@@ -243,6 +244,59 @@ describe('listOwnRelevantStatusChangeEvents', () => {
     const supabase = { from: vi.fn(() => chain) } as unknown as CareerOsSupabaseClient;
 
     const result = await listOwnRelevantStatusChangeEvents(supabase, USER_ID);
+    expect(result).toEqual([]);
+  });
+});
+
+describe('listOwnRelevantStatusChangeEventsForApplication', () => {
+  it('scopes by user_id, application_id, event_type=STATUS_CHANGE, excludes reverted_at is not null and source=SYSTEM, orders newest first', async () => {
+    const eq = vi.fn().mockReturnThis();
+    const isFn = vi.fn().mockReturnThis();
+    const neq = vi.fn().mockReturnThis();
+    const order = vi.fn();
+    const chain: Record<string, unknown> = {};
+    chain.select = vi.fn(() => chain);
+    chain.eq = eq.mockImplementation(() => chain);
+    chain.is = isFn.mockImplementation(() => chain);
+    chain.neq = neq.mockImplementation(() => chain);
+    chain.order = order.mockImplementation(() =>
+      Promise.resolve({ data: [NON_APPLIED_EVENT_ROW], error: null }),
+    );
+    const supabase = { from: vi.fn(() => chain) } as unknown as CareerOsSupabaseClient;
+
+    const result = await listOwnRelevantStatusChangeEventsForApplication(
+      supabase,
+      USER_ID,
+      APPLICATION_ID,
+    );
+
+    expect(eq).toHaveBeenCalledWith('user_id', USER_ID);
+    expect(eq).toHaveBeenCalledWith('application_id', APPLICATION_ID);
+    expect(eq).toHaveBeenCalledWith('event_type', 'STATUS_CHANGE');
+    expect(isFn).toHaveBeenCalledWith('reverted_at', null);
+    expect(neq).toHaveBeenCalledWith('source', 'SYSTEM');
+    expect(order).toHaveBeenCalledWith('created_at', { ascending: false });
+    // Unlike the bulk, all-applications query, this scoped variant has no safety-cap `.limit()`
+    // call at all — one application's own event history is never at risk of the same
+    // pathological-growth scenario the bulk query's cap defends against.
+    expect(chain.limit).toBeUndefined();
+    expect(result).toHaveLength(1);
+  });
+
+  it('returns an empty array rather than throwing when there are no relevant events for this application', async () => {
+    const chain: Record<string, unknown> = {};
+    chain.select = vi.fn(() => chain);
+    chain.eq = vi.fn(() => chain);
+    chain.is = vi.fn(() => chain);
+    chain.neq = vi.fn(() => chain);
+    chain.order = vi.fn().mockResolvedValue({ data: null, error: null });
+    const supabase = { from: vi.fn(() => chain) } as unknown as CareerOsSupabaseClient;
+
+    const result = await listOwnRelevantStatusChangeEventsForApplication(
+      supabase,
+      USER_ID,
+      APPLICATION_ID,
+    );
     expect(result).toEqual([]);
   });
 });

@@ -121,6 +121,32 @@ export async function listOwnRelevantStatusChangeEvents(
   return (data ?? []).map(rowToEvent);
 }
 
+/**
+ * Same "relevant" filtering as `listOwnRelevantStatusChangeEvents` (see its own doc comment for
+ * why `reverted_at`/`source = 'SYSTEM'` must both be excluded), scoped to one application —
+ * Phase 5C.3's action-assistance routes derive the deterministic next action for exactly one
+ * application per request (never the whole dashboard's bulk query), so fetching only that
+ * application's own events is the correct-sized query here, not a premature optimization of the
+ * dashboard's own bulk path.
+ */
+export async function listOwnRelevantStatusChangeEventsForApplication(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+  applicationId: string,
+): Promise<ApplicationEvent[]> {
+  const { data, error } = await supabase
+    .from('application_events')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('application_id', applicationId)
+    .eq('event_type', 'STATUS_CHANGE')
+    .is('reverted_at', null)
+    .neq('source', 'SYSTEM')
+    .order('created_at', { ascending: false });
+  assertNoError(error, 'listOwnRelevantStatusChangeEventsForApplication');
+  return (data ?? []).map(rowToEvent);
+}
+
 export async function recordApplicationEvent(
   supabase: CareerOsSupabaseClient,
   userId: string,

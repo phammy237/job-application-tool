@@ -240,3 +240,71 @@ never the deterministic, authoritative one. Its call site is `POST
 - **Rate-limited, same as every other pipeline** — `incrementOwnAiRequestUsage` is checked first,
   before any retrieval or provider call, and this check consumes the same per-user AI request
   quota as every other Claude call in the system. No separate billing or quota carve-out.
+
+## 10. AI action assistance — follow-up drafting and interview prep (Phase 5C.3)
+
+Two more explicit, user-triggered pipelines
+(`packages/ai/src/generate-follow-up-draft.ts`, `generate-interview-prep.ts`), with a different
+relationship to a deterministic decision than §8/§9's: the Phase 5C.1 next-action engine
+(`packages/shared/src/lib/next-action-rules.ts`) decides *what to do next* with no model
+involvement at all; these two pipelines only help *do* it, once the engine has already decided
+`CONSIDER_FOLLOW_UP`/`PREPARE_INTERVIEW`. Neither pipeline is ever consulted by, or able to
+influence, the engine's own decision — grounding here is about preventing invented facts in the
+*assistance*, not about deciding priority or timing.
+
+- **Server-side eligibility gate, before rate limiting.** `packages/ai/src/derive-eligible-next-action.ts`
+  re-derives the application's current `NextAction` from the database on every call — the client
+  never gets to assert `actionType = PREPARE_INTERVIEW` and have it trusted. Unlike §2/§8/§9, this
+  gate runs *before* `incrementOwnAiRequestUsage`: a structurally ineligible request (wrong action,
+  application not owned) was never going to produce a result, so it should never cost quota.
+- **No fact to invent from, by construction.** Follow-up drafting is never given a recruiter name,
+  contact email, referral relationship, interview date, or prior conversation — none of that exists
+  anywhere in this schema to place in a prompt. The system prompt additionally lists the exact
+  disallowed claim shapes, and `validateFollowUpDraftContract` scans the model's output against a
+  fixed denylist of fabrication-risk phrases (`spoke with`, `referred by`, `our interview`,
+  `completed the assessment`, etc.), rejecting (with one retry) any match — sound specifically
+  because drafting is only reachable while status is `APPLIED`/`APPLICATION_RECEIVED`, strictly
+  before any interview/assessment stage exists to have happened.
+- **Citation allowlist, same defense as §8/§9, for interview prep.** Every `sourceFactIds` entry
+  must be a fact id actually placed in `<candidate_facts>`; every `sourceRequirementId`/
+  `sourceRequirementIds` entry must be a requirement-mapping id actually placed in
+  `<requirement_mappings>` (or null/empty when no current mapping exists at all). Both allowlists
+  are re-derived per request from what was actually retrieved — `validateInterviewPrepContract`
+  rejects (with one retry) on any unlisted id.
+- **Reuses Phase 5A grounding, never re-runs it.** Interview prep reads an existing `CURRENT`
+  requirement-mapping run if one exists (`getCurrentOwnRequirementMappingRun` +
+  `listCurrentOwnRequirementMappings`); it never triggers §8's generation pipeline itself, silently
+  or otherwise. No current mapping degrades to reading the job snapshot's own qualification lists
+  directly, with every requirement id left null/empty, rather than blocking or fabricating ids.
+- **Provenance is always server-computed, never a model claim.** Follow-up drafting's `usedContext`
+  tags and interview prep's `provenanceSummary`/`usedCurrentRequirementMapping` are assembled from
+  what the orchestrator actually retrieved, never asked of the model — deliberately narrower than
+  the phase brief's illustrative `groundingNotes` field, which would have let the model write a
+  free-text "source" claim that could itself fabricate a source. Same posture as
+  `matchedFactProvenanceSchema`'s server-derived provenance in §8.
+- **Untrusted content, tagged, same posture as §2/§8/§9.** `<application_context>`, `<job_snapshot>`,
+  `<confirmed_employer_email>`, `<candidate_facts>`, `<requirement_mappings>`, and
+  `<submitted_answers>` are all explicitly tagged as data, not instructions, in both static system
+  prompts. No `tools` array, `thinking: disabled`, same as every other pipeline in this document.
+- **Frozen answers, read-only.** Interview prep may surface `submission_packets.answers_snapshot`
+  entries (label + truncated final/original answer text) so the user can "stay consistent with
+  what you already submitted" — read-only, never reconstructed if missing, never presented as
+  current profile data, and never itself sent to the model as something it can alter.
+- **One retry, same policy as §8/§9.** Exactly one retry, only on a rejection (malformed JSON,
+  schema violation, an unallowlisted citation, a fabrication-risk match, or a refusal) — never on a
+  hard `provider_error`, which surfaces immediately.
+- **Failure never blocks, never fabricates, never changes application state.** Neither pipeline
+  writes to `applications` or calls `changeOwnApplicationStatus`/`markOwnApplicationApplied` at
+  all — a rate limit, provider error, or rejection that survives the retry simply returns a
+  structured non-`ok` status; the application's status/priority/next action are unaffected.
+- **Ephemeral — no persisted result.** Same rationale as §9: no run-lifecycle table, no persisted
+  draft/prep row. The only trace of an attempt is the existing `ai_usage_events` telemetry row.
+- **Usage accounting.** `ai_usage_events.task_type` in `('follow_up_draft', 'interview_prep')`
+  (migration 0016, additive — every prior value preserved), recorded best-effort via
+  `recordAiUsageEvent`. Same shared per-user rate limit as every pipeline in this document; no new
+  quota dimension.
+- **No new Gmail scope, no send capability.** Follow-up drafting reads (never writes) the existing
+  `email_signals` metadata (sender/subject/classification/receivedAt for a `CONFIRMED`/`AUTO_APPLIED`
+  signal only — never a `PENDING`/`DECLINED` one, never a body, which this codebase never stores at
+  all). Its output contract has no recipient field. There is no `gmail.send` scope anywhere in this
+  product, and this phase did not add one.

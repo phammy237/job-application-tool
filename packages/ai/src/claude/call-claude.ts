@@ -1,5 +1,7 @@
 import {
   EMAIL_CLASSIFICATION_MAX_OUTPUT_TOKENS,
+  FOLLOW_UP_DRAFT_MAX_OUTPUT_TOKENS,
+  INTERVIEW_PREP_MAX_OUTPUT_TOKENS,
   MAX_OUTPUT_TOKENS,
   MODEL_ID,
   REQUIREMENT_MAPPING_MAX_OUTPUT_TOKENS,
@@ -245,6 +247,193 @@ export async function callClaudeForUnsupportedClaimCheck(
       messages: [{ role: 'user', content: userText }],
       output_config: {
         format: { type: 'json_schema', schema: UNSUPPORTED_CLAIM_CHECK_JSON_SCHEMA },
+      },
+    });
+
+    if (response.stop_reason === 'refusal') {
+      return { status: 'refusal', category: response.stop_details?.category ?? null };
+    }
+
+    const textBlock = response.content.find((block) => block.type === 'text');
+    if (!textBlock || textBlock.type !== 'text') {
+      return { status: 'provider_error', message: 'No text content in Claude response' };
+    }
+    return { status: 'ok', rawText: textBlock.text };
+  } catch (error) {
+    return {
+      status: 'provider_error',
+      message: error instanceof Error ? error.message : 'Unknown Anthropic API error',
+    };
+  }
+}
+
+/**
+ * Mirrors `followUpDraftModelContractSchema` (packages/shared) — deliberately just
+ * `subject`/`body`, no `groundingNotes`/`usedContext` field for the model to fill in (see that
+ * schema's own doc comment for why: provenance here is always server-derived, never a model
+ * claim).
+ */
+const FOLLOW_UP_DRAFT_JSON_SCHEMA = {
+  type: 'object',
+  properties: {
+    subject: { type: ['string', 'null'] },
+    body: { type: 'string' },
+  },
+  required: ['subject', 'body'],
+  additionalProperties: false,
+} as const;
+
+/**
+ * Same no-tools/thinking-disabled/schema-constrained posture as the other call* functions — the
+ * job snapshot and any confirmed-email context placed in the prompt are untrusted third-party
+ * content (docs/AI_GROUNDING.md §2/§6), same as the requirement-mapping pipeline's job posting.
+ */
+export async function callClaudeForFollowUpDraft(
+  systemPrompt: string,
+  userText: string,
+): Promise<CallClaudeResult> {
+  try {
+    const response = await getAnthropicClient().messages.create({
+      model: MODEL_ID,
+      max_tokens: FOLLOW_UP_DRAFT_MAX_OUTPUT_TOKENS,
+      thinking: { type: 'disabled' },
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userText }],
+      output_config: {
+        format: { type: 'json_schema', schema: FOLLOW_UP_DRAFT_JSON_SCHEMA },
+      },
+    });
+
+    if (response.stop_reason === 'refusal') {
+      return { status: 'refusal', category: response.stop_details?.category ?? null };
+    }
+
+    const textBlock = response.content.find((block) => block.type === 'text');
+    if (!textBlock || textBlock.type !== 'text') {
+      return { status: 'provider_error', message: 'No text content in Claude response' };
+    }
+    return { status: 'ok', rawText: textBlock.text };
+  } catch (error) {
+    return {
+      status: 'provider_error',
+      message: error instanceof Error ? error.message : 'Unknown Anthropic API error',
+    };
+  }
+}
+
+/** Mirrors `interviewPrepModelContractSchema` (packages/shared) — six bounded arrays of small
+ * objects; every `sourceFactIds`/`sourceRequirementId(s)` field is a bare id list/nullable id,
+ * never a nested object, so the model cannot smuggle extra unvalidated fields through it. */
+const INTERVIEW_PREP_JSON_SCHEMA = {
+  type: 'object',
+  properties: {
+    rolePriorities: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          requirement: { type: 'string' },
+          importance: { type: 'string', enum: ['REQUIRED', 'PREFERRED'] },
+          sourceRequirementId: { type: ['string', 'null'] },
+        },
+        required: ['requirement', 'importance', 'sourceRequirementId'],
+        additionalProperties: false,
+      },
+    },
+    evidenceToEmphasize: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          theme: { type: 'string' },
+          sourceFactIds: { type: 'array', items: { type: 'string' } },
+          summary: { type: 'string' },
+        },
+        required: ['theme', 'sourceFactIds', 'summary'],
+        additionalProperties: false,
+      },
+    },
+    starStoryPrompts: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          competency: { type: 'string' },
+          sourceFactIds: { type: 'array', items: { type: 'string' } },
+          prompt: { type: 'string' },
+        },
+        required: ['competency', 'sourceFactIds', 'prompt'],
+        additionalProperties: false,
+      },
+    },
+    possibleQuestions: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          question: { type: 'string' },
+          rationale: { type: 'string' },
+          sourceRequirementIds: { type: 'array', items: { type: 'string' } },
+        },
+        required: ['question', 'rationale', 'sourceRequirementIds'],
+        additionalProperties: false,
+      },
+    },
+    questionsToAsk: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          question: { type: 'string' },
+          rationale: { type: 'string' },
+        },
+        required: ['question', 'rationale'],
+        additionalProperties: false,
+      },
+    },
+    gapsToPrepare: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          requirement: { type: 'string' },
+          sourceRequirementId: { type: ['string', 'null'] },
+          note: { type: 'string' },
+        },
+        required: ['requirement', 'sourceRequirementId', 'note'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: [
+    'rolePriorities',
+    'evidenceToEmphasize',
+    'starStoryPrompts',
+    'possibleQuestions',
+    'questionsToAsk',
+    'gapsToPrepare',
+  ],
+  additionalProperties: false,
+} as const;
+
+/**
+ * Same no-tools/thinking-disabled/schema-constrained posture as `callClaudeForRequirementMapping`
+ * — the job snapshot (and, when present, requirement-mapping text) is untrusted third-party
+ * content, same prompt-injection posture as that pipeline.
+ */
+export async function callClaudeForInterviewPrep(
+  systemPrompt: string,
+  userText: string,
+): Promise<CallClaudeResult> {
+  try {
+    const response = await getAnthropicClient().messages.create({
+      model: MODEL_ID,
+      max_tokens: INTERVIEW_PREP_MAX_OUTPUT_TOKENS,
+      thinking: { type: 'disabled' },
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userText }],
+      output_config: {
+        format: { type: 'json_schema', schema: INTERVIEW_PREP_JSON_SCHEMA },
       },
     });
 

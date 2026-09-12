@@ -27,6 +27,7 @@ export * from './schemas/consistency-finding';
 export * from './schemas/submission-packet';
 export * from './schemas/unsupported-claim-contract';
 export * from './schemas/next-action';
+export * from './schemas/action-assistance';
 export * from './lib/canonicalize-url';
 export * from './lib/job-snapshot-fingerprint';
 export * from './lib/requirement-fingerprint';
