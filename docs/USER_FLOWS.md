@@ -107,6 +107,13 @@ false`, `visibleOnPublicProfile = false`. Nothing extracted is usable until step
    reviewed answers, autofill summary, and any consistency findings/acknowledgements exactly as
    they stood at that instant; a legacy application already `APPLIED` before Phase 5B.1 shipped
    has no packet and never gets one fabricated from later data.
+7. (Phase 5C.4) Once a job is tracked, the popup also shows an "Open in Career OS" link to that
+   application's detail page on the web app — the same application id the extension already
+   tracks, so this always points at the right place with no extra lookup. Its label may hint at
+   the current status-driven action (e.g. "Open Career OS to prepare for the interview") for the
+   handful of statuses whose action needs no date logic to know; for everything else it stays
+   generic rather than guessing. The popup never generates AI content itself — this is purely a
+   handoff to the web app, which independently decides everything from there.
 
 ## 6. Reviewing applications on the dashboard
 
@@ -121,14 +128,24 @@ false`, `visibleOnPublicProfile = false`. Nothing extracted is usable until step
    accidental status change back to its prior value never resets that clock either. The dashboard
    groups applications by attention rather than showing a flat list:
    **Attention needed** (anything with an urgent/high/medium-priority next action, sorted so the
-   longest-waiting urgent items surface first), **Follow-up suggestions** (a separate, explicitly
-   labeled "Career OS recommendation — not a known employer deadline" section — a follow-up
-   suggestion is never shown as if it were an urgent need or a real deadline), **Pipeline
+   longest-waiting urgent items surface first), **Applications to finish** (Phase 5C.4 — every
+   `SAVED`/not-yet-reviewed application, kept deliberately `LOW` priority and out of "Attention
+   needed" since finishing a draft has no employer deadline, but still given its own visible,
+   clearly-labeled section so it never simply disappears), **Follow-up suggestions** (a separate,
+   explicitly labeled "Career OS recommendation — not a known employer deadline" section — a
+   follow-up suggestion is never shown as if it were an urgent need or a real deadline), **Pipeline
    overview** (counts by stage: Preparing / Applied / Active process / Offer / Closed), and
-   **Recent activity** (real status-change events across every application, most recent first).
-   "N applications need attention" in the header means exactly "priority is urgent, high, or
-   medium" — a follow-up suggestion or an unstarted draft is deliberately not counted as an
-   urgent need.
+   **Recent activity** (real status-change events across every application, most recent first —
+   Phase 5C.4 also excludes the bookkeeping event a status-change revert creates for itself, so
+   undoing a mistake never shows up looking like a real transition). "N applications need
+   attention" in the header means exactly "priority is urgent, high, or medium" — a follow-up
+   suggestion or an unstarted draft is deliberately not counted as an urgent need; when nothing is
+   urgent but something needs finishing, the header says so plainly instead of just "nothing needs
+   attention." Clicking through from either section (or the `/applications` table's own "Next
+   action" cell) jumps straight to the relevant panel on the application detail page — a follow-up
+   suggestion opens the follow-up-draft panel, "Prepare for the interview" opens interview prep,
+   "Finish and mark as applied" opens the Mark Applied panel — via a plain page-anchor link, never
+   a mechanism that could bypass the detail page's own re-check of what's actually current.
 1. User opens `/applications`: table view (also showing each row's next action alongside its
    status), filterable by status and a free-text search across company/title.
 2. Application detail page shows notes, associated résumé version, full generated-answer

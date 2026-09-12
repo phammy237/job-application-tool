@@ -111,6 +111,24 @@ export function needsAttention(item: ApplicationWithNextAction): boolean {
   );
 }
 
+/**
+ * Phase 5C.4 — closes the documented `COMPLETE_APPLICATION`/"Attention needed" tension
+ * (docs/IMPLEMENTATION_PLAN.md "Phase 5C hardening — follow-up anchor" §"MARK_APPLIED /
+ * COMPLETE_APPLICATION ... reviewed, not changed", and "Phase 5C.3Q"). `COMPLETE_APPLICATION`
+ * stays `LOW` priority deliberately — starting/finishing a draft application has no real
+ * employer-imposed deadline, so it must never inflate `needsAttention`'s URGENT/HIGH/MEDIUM
+ * meaning (Option A from the phase brief, "promote to MEDIUM," was rejected for exactly that
+ * reason). Instead this predicate powers its own separately-labeled dashboard section
+ * ("Applications to finish," mirroring "Follow-up suggestions"' existing pattern for
+ * `CONSIDER_FOLLOW_UP`) — Option B from the brief — so a user with several `SAVED` applications
+ * and nothing URGENT/HIGH/MEDIUM pending still sees a clear, visible next step, without any LOW
+ * action ever being counted as "needs attention." `needsAttention` itself is intentionally left
+ * untouched.
+ */
+export function needsToFinish(item: ApplicationWithNextAction): boolean {
+  return item.nextAction.type === 'COMPLETE_APPLICATION';
+}
+
 /** Logical pipeline stage groupings for the dashboard's stage/pipeline overview
  * (docs/IMPLEMENTATION_PLAN.md "Phase 5C.2E") — buckets the existing tracked statuses into a
  * handful of user-facing stages without inventing any new status value. */
@@ -158,6 +176,17 @@ export interface RecentActivityItem {
  * timeline for the application detail page's own use, but are not "activity" a dashboard-level
  * feed needs to narrate (docs/IMPLEMENTATION_PLAN.md "Phase 5C.2F": "avoid showing noisy internal
  * events that do not matter to the user").
+ *
+ * Phase 5C.4 noise-audit fix: also excludes `source === 'SYSTEM'` — the bookkeeping event
+ * `revertApplicationEvent` itself creates to log a revert (see `buildLastRelevantStatusActivityMap`'s
+ * identical exclusion and its own doc comment for the full mechanics). Before this fix, reverting
+ * an accidental status change correctly hid the *original* mistaken event (`revertedAt` now set)
+ * but still surfaced the *revert's own* logging event — which reads as if the application had
+ * just made a real, ordinary transition (e.g. "INTERVIEW → APPLIED") when nothing but a UI
+ * correction actually happened. Excluding it here is the same fix already applied to the
+ * follow-up-anchor computation, extended to this feed for the same reason: a revert is never
+ * itself meaningful, user-facing history on the dashboard (the application detail page's own
+ * timeline still shows the full, honest record, including the "(reverted)" tag).
  */
 export function toRecentActivity(
   events: ApplicationEvent[],
@@ -166,7 +195,13 @@ export function toRecentActivity(
   const byId = new Map(applications.map((a) => [a.id, a]));
   const items: RecentActivityItem[] = [];
   for (const event of events) {
-    if (event.eventType !== 'STATUS_CHANGE' || event.revertedAt) continue;
+    if (
+      event.eventType !== 'STATUS_CHANGE' ||
+      event.revertedAt ||
+      event.source === 'SYSTEM'
+    ) {
+      continue;
+    }
     const application = byId.get(event.applicationId);
     if (!application) continue;
     items.push({

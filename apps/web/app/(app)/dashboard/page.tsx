@@ -10,6 +10,7 @@ import {
   attachNextActions,
   DASHBOARD_STAGE_GROUPS,
   needsAttention,
+  needsToFinish,
   sortApplicationsByAttention,
   stageGroupForStatus,
   toRecentActivity,
@@ -47,6 +48,7 @@ export default async function DashboardPage() {
     attachNextActions(applications, relevantStatusChangeEvents, now),
   );
   const attentionItems = withNextActions.filter(needsAttention);
+  const toFinishItems = withNextActions.filter(needsToFinish);
   const followUpItems = withNextActions.filter(
     (item) => item.nextAction.type === 'CONSIDER_FOLLOW_UP',
   );
@@ -73,7 +75,14 @@ export default async function DashboardPage() {
             ? `Welcome back, ${user.email}.`
             : attentionItems.length > 0
               ? `${attentionItems.length} application${attentionItems.length === 1 ? '' : 's'} need${attentionItems.length === 1 ? 's' : ''} attention.`
-              : 'Nothing needs attention right now.'}
+              : toFinishItems.length > 0
+                ? /* Phase 5C.4 — COMPLETE_APPLICATION stays LOW priority (never counted in
+                     attentionItems), but the header should not flatly say "nothing needs
+                     attention" while a clearly visible "Applications to finish" section sits
+                     right below it — that reads as a contradiction. This still never claims
+                     finishing a draft is urgent, only that it exists. */
+                  `Nothing urgent right now, but ${toFinishItems.length} application${toFinishItems.length === 1 ? '' : 's'} could use finishing.`
+                : 'Nothing needs attention right now.'}
         </p>
       </div>
 
@@ -116,6 +125,23 @@ export default async function DashboardPage() {
             ) : (
               <ul className="space-y-2">
                 {attentionItems.map((item) => (
+                  <ApplicationActionRow key={item.application.id} item={item} />
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <section className="space-y-3">
+            <h2 className="text-muted-foreground text-sm font-medium">
+              Applications to finish
+            </h2>
+            {toFinishItems.length === 0 ? (
+              <p className="text-muted-foreground text-sm">
+                Nothing waiting to be started or finished.
+              </p>
+            ) : (
+              <ul className="space-y-2">
+                {toFinishItems.map((item) => (
                   <ApplicationActionRow key={item.application.id} item={item} />
                 ))}
               </ul>

@@ -12,6 +12,13 @@ const mocks = vi.hoisted(() => ({
   incrementOwnAiRequestUsage: vi.fn(),
   recordAiUsageEvent: vi.fn(),
   callClaudeForInterviewPrep: vi.fn(),
+  // Phase 5C.4 application-state safety audit — see generate-follow-up-draft.test.ts's identical
+  // block for the full rationale.
+  changeOwnApplicationStatus: vi.fn(),
+  markApplicationAppliedAtomic: vi.fn(),
+  recordApplicationEvent: vi.fn(),
+  revertApplicationEvent: vi.fn(),
+  updateOwnApplication: vi.fn(),
 }));
 
 vi.mock('@career-os/database', () => ({
@@ -25,6 +32,11 @@ vi.mock('@career-os/database', () => ({
   getOwnSubmissionPacketByApplicationId: mocks.getOwnSubmissionPacketByApplicationId,
   incrementOwnAiRequestUsage: mocks.incrementOwnAiRequestUsage,
   recordAiUsageEvent: mocks.recordAiUsageEvent,
+  changeOwnApplicationStatus: mocks.changeOwnApplicationStatus,
+  markApplicationAppliedAtomic: mocks.markApplicationAppliedAtomic,
+  recordApplicationEvent: mocks.recordApplicationEvent,
+  revertApplicationEvent: mocks.revertApplicationEvent,
+  updateOwnApplication: mocks.updateOwnApplication,
 }));
 
 vi.mock('./claude/call-claude', () => ({
@@ -329,5 +341,31 @@ describe('generateInterviewPrep — usage telemetry and routing', () => {
         applicationId: APPLICATION_ID,
       }),
     );
+  });
+});
+
+describe('generateInterviewPrep — application-state safety (Phase 5C.4 audit)', () => {
+  it('never calls any function that could mutate application status, applied_at, submission_packet_id, packet content, or event history — success path', async () => {
+    const result = await generateInterviewPrep(FAKE_SUPABASE, USER_ID, PARAMS);
+    expect(result.status).toBe('ok');
+    expect(mocks.changeOwnApplicationStatus).not.toHaveBeenCalled();
+    expect(mocks.markApplicationAppliedAtomic).not.toHaveBeenCalled();
+    expect(mocks.recordApplicationEvent).not.toHaveBeenCalled();
+    expect(mocks.revertApplicationEvent).not.toHaveBeenCalled();
+    expect(mocks.updateOwnApplication).not.toHaveBeenCalled();
+  });
+
+  it('never calls any mutating function even when the response is rejected/retried', async () => {
+    mocks.callClaudeForInterviewPrep.mockResolvedValue({
+      status: 'ok',
+      rawText: 'not json',
+    });
+    const result = await generateInterviewPrep(FAKE_SUPABASE, USER_ID, PARAMS);
+    expect(result).toEqual({ status: 'validation_failed' });
+    expect(mocks.changeOwnApplicationStatus).not.toHaveBeenCalled();
+    expect(mocks.markApplicationAppliedAtomic).not.toHaveBeenCalled();
+    expect(mocks.recordApplicationEvent).not.toHaveBeenCalled();
+    expect(mocks.revertApplicationEvent).not.toHaveBeenCalled();
+    expect(mocks.updateOwnApplication).not.toHaveBeenCalled();
   });
 });

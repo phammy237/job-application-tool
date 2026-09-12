@@ -4,6 +4,12 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InterviewPrepPanel } from './interview-prep-panel';
 
+const mocks = vi.hoisted(() => ({ refresh: vi.fn() }));
+
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ refresh: mocks.refresh }),
+}));
+
 const APPLICATION_ID = 'app-1';
 
 function jsonResponse(body: unknown, status = 200) {
@@ -58,6 +64,7 @@ const FULL_PREP = {
 };
 
 beforeEach(() => {
+  mocks.refresh.mockClear();
   vi.stubGlobal('fetch', vi.fn());
 });
 
@@ -107,12 +114,13 @@ describe('InterviewPrepPanel', () => {
     expect(screen.getByText('Role priorities')).toBeInTheDocument();
     expect(screen.getByText('What to emphasize')).toBeInTheDocument();
     expect(screen.getByText('STAR stories to prepare')).toBeInTheDocument();
-    expect(screen.getByText('Possible questions')).toBeInTheDocument();
+    expect(screen.getByText('Potential questions to prepare for')).toBeInTheDocument();
     expect(screen.getByText('Questions to ask')).toBeInTheDocument();
     expect(screen.getByText('Gaps to prepare')).toBeInTheDocument();
     expect(screen.getByText('Answers you already submitted')).toBeInTheDocument();
     // Never a claim about a real, known interview question.
     expect(screen.queryByText(/they will ask/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Possible questions$/)).not.toBeInTheDocument();
   });
 
   it('omits a section entirely when it is empty, rather than rendering an empty group', async () => {
@@ -129,13 +137,17 @@ describe('InterviewPrepPanel', () => {
     expect(screen.queryByText('Answers you already submitted')).not.toBeInTheDocument();
   });
 
-  it('shows an action_not_current message when the deterministic action changed', async () => {
+  it('shows an action_not_current message, no stale prep, and a working Reload button when the deterministic action changed', async () => {
     (fetch as ReturnType<typeof vi.fn>).mockReturnValue(
       jsonResponse({ status: 'action_not_current', currentActionType: 'NO_ACTION' }),
     );
     render(<InterviewPrepPanel applicationId={APPLICATION_ID} />);
     fireEvent.click(screen.getByRole('button', { name: 'Generate interview prep' }));
     await waitFor(() => expect(screen.getByText(/status changed/)).toBeInTheDocument());
+    expect(screen.queryByText('Role priorities')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reload this page' }));
+    expect(mocks.refresh).toHaveBeenCalledTimes(1);
   });
 
   it('shows an insufficient_context message when there is no job snapshot', async () => {

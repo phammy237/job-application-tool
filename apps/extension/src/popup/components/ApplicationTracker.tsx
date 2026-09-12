@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { ConsistencyFinding } from '@career-os/shared';
 import { API_BASE_URL } from '../../lib/api-client';
 import type { TrackerStatus } from '../hooks/useApplicationTracker';
+import { openInCareerOsLabel } from '../lib/open-in-career-os-label';
 import { BUTTON_STYLE, MUTED_STYLE, PRIMARY_BUTTON_STYLE } from '../styles';
 
 const NOT_YET_APPLIED_STATUSES = new Set(['SAVED', 'IN_PROGRESS']);
@@ -118,7 +119,7 @@ export function ApplicationTracker({
             target="_blank"
             rel="noopener noreferrer"
           >
-            View in dashboard
+            {openInCareerOsLabel(trackedStatus)}
           </a>
         </p>
       ) : null}

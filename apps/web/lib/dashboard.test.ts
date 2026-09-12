@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import type { Application, ApplicationEvent } from '@career-os/shared';
+import {
+  APPLICATION_STATUSES,
+  type Application,
+  type ApplicationEvent,
+} from '@career-os/shared';
 import {
   attachNextActions,
   buildLastRelevantStatusActivityMap,
   needsAttention,
+  needsToFinish,
   sortApplicationsByAttention,
   stageGroupForStatus,
   toRecentActivity,
@@ -331,6 +336,52 @@ describe('needsAttention', () => {
   });
 });
 
+describe('needsToFinish', () => {
+  it('is true only for COMPLETE_APPLICATION — Phase 5C.4\'s dedicated "Applications to finish" section, never folded into needsAttention', () => {
+    const [complete, unresolved, markApplied, followUp, noAction] = attachNextActions(
+      [
+        application({ id: 'complete', status: 'SAVED' }),
+        application({
+          id: 'unresolved',
+          status: 'SAVED',
+          unresolvedFields: [
+            {
+              label: 'x',
+              classification: 'FREE_RESPONSE',
+              status: 'NEEDS_INPUT',
+              reason: 'r',
+            },
+          ],
+        }),
+        application({ id: 'mark-applied', status: 'IN_PROGRESS' }),
+        application({
+          id: 'follow-up',
+          status: 'APPLIED',
+          appliedAt: '2026-01-01T00:00:00.000Z',
+        }),
+        application({ id: 'rejected', status: 'REJECTED' }),
+      ],
+      [],
+      NOW,
+    );
+    expect(complete!.nextAction.type).toBe('COMPLETE_APPLICATION');
+    expect(needsToFinish(complete!)).toBe(true);
+    // A LOW-priority "finish this" item is never also counted as "needs attention" — the two
+    // predicates are deliberately disjoint for COMPLETE_APPLICATION.
+    expect(needsAttention(complete!)).toBe(false);
+
+    // Every other next-action type — including another LOW one (CONSIDER_FOLLOW_UP) and NO_ACTION
+    // — is excluded, so "Applications to finish" never accidentally absorbs unrelated items.
+    expect(unresolved!.nextAction.type).toBe('REVIEW_UNRESOLVED_FIELDS');
+    expect(needsToFinish(unresolved!)).toBe(false);
+    expect(markApplied!.nextAction.type).toBe('MARK_APPLIED');
+    expect(needsToFinish(markApplied!)).toBe(false);
+    expect(followUp!.nextAction.type).toBe('CONSIDER_FOLLOW_UP');
+    expect(needsToFinish(followUp!)).toBe(false);
+    expect(needsToFinish(noAction!)).toBe(false);
+  });
+});
+
 describe('stageGroupForStatus', () => {
   it.each([
     ['SAVED', 'PREPARING'],
@@ -349,6 +400,20 @@ describe('stageGroupForStatus', () => {
 
   it('UNKNOWN is not silently forced into a misleading bucket', () => {
     expect(stageGroupForStatus('UNKNOWN')).toBe('OTHER');
+  });
+
+  it('Phase 5C.4 pipeline-stage audit: every ApplicationStatus resolves to a real, defined group — none silently vanishes', () => {
+    for (const status of APPLICATION_STATUSES) {
+      const group = stageGroupForStatus(status);
+      expect(group).toBeDefined();
+      expect(typeof group).toBe('string');
+    }
+    // Exactly one status (UNKNOWN) falls through to the catch-all bucket; every other status has
+    // a named home in DASHBOARD_STAGE_GROUPS.
+    const otherStatuses = APPLICATION_STATUSES.filter(
+      (status) => stageGroupForStatus(status) === 'OTHER',
+    );
+    expect(otherStatuses).toEqual(['UNKNOWN']);
   });
 });
 
@@ -383,5 +448,55 @@ describe('toRecentActivity', () => {
       apps,
     );
     expect(result).toEqual([]);
+  });
+
+  it('drops a SYSTEM-sourced revert-bookkeeping event — Phase 5C.4 noise-audit fix (it reads as a real transition otherwise)', () => {
+    const apps = [application({ id: 'app-1' })];
+    const result = toRecentActivity(
+      [
+        event({
+          applicationId: 'app-1',
+          source: 'SYSTEM',
+          fromStatus: 'INTERVIEW',
+          toStatus: 'APPLIED',
+        }),
+      ],
+      apps,
+    );
+    expect(result).toEqual([]);
+  });
+
+  it('the Sep 1/Sep 11 revert scenario end to end: only the original mark-applied event ever surfaces, never the accidental change or its revert', () => {
+    const apps = [application({ id: 'app-1' })];
+    const events = [
+      // Newest first, as listOwnRecentApplicationEvents returns it.
+      event({
+        id: 'revert-log',
+        applicationId: 'app-1',
+        source: 'SYSTEM',
+        fromStatus: 'INTERVIEW',
+        toStatus: 'APPLIED',
+        createdAt: '2026-01-11T00:00:00.000Z',
+      }),
+      event({
+        id: 'accidental-change',
+        applicationId: 'app-1',
+        source: 'USER',
+        fromStatus: 'APPLIED',
+        toStatus: 'INTERVIEW',
+        revertedAt: '2026-01-11T00:00:00.000Z',
+        createdAt: '2026-01-10T00:00:00.000Z',
+      }),
+      event({
+        id: 'original-mark-applied',
+        applicationId: 'app-1',
+        source: 'USER',
+        fromStatus: 'SAVED',
+        toStatus: 'APPLIED',
+        createdAt: '2026-01-01T00:00:00.000Z',
+      }),
+    ];
+    const result = toRecentActivity(events, apps);
+    expect(result.map((item) => item.event.id)).toEqual(['original-mark-applied']);
   });
 });

@@ -32,17 +32,21 @@ export default async function ApplicationDetailPage({
   if (!application) {
     notFound();
   }
-  const events = await listApplicationEvents(supabase, user.id, id);
-  const jobSnapshot = application.jobSnapshotId
-    ? await getOwnJobSnapshot(supabase, user.id, application.jobSnapshotId)
-    : null;
 
-  // Phase 5C.3C — this page only ever uses the deterministic engine to decide whether to *show*
-  // an AI-assistance panel at all; the routes those panels call independently re-derive this same
-  // decision server-side before ever calling Claude (docs/IMPLEMENTATION_PLAN.md "Phase 5C.3C"),
-  // so hiding/showing a button here is purely a UX nicety, never the actual eligibility gate.
-  const relevantStatusChangeEvents =
-    await listOwnRelevantStatusChangeEventsForApplication(supabase, user.id, id);
+  // Phase 5C.4 performance audit: these three reads are mutually independent (the only one that
+  // depends on `application` is jobSnapshot, and only on `jobSnapshotId`, already known) — fetch
+  // them together rather than serially. Phase 5C.3C's own rationale for the third read is
+  // unchanged: this page only ever uses the deterministic engine to decide whether to *show* an
+  // AI-assistance panel at all; the routes those panels call independently re-derive this same
+  // decision server-side before ever calling Claude, so hiding/showing a button here is purely a
+  // UX nicety, never the actual eligibility gate.
+  const [events, jobSnapshot, relevantStatusChangeEvents] = await Promise.all([
+    listApplicationEvents(supabase, user.id, id),
+    application.jobSnapshotId
+      ? getOwnJobSnapshot(supabase, user.id, application.jobSnapshotId)
+      : Promise.resolve(null),
+    listOwnRelevantStatusChangeEventsForApplication(supabase, user.id, id),
+  ]);
   const [applicationWithNextAction] = attachNextActions(
     [application],
     relevantStatusChangeEvents,
@@ -106,7 +110,7 @@ export default async function ApplicationDetailPage({
         </section>
       ) : null}
 
-      <section className="space-y-3">
+      <section id="mark-applied-panel" className="space-y-3">
         <h2 className="text-muted-foreground text-sm font-medium">Status</h2>
         {/* APPLIED is deliberately excluded from this generic control — it has its own dedicated
             review flow below (docs/IMPLEMENTATION_PLAN.md Phase 5B.2H), since reaching APPLIED may
@@ -158,12 +162,22 @@ export default async function ApplicationDetailPage({
         </form>
       </section>
 
+      {/* Phase 5C.4 — the `id` attributes below let dashboard action rows link straight to the
+          relevant panel (e.g. `/applications/:id#follow-up-draft-panel`) using plain HTML
+          fragment scrolling, no query-param eligibility hint of any kind: the server above has
+          already independently decided whether to render each panel at all, so a fragment can
+          only ever point at something that's actually there — it can never bypass the real
+          eligibility check either panel's own API route performs again on click. */}
       {nextAction.type === 'CONSIDER_FOLLOW_UP' ? (
-        <FollowUpDraftPanel applicationId={application.id} />
+        <div id="follow-up-draft-panel">
+          <FollowUpDraftPanel applicationId={application.id} />
+        </div>
       ) : null}
 
       {nextAction.type === 'PREPARE_INTERVIEW' ? (
-        <InterviewPrepPanel applicationId={application.id} />
+        <div id="interview-prep-panel">
+          <InterviewPrepPanel applicationId={application.id} />
+        </div>
       ) : null}
 
       {application.jobSnapshotId ? (

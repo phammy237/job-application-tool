@@ -1,6 +1,7 @@
 'use client';
 
 import { Button, Input, Textarea } from '@career-os/ui';
+import { useRouter } from 'next/navigation';
 import { useCallback, useState } from 'react';
 import type { FollowUpDraftResult } from '@career-os/shared';
 
@@ -30,6 +31,7 @@ const USED_CONTEXT_LABEL: Record<string, string> = {
  * exists here at all; the draft is copy/editable text only.
  */
 export function FollowUpDraftPanel({ applicationId }: { applicationId: string }) {
+  const router = useRouter();
   const [generation, setGeneration] = useState<GenerationState>({ status: 'idle' });
   const [editedBody, setEditedBody] = useState('');
   const [editedSubject, setEditedSubject] = useState('');
@@ -93,6 +95,7 @@ export function FollowUpDraftPanel({ applicationId }: { applicationId: string })
           variant="outline"
           size="sm"
           disabled={isGenerating}
+          aria-busy={isGenerating}
           onClick={() => void generate()}
         >
           {isGenerating ? 'Drafting…' : isReady ? 'Regenerate' : 'Draft follow-up'}
@@ -100,10 +103,16 @@ export function FollowUpDraftPanel({ applicationId }: { applicationId: string })
       </div>
 
       {generation.status === 'action_not_current' ? (
-        <p className="text-muted-foreground text-sm">
-          This application&apos;s status changed — a follow-up draft is no longer
-          suggested here. Refresh the page to see its current next action.
-        </p>
+        <div className="space-y-2">
+          <p className="text-muted-foreground text-sm">
+            This application&apos;s tracked status changed since this page loaded — a
+            follow-up draft is no longer suggested here. Reload to see its current next
+            action.
+          </p>
+          <Button variant="outline" size="sm" onClick={() => router.refresh()}>
+            Reload this page
+          </Button>
+        </div>
       ) : null}
       {generation.status === 'rate_limited' ? (
         <p className="text-muted-foreground text-sm">
@@ -134,10 +143,21 @@ export function FollowUpDraftPanel({ applicationId }: { applicationId: string })
           <Textarea
             aria-label="Follow-up message"
             value={editedBody}
-            onChange={(event) => setEditedBody(event.target.value)}
+            onChange={(event) => {
+              setEditedBody(event.target.value);
+              // An edit after copying makes the earlier "Copied" confirmation stale — the
+              // clipboard no longer matches what's on screen, so the button should offer to
+              // copy again rather than keep claiming success.
+              setCopied(false);
+            }}
             rows={8}
           />
-          <Button variant="outline" size="sm" onClick={() => void copy()}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void copy()}
+            aria-live="polite"
+          >
             {copied ? 'Copied' : 'Copy'}
           </Button>
         </div>

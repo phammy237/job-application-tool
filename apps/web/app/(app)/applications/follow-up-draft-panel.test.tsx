@@ -4,6 +4,12 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FollowUpDraftPanel } from './follow-up-draft-panel';
 
+const mocks = vi.hoisted(() => ({ refresh: vi.fn() }));
+
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ refresh: mocks.refresh }),
+}));
+
 const APPLICATION_ID = 'app-1';
 
 function jsonResponse(body: unknown, status = 200) {
@@ -15,6 +21,7 @@ function jsonResponse(body: unknown, status = 200) {
 }
 
 beforeEach(() => {
+  mocks.refresh.mockClear();
   vi.stubGlobal('fetch', vi.fn());
   vi.stubGlobal('navigator', {
     clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
@@ -124,13 +131,41 @@ describe('FollowUpDraftPanel', () => {
     );
   });
 
-  it('shows an action_not_current message and no draft when the deterministic action changed', async () => {
+  it('shows an action_not_current message, no draft, and a working Reload button when the deterministic action changed', async () => {
     (fetch as ReturnType<typeof vi.fn>).mockReturnValue(
       jsonResponse({ status: 'action_not_current', currentActionType: 'NO_ACTION' }),
     );
     render(<FollowUpDraftPanel applicationId={APPLICATION_ID} />);
     fireEvent.click(screen.getByRole('button', { name: 'Draft follow-up' }));
     await waitFor(() => expect(screen.getByText(/status changed/)).toBeInTheDocument());
+    expect(
+      screen.queryByRole('textbox', { name: 'Follow-up message' }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reload this page' }));
+    expect(mocks.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('resets the "Copied" confirmation once the draft is edited afterward — a stale claim would be misleading', async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockReturnValue(
+      jsonResponse({
+        status: 'ok',
+        draft: { subject: null, body: 'Original body.', usedContext: [] },
+      }),
+    );
+    render(<FollowUpDraftPanel applicationId={APPLICATION_ID} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Draft follow-up' }));
+    await waitFor(() => screen.getByRole('button', { name: 'Copy' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Copied' })).toBeInTheDocument(),
+    );
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Follow-up message' }), {
+      target: { value: 'Original body. Edited.' },
+    });
+    expect(screen.getByRole('button', { name: 'Copy' })).toBeInTheDocument();
   });
 
   it('shows a rate-limit message on 429', async () => {

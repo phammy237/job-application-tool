@@ -1,6 +1,7 @@
 'use client';
 
 import { Badge, Button } from '@career-os/ui';
+import { useRouter } from 'next/navigation';
 import { useCallback, useState } from 'react';
 import type { InterviewPrepResult } from '@career-os/shared';
 
@@ -22,6 +23,7 @@ type GenerationState =
  * fresh one in this UI.
  */
 export function InterviewPrepPanel({ applicationId }: { applicationId: string }) {
+  const router = useRouter();
   const [generation, setGeneration] = useState<GenerationState>({ status: 'idle' });
 
   const generate = useCallback(async () => {
@@ -75,6 +77,7 @@ export function InterviewPrepPanel({ applicationId }: { applicationId: string })
           variant="outline"
           size="sm"
           disabled={isGenerating}
+          aria-busy={isGenerating}
           onClick={() => void generate()}
         >
           {isGenerating
@@ -86,10 +89,16 @@ export function InterviewPrepPanel({ applicationId }: { applicationId: string })
       </div>
 
       {generation.status === 'action_not_current' ? (
-        <p className="text-muted-foreground text-sm">
-          This application&apos;s status changed — interview prep is no longer suggested
-          here. Refresh the page to see its current next action.
-        </p>
+        <div className="space-y-2">
+          <p className="text-muted-foreground text-sm">
+            This application&apos;s tracked status changed since this page loaded —
+            interview prep is no longer suggested here. Reload to see its current next
+            action.
+          </p>
+          <Button variant="outline" size="sm" onClick={() => router.refresh()}>
+            Reload this page
+          </Button>
+        </div>
       ) : null}
       {generation.status === 'insufficient_context' ? (
         <p className="text-muted-foreground text-sm">
@@ -162,7 +171,7 @@ function PrepSections({ prep }: { prep: InterviewPrepResult }) {
       ) : null}
 
       {prep.possibleQuestions.length > 0 ? (
-        <PrepGroup title="Possible questions">
+        <PrepGroup title="Potential questions to prepare for">
           <ul className="space-y-1.5">
             {prep.possibleQuestions.map((item, index) => (
               <li key={index} className="text-sm">

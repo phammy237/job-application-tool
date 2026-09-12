@@ -44,16 +44,16 @@ phase depends on a later phase's output.
 - [x] Phase 5C.3 — AI action assistance: explicit, user-triggered grounded follow-up drafting and
       interview preparation layered on top of (never replacing) the deterministic next-action
       engine's decision (migration 0016, both pipelines ephemeral — see "Phase 5C.3" below)
+- [x] Phase 5C.4 — Product polish and phase closure: the `COMPLETE_APPLICATION` dashboard-visibility
+      fix, dashboard→detail action handoff, AI-assistance UX/copy polish, a lightweight
+      extension→web handoff, and a recent-activity noise fix — no schema change, no migration, no
+      new AI feature (see "Phase 5C.4" below)
 - [ ] Phase 6 — Multi-user beta hardening, privacy controls, testing, deployment
 - [ ] Phase 7 — Optional mypham.space integration, public onboarding, future sharing
 
-The whole Phase 5B line (5B.0 through 5B.4, plus the hardening pass) is complete. Phase 5C.1/5C.2
-are now complete too; only 5C.3 (AI-assisted follow-up/interview-prep content drafting) remains
-unstarted within Phase 5C.
-
-Phase 5C.3 is now shipped too: explicit, user-triggered AI action assistance (grounded follow-up
-drafting, grounded interview preparation) layered on top of the Phase 5C.1 deterministic engine —
-see "Phase 5C.3 — AI action assistance" at the end of this file for the full writeup.
+The whole Phase 5B line (5B.0 through 5B.4, plus the hardening pass) is complete. Phase 5C is now
+complete end to end — 5C.1 (deterministic next actions) through 5C.4 (polish and closure) — see
+each phase's own section below for the full writeup. No 5C sub-phase remains unstarted.
 
 Phase 4A shipped: the popup classifies every detected field into a review state (sensitive /
 unsupported / already-completed / pending-suggestion / ready / suggested / needs-input),
@@ -2670,8 +2670,10 @@ deterministic reason is never hidden behind or replaced by the AI assistance lay
 `nextAction.type === 'PREPARE_INTERVIEW'`, no fetch on mount, one POST per explicit "Generate
 interview prep"/"Regenerate" click. Renders one grouped section per non-empty array in the result
 (an empty section is omitted entirely, never rendered as an empty heading) — Role priorities, What
-to emphasize, STAR stories to prepare, Possible questions, Questions to ask, Gaps to prepare,
-Answers you already submitted — plus the short `provenanceSummary` line rather than raw ids. Since
+to emphasize, STAR stories to prepare, Potential questions to prepare for (renamed from "Possible
+questions" in the Phase 5C.4 copy pass — see that section below), Questions to ask, Gaps to
+prepare, Answers you already submitted — plus the short `provenanceSummary` line rather than raw
+ids. Since
 the result is ephemeral, a page refresh simply loses it — there is no "stale persisted result" case
 to handle in this UI, by construction.
 
@@ -2861,3 +2863,312 @@ Assessment prep, offer review, and rejection reflection (mentioned as possible f
 `INTERVIEW_PREP` were judged useful v1 actions. No Gmail send integration or scope widening. No
 dashboard redesign. No change to `MARK_APPLIED`/`COMPLETE_APPLICATION` priority. No extension UI.
 No persistence beyond `ai_usage_events` telemetry.
+
+## Phase 5C.4 — Product polish and phase closure
+
+A deliberately non-feature pass: no new AI capability, no deterministic-engine redesign, no next
+major phase started. Its job was to make the already-implemented 5C.1–5C.3 line feel coherent and
+production-ready — closing the one documented product tension, tightening the dashboard→detail
+handoff, polishing AI-assistance copy/UX, adding a small extension→web handoff, fixing a real
+dashboard-noise bug, and auditing the whole line end to end for safety/performance/accessibility
+regressions. No schema change; no migration was needed or made.
+
+### 1. `COMPLETE_APPLICATION` / Attention UX — decision
+
+The tension was real, not imagined: `COMPLETE_APPLICATION` (`LOW` priority, by design) never
+appeared in "Attention needed," so a user with several `SAVED` applications and nothing
+URGENT/HIGH/MEDIUM pending saw "Nothing needs attention right now" with no visible next step for
+any of them.
+
+**Option A (promote to `MEDIUM`) was rejected.** Starting or finishing a draft application has no
+real, employer-imposed deadline — nothing supports treating it as equally pressing as an explicit
+employer ask (`REVIEW_ACTION_REQUIRED`) or a live offer decision (`REVIEW_OFFER`). Inflating it
+into "Attention needed" would have made that section's own meaning less trustworthy over time.
+
+**Option B (a separate, clearly-labeled section) was chosen.** A new `needsToFinish` predicate
+(`apps/web/lib/dashboard.ts`) — `nextAction.type === 'COMPLETE_APPLICATION'`, nothing else — powers
+a new "Applications to finish" dashboard section, positioned right after "Attention needed" and
+before "Follow-up suggestions." This exactly mirrors the existing pattern "Follow-up suggestions"
+already established for `CONSIDER_FOLLOW_UP` (also `LOW`, also excluded from `needsAttention`, also
+given its own visible home) — not a new architecture, an application of the one already there.
+`needsAttention` itself is completely untouched. The header copy was also adjusted: when nothing
+URGENT/HIGH/MEDIUM is pending but at least one application needs finishing, it now says "Nothing
+urgent right now, but N application(s) could use finishing" instead of flatly "Nothing needs
+attention right now" — accurate either way, and no longer reads as a contradiction of the section
+sitting right below it.
+
+Requirements re-verified: follow-up suggestions still never appear in "Attention needed" merely for
+being `LOW` (unchanged); `NO_ACTION` is excluded from both `needsAttention` and `needsToFinish`
+(neither predicate matches it); an ordinary `SAVED` application with `COMPLETE_APPLICATION` now has
+a visible, correctly-labeled home instead of disappearing; priority semantics are unchanged —
+nothing was inflated into MEDIUM/HIGH. Tests: `apps/web/lib/dashboard.test.ts`'s new `needsToFinish`
+describe block (disjointness from `needsAttention`, exclusion of every other next-action type).
+
+### 2. Dashboard → application-detail action handoff
+
+Every dashboard/table row linking to an application now points at the specific panel its next
+action is about, using a plain HTML fragment — never a query parameter, never anything the server
+has to interpret as an eligibility hint:
+
+- `apps/web/app/(app)/applications/[id]/page.tsx` gives the follow-up-draft panel, interview-prep
+  panel, and the "Mark applied" section stable `id` attributes (`follow-up-draft-panel`,
+  `interview-prep-panel`, `mark-applied-panel`).
+- `apps/web/app/(app)/dashboard/application-action-row.tsx` exports `ACTION_TYPE_TO_PANEL_ID`, the
+  one place mapping `NextActionType` → panel id (`CONSIDER_FOLLOW_UP`, `PREPARE_INTERVIEW`,
+  `MARK_APPLIED` only), and appends `#<panelId>` to its link when one exists.
+  `apps/web/app/(app)/applications/page.tsx`'s table reuses the same exported map for its "Next
+  action" cell.
+- `REVIEW_UNRESOLVED_FIELDS` and `COMPLETE_APPLICATION` are deliberately left unmapped (plain link
+  to the page top) rather than pointed at something that doesn't exist: unresolved-field review's
+  real UI lives in the extension popup, not this page, and there is no dedicated
+  "start this application" panel to jump to. Documented here as deferred, not hacked around.
+
+Why this is safe: the server has already independently decided whether to render each panel *at
+all* before a fragment could ever matter (the same `nextAction` the page computes for its own
+"show FollowUpDraftPanel?" check). A browser fragment can only ever scroll to something that
+already exists on the page for a reason the server already verified; it cannot make a panel appear
+that shouldn't be there, and clicking either panel's own generate button still re-triggers that
+panel's own API route, which independently re-derives eligibility again from the database — the
+fragment never bypasses that check, it only saves a scroll.
+
+### 3. AI-assistance UX polish
+
+Follow-up draft (`follow-up-draft-panel.tsx`): the deterministic reason is shown once, above the
+panel, by the page itself (unchanged from 5C.3F) — this pass added `aria-busy` on the
+generate/regenerate button, reset the "Copied" confirmation back to "Copy" the moment the draft is
+edited afterward (a stale "Copied" label would misdescribe what's actually on the clipboard), and
+replaced the plain "refresh the page" sentence in the stale-action (`action_not_current`) state
+with an actual **"Reload this page"** button (`router.refresh()`) so recovering from a stale tab is
+one click, not a manual browser action.
+
+Interview prep (`interview-prep-panel.tsx`): same `aria-busy` and "Reload this page" additions for
+its own `action_not_current` state. The "Possible questions" section heading was renamed to
+**"Potential questions to prepare for"** (§8 below) — a wording fix, not a data-shape change.
+Every other section heading was reviewed and already avoided overclaiming (see §8).
+
+Neither panel needed a broader redesign — the existing hierarchy (grouped sections, provenance
+line, human-readable "Based on N job requirements and M approved facts," no raw ids anywhere in
+the UI) already matched what this phase asked for; confirmed by direct review against the phase
+brief's checklist (role priorities / evidence to emphasize / STAR prompts / possible questions /
+questions to ask / gaps to prepare / submitted answers / provenance summary — all present, all
+human-readable, no `sourceFactIds`/requirement ids/raw JSON exposed as primary UX).
+
+### 4. Extension → web handoff
+
+The extension already had a "View in Dashboard" link (`ApplicationTracker.tsx`) pointing at
+`${API_BASE_URL}/applications/${applicationId}` — the exact application id the extension tracks
+*is* the web app's own `applications.id`, so this handoff was already reliable with no mapping
+step needed. This pass polished it into the lightweight, action-aware CTA the phase brief asked
+for: renamed to **"Open in Career OS"** (generic) or a status-specific hint
+(`openInCareerOsLabel`, `apps/extension/src/popup/lib/open-in-career-os-label.ts`) for exactly
+the four statuses whose action is fully determined by status alone —
+`ACTION_REQUIRED`/`ASSESSMENT`/`INTERVIEW`/`OFFER` — e.g. "Open Career OS to prepare for the
+interview."
+
+**Deliberately not extended to `APPLIED`/`APPLICATION_RECEIVED`** ("Open Career OS to draft a
+follow-up," one of the phase brief's own example CTAs): whether follow-up is currently suggested
+also depends on `appliedAt` and the follow-up anchor/threshold
+(`packages/shared/src/lib/next-action-rules.ts`), none of which this popup has — approximating
+that logic in the extension, even coarsely, would have been exactly the "duplication of
+next-action logic" the phase brief said to avoid where avoidable. A generic label for those two
+statuses was judged the correct, honest choice over a guess.
+
+No new browser permission, no AI call in the extension, no next-action re-derivation beyond the
+already-available `trackedStatus` field, no background/startup call of any kind — the web app
+remains fully authoritative regardless of what this label says. Test:
+`apps/extension/src/popup/lib/open-in-career-os-label.test.ts` (`openInCareerOsLabel`'s mapping,
+including the explicit assertion that `APPLIED`/`APPLICATION_RECEIVED` never mention "follow-up").
+
+### 5. Real AI smoke verification — outstanding
+
+`ANTHROPIC_API_KEY` is not configured in this environment (checked `process.env` and every
+`.env*` file — only `.env.example` exists). Per instruction, no credentials were manufactured and
+no live call was attempted. **Manual live AI verification (one real follow-up generation, one
+real interview-prep generation, against a naturally-eligible application) remains outstanding** —
+this is the same status reported at the end of Phase 5C.3's own verification pass; nothing in this
+phase changed that.
+
+### 6. Action-assistance stale-state UX
+
+Already correctly modeled before this pass (`action_not_current` status, both panels render a
+plain explanatory message, never a crash, never a generated result for the wrong action) — this
+pass's addition is purely the "Reload this page" button described in §3, so recovering is an
+actual one-click action rather than a suggestion in prose. Tests updated/added in both panels'
+test files to click the new button and assert `router.refresh()` was called.
+
+### 7/8. Follow-up and interview-prep copy quality — reviewed
+
+Searched the entire touched surface (UI copy, prompts, docs) for "overdue," "hasn't responded,"
+"ignored you," "they will ask," and equivalent overconfident phrasing — none found anywhere.
+Follow-up copy already said, and still says, "this is a recommendation, not a known employer
+deadline" (`format-next-action.ts`, unchanged) and "Career OS never sends this for you"
+(`follow-up-draft-panel.tsx`, unchanged). The one real wording fix this pass made: interview
+prep's "Possible questions" section → **"Potential questions to prepare for"** (§3 above) — the
+old heading, read on its own without the panel's disclaimer line, could be misread as a claim
+about real interview content; the new one cannot. "Areas to prepare"/"Gaps to prepare" and every
+other heading were already framed as preparation suggestions, never as predictions of what an
+interviewer will actually do.
+
+### 9. Recent-activity noise audit — real fix
+
+Found a real bug, not just confirmed correct behavior: `toRecentActivity`
+(`apps/web/lib/dashboard.ts`) excluded a *reverted* event (`revertedAt` set) but not the
+`SYSTEM`-sourced bookkeeping event `revertApplicationEvent` itself creates to log the revert. Since
+that logging event is never itself marked reverted, it would surface on the dashboard's "Recent
+activity" feed looking exactly like an ordinary status transition (e.g. "INTERVIEW → APPLIED")
+when nothing but a correction of an earlier mistake had actually happened — genuinely misleading,
+not merely noisy. Fixed by adding the same `source === 'SYSTEM'` exclusion
+`buildLastRelevantStatusActivityMap` already uses for the follow-up anchor, extended to this feed
+for the identical reason. The application detail page's own timeline is unaffected and still shows
+the complete, honest record (original event with its "(reverted)" tag, plus the revert-logging
+event) — only the dashboard-level summary feed changed. No other noise source was found:
+`ai_usage_events`, submission-packet creation, and AI draft/prep generation were never events at
+all (nothing in either AI pipeline calls `recordApplicationEvent`), and `NOTE`/`MANUAL_EDIT`/
+`EMAIL_MATCHED` event types were already excluded (unchanged from Phase 5C.2F). Tests: three new
+cases in `dashboard.test.ts`'s `toRecentActivity` block, including a full Sep 1/Sep 11-style
+end-to-end scenario asserting only the genuine original event ever surfaces.
+
+### 10. Pipeline-overview audit — confirmed correct, strengthened with exhaustive coverage
+
+All 11 `ApplicationStatus` values were already accounted for (`DASHBOARD_STAGE_GROUPS` covers 10
+explicitly; `UNKNOWN` falls through `stageGroupForStatus`'s `?? 'OTHER'` fallback rather than
+vanishing) — confirmed correct, not a bug. Added one new test that iterates the real
+`APPLICATION_STATUSES` constant from `packages/shared` (rather than a hand-typed list that could
+drift from the schema) and asserts every status resolves to a defined group, with exactly
+`['UNKNOWN']` falling into `'OTHER'` — so a future status added to the enum without updating
+`DASHBOARD_STAGE_GROUPS` now fails a test immediately instead of silently vanishing from the
+pipeline overview.
+
+### 11/12. Accessibility, responsive, and loading/error states
+
+Reviewed the touched components against the phase brief's checklist. Fixes actually made (not a
+redesign): `aria-busy` on both AI-assistance generate/regenerate buttons; `aria-live="polite"` on
+the follow-up draft's Copy button so its label change is announced; the Copy-then-edit staleness
+fix (§3); the stale-action "Reload this page" button (§3/§6) replacing a text-only instruction.
+Confirmed already fine, no change needed: every interactive control in the touched components is a
+native `<button>`/`<input>`/`<textarea>`/`<a>` (keyboard-operable by construction); subject/body
+inputs already have `aria-label`s; disabled states use the shared `Button` component's existing
+`disabled:opacity-50 disabled:pointer-events-none` styling, which is visually and semantically
+clear; the dashboard's pipeline-overview grid (`grid sm:grid-cols-5`) already stacks to one column
+below the `sm` breakpoint rather than squeezing five columns onto a phone width; row/card text
+wrappers already use `min-w-0` so a long company/title string wraps instead of overflowing.
+Error messages throughout (rate limit, provider error, insufficient context, stale action) were
+already user-readable prose, never a raw response body, stack trace, or DB error string — confirmed
+by re-reading every error branch in both AI-assistance routes and panels; no change needed.
+
+### 13. Performance/query audit
+
+Found and fixed one real regression: the application detail page
+(`apps/web/app/(app)/applications/[id]/page.tsx`) fetched its timeline events, job snapshot, and
+relevant status-change events **serially** (three sequential `await`s) even though only the job
+snapshot read depends on anything from the first read (`application.jobSnapshotId`, already known
+immediately after the first query). Changed to a single `Promise.all([...])` for those three
+independent reads — same total query count, strictly less latency, no behavior change. Everywhere
+else already correct: the dashboard's three top-level queries were already parallelized (Phase
+5C.2H, unchanged); `attachNextActions`/`buildLastRelevantStatusActivityMap` are still one bulk
+query, never one per application; neither AI-assistance pipeline introduced a duplicate read (each
+retrieval call in `generate-follow-up-draft.ts`/`generate-interview-prep.ts` fetches something the
+other doesn't). No caching of derived `NextAction` state was added anywhere — every page still
+recomputes it fresh from the database on every render, exactly as before; this phase did not
+introduce any staleness risk by trying to memoize it.
+
+### 14. AI auto-run audit — re-confirmed clean
+
+Repeated the repo-wide search for `follow-up-draft`/`interview-prep`/`generateFollowUpDraft`/
+`generateInterviewPrep`: still exactly the two panels' own `onClick`-bound `generate()` callbacks,
+the two routes, the two pipelines, and their own tests/exports/docs — no new call site was added by
+this polish pass. No `useEffect`, no dashboard/application loader call, no Gmail sync call, no
+extension startup call, no background timer, anywhere.
+
+### 15. Gmail/OAuth scope audit — unchanged
+
+No file under `apps/web/app/api/gmail/` or `apps/web/lib/gmail-oauth-config.ts` was touched by this
+phase. No `gmail.send`/`gmail.compose`/`gmail.modify` scope exists anywhere in this codebase (the
+extension handoff link in §4 only ever opens a new browser tab to the Career OS web app itself,
+never a Gmail URL, and requests no permission at all to do so). Follow-up drafts remain
+editable/copyable/manually-used only; no auto-send, no silent Gmail draft creation.
+
+### 16. Application-state mutation safety — strengthened
+
+The guarantee ("AI assistance can never mutate `applications`/`application_events`/
+`submission_packets`") was previously only implicit (an unmocked database export would throw if
+called). This pass made it an explicit regression test in both
+`generate-follow-up-draft.test.ts` and `generate-interview-prep.test.ts`: every mutating query
+function this repo has for those tables (`changeOwnApplicationStatus`,
+`markApplicationAppliedAtomic`, `recordApplicationEvent`, `revertApplicationEvent`,
+`updateOwnApplication`) is now explicitly stubbed and asserted `not.toHaveBeenCalled()`, on both
+the success path and a rejected/retried path — so a future change that starts calling one of them
+fails a named, specific test immediately instead of relying on an accidental `undefined()` crash to
+notice.
+
+### 17. Documentation closure
+
+This section. Also updated: `docs/USER_FLOWS.md` (the "Applications to finish" section and the
+handoff/copy wording), `docs/PRODUCT_SPEC.md` (the new dashboard section named), `docs/AI_GROUNDING.md`
+(no grounding-mechanism change, so no edit needed there beyond what 5C.3 already documented — the
+copy renaming is UI text, not a grounding claim), and `docs/EXTENSION_DESIGN.md` §7 (the enhanced
+"Open in Career OS" link).
+
+### Files changed (Phase 5C.4)
+
+- `apps/web/lib/dashboard.ts` (+test) — `needsToFinish`; `toRecentActivity`'s `SYSTEM`-source fix;
+  doc-comment updates.
+- `apps/web/app/(app)/dashboard/page.tsx` — "Applications to finish" section; header copy.
+- `apps/web/app/(app)/dashboard/application-action-row.tsx` — exported `ACTION_TYPE_TO_PANEL_ID`;
+  hash-fragment links.
+- `apps/web/app/(app)/applications/page.tsx` — "Next action" cell links to the right panel.
+- `apps/web/app/(app)/applications/[id]/page.tsx` — panel `id` attributes; parallelized the three
+  independent reads.
+- `apps/web/app/(app)/applications/follow-up-draft-panel.tsx` (+test) — Reload button, `aria-busy`,
+  Copy staleness fix, `aria-live`.
+- `apps/web/app/(app)/applications/interview-prep-panel.tsx` (+test) — Reload button, `aria-busy`,
+  "Potential questions to prepare for" rename.
+- `apps/extension/src/popup/components/ApplicationTracker.tsx` — uses the label helper.
+- `apps/extension/src/popup/lib/open-in-career-os-label.ts` (+test) — `openInCareerOsLabel`,
+  in its own module (not inline in the component) so the component file keeps exporting only its
+  component, matching this popup's react-refresh convention.
+- `packages/ai/src/generate-follow-up-draft.test.ts`, `generate-interview-prep.test.ts` —
+  application-state safety regression tests.
+- `docs/IMPLEMENTATION_PLAN.md`, `docs/USER_FLOWS.md`, `docs/PRODUCT_SPEC.md`,
+  `docs/EXTENSION_DESIGN.md`.
+
+### Tests (Phase 5C.4)
+
+`apps/web`: +11 in `dashboard.test.ts` (`needsToFinish`, the `toRecentActivity` `SYSTEM`-exclusion
+fix and end-to-end scenario, the exhaustive `stageGroupForStatus` audit), +2 in
+`follow-up-draft-panel.test.tsx`, unchanged count but updated assertions in
+`interview-prep-panel.test.tsx`. `packages/ai`: +4 (2 application-state safety tests per pipeline).
+`apps/extension`: +1 new test file, 3 cases (`open-in-career-os-label.test.ts`). No test was removed;
+every pre-existing test that referenced changed copy/behavior was updated to match, never simply
+deleted to make the suite pass.
+
+### No migration needed
+
+Confirmed and re-confirmed: nothing in this phase required a schema change. `needsToFinish` and the
+`toRecentActivity` fix are pure functions of already-fetched data; the dashboard/detail handoff is
+client-side HTML fragments; the extension label is a pure string function of an already-available
+field; the parallelized queries changed nothing about what's queried, only when.
+
+### Deferred (explicitly, not silently)
+
+- `REVIEW_UNRESOLVED_FIELDS`/`COMPLETE_APPLICATION` have no dedicated detail-page panel to deep-link
+  to yet (§2) — a real future polish item if either ever gets one.
+- Real live AI smoke verification (§5) — blocked purely on `ANTHROPIC_API_KEY` not being configured
+  in this environment; not a code gap.
+- `MARK_APPLIED`/`COMPLETE_APPLICATION` priority remains exactly as flagged in the first Phase 5C
+  hardening pass and re-flagged in 5C.3Q — still a deliberate product decision for later, not
+  folded into this pass (per explicit instruction not to blindly promote `COMPLETE_APPLICATION`).
+
+### Phase closure checklist
+
+Can the user: see what needs attention (Attention needed) — yes. See pipeline stage (Pipeline
+overview, all 11 statuses accounted for) — yes. See recent meaningful activity (Recent activity,
+now with the `SYSTEM`-bookkeeping fix) — yes. Know why a follow-up is suggested (the always-shown
+deterministic reason line, both on the dashboard row and the detail page) — yes. Finish/find
+incomplete applications (the new "Applications to finish" section) — yes, closing this pass's
+primary gap. Mark applied through the safe Phase 5B gate — yes, unchanged. Draft a follow-up
+explicitly — yes. Prepare for an interview explicitly — yes. Review immutable submitted information
+— yes (`submittedAnswersToReview`, the submission-packet viewer). Understand when AI is being used
+— yes (explicit buttons, "AI-generated" labels, no automatic calls anywhere, verified §14). Remain
+in control of every outbound action — yes (no send capability exists anywhere; every AI output is
+copy/edit-only). No materially "no" answer was found; Phase 5C is product-complete for v1.

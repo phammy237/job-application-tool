@@ -13,6 +13,7 @@ import Link from 'next/link';
 import { requireUser } from '../../../lib/auth';
 import { attachNextActions } from '../../../lib/dashboard';
 import { createClient } from '../../../lib/supabase/server';
+import { ACTION_TYPE_TO_PANEL_ID } from '../dashboard/application-action-row';
 import { PriorityBadge } from '../dashboard/priority-badge';
 import { createApplication } from './actions';
 
@@ -131,7 +132,16 @@ export default async function ApplicationsPage({
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-2">
                     <PriorityBadge priority={nextAction.priority} />
-                    <span>{formatNextAction(nextAction).title}</span>
+                    {ACTION_TYPE_TO_PANEL_ID[nextAction.type] ? (
+                      <Link
+                        href={`/applications/${application.id}#${ACTION_TYPE_TO_PANEL_ID[nextAction.type]}`}
+                        className="hover:text-primary hover:underline"
+                      >
+                        {formatNextAction(nextAction).title}
+                      </Link>
+                    ) : (
+                      <span>{formatNextAction(nextAction).title}</span>
+                    )}
                   </div>
                 </td>
                 <td className="text-muted-foreground px-4 py-3">

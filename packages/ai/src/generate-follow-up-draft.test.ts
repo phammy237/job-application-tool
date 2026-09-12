@@ -10,6 +10,15 @@ const mocks = vi.hoisted(() => ({
   incrementOwnAiRequestUsage: vi.fn(),
   recordAiUsageEvent: vi.fn(),
   callClaudeForFollowUpDraft: vi.fn(),
+  // Phase 5C.4 application-state safety audit: every mutating query function this repo has for
+  // `applications`/`application_events`/`submission_packets`, explicitly stubbed so a regression
+  // that starts calling one of them is caught immediately by the `not.toHaveBeenCalled()`
+  // assertions below — stronger than relying on "an unmocked export is undefined and throws."
+  changeOwnApplicationStatus: vi.fn(),
+  markApplicationAppliedAtomic: vi.fn(),
+  recordApplicationEvent: vi.fn(),
+  revertApplicationEvent: vi.fn(),
+  updateOwnApplication: vi.fn(),
 }));
 
 vi.mock('@career-os/database', () => ({
@@ -21,6 +30,11 @@ vi.mock('@career-os/database', () => ({
   listOwnEmailSignalsForApplication: mocks.listOwnEmailSignalsForApplication,
   incrementOwnAiRequestUsage: mocks.incrementOwnAiRequestUsage,
   recordAiUsageEvent: mocks.recordAiUsageEvent,
+  changeOwnApplicationStatus: mocks.changeOwnApplicationStatus,
+  markApplicationAppliedAtomic: mocks.markApplicationAppliedAtomic,
+  recordApplicationEvent: mocks.recordApplicationEvent,
+  revertApplicationEvent: mocks.revertApplicationEvent,
+  updateOwnApplication: mocks.updateOwnApplication,
 }));
 
 vi.mock('./claude/call-claude', () => ({
@@ -309,5 +323,31 @@ describe('generateFollowUpDraft — usage telemetry and routing', () => {
         applicationId: APPLICATION_ID,
       }),
     );
+  });
+});
+
+describe('generateFollowUpDraft — application-state safety (Phase 5C.4 audit)', () => {
+  it('never calls any function that could mutate application status, applied_at, submission_packet_id, packet content, or event history — success path', async () => {
+    const result = await generateFollowUpDraft(FAKE_SUPABASE, USER_ID, PARAMS);
+    expect(result.status).toBe('ok');
+    expect(mocks.changeOwnApplicationStatus).not.toHaveBeenCalled();
+    expect(mocks.markApplicationAppliedAtomic).not.toHaveBeenCalled();
+    expect(mocks.recordApplicationEvent).not.toHaveBeenCalled();
+    expect(mocks.revertApplicationEvent).not.toHaveBeenCalled();
+    expect(mocks.updateOwnApplication).not.toHaveBeenCalled();
+  });
+
+  it('never calls any mutating function even when the draft is rejected/retried', async () => {
+    mocks.callClaudeForFollowUpDraft.mockResolvedValue({
+      status: 'ok',
+      rawText: draftJson({ body: 'Following up after our interview last week.' }),
+    });
+    const result = await generateFollowUpDraft(FAKE_SUPABASE, USER_ID, PARAMS);
+    expect(result).toEqual({ status: 'validation_failed' });
+    expect(mocks.changeOwnApplicationStatus).not.toHaveBeenCalled();
+    expect(mocks.markApplicationAppliedAtomic).not.toHaveBeenCalled();
+    expect(mocks.recordApplicationEvent).not.toHaveBeenCalled();
+    expect(mocks.revertApplicationEvent).not.toHaveBeenCalled();
+    expect(mocks.updateOwnApplication).not.toHaveBeenCalled();
   });
 });

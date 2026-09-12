@@ -198,8 +198,22 @@ Sections, top to bottom:
    job is already tracked) — creates or updates the `applications` row as `SAVED` or
    `IN_PROGRESS`; safe to click before, during, or after autofill, and repeatedly (see
    `docs/DATA_MODEL.md` "applications" for the dedup/upsert behavior). Never sets `APPLIED`.
-7. **View in Dashboard** link — opens `/applications/:id` on the web app once the job is
-   tracked.
+7. **"Open in Career OS" link** — opens `/applications/:id` on the web app once the job is
+   tracked (Phase 5C.3/5C.4: the same application id the extension already tracks is the exact
+   id the web app's application detail page — including its Phase 5C.3 AI-assistance panels —
+   uses, so this handoff has always been reliable with no separate mapping step). Its label is a
+   lightweight, non-authoritative hint from `trackedStatus` alone
+   (`apps/extension/src/popup/lib/open-in-career-os-label.ts`'s `openInCareerOsLabel`):
+   `ACTION_REQUIRED`/`ASSESSMENT`/`INTERVIEW`/`OFFER` — the four statuses whose next action is
+   fully determined by status alone, no date/threshold logic involved — get a specific label
+   ("Open Career OS to prepare for the interview," etc.); every other status gets the generic
+   "Open in Career OS." Deliberately does **not** attempt "Open Career OS to draft a follow-up"
+   for `APPLIED`/`APPLICATION_RECEIVED`: that decision also depends on `appliedAt` and the
+   follow-up anchor/threshold (`packages/shared/src/lib/next-action-rules.ts`), which this popup
+   does not have and must not duplicate. No AI call, no next-action re-derivation, and no new
+   permission of any kind — the web app's own application detail page independently re-derives
+   the real next action and each AI-assistance route independently re-verifies eligibility again
+   before ever calling Claude, regardless of what this label said.
 8. **Mark as Applied** button — a separate section, gated behind an explicit inline
    confirmation step ("Mark this application as applied?" → Yes/Cancel). The only control
    anywhere in the extension that can set status `APPLIED`; never triggered by filling,

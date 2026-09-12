@@ -119,26 +119,32 @@ preferences, relocation preferences, links, and résumé versions. Full fact sch
 Statuses: `SAVED`, `IN_PROGRESS`, `APPLIED`, `APPLICATION_RECEIVED`, `ASSESSMENT`,
 `INTERVIEW`, `ACTION_REQUIRED`, `OFFER`, `REJECTED`, `WITHDRAWN`, `UNKNOWN`.
 
-Dashboard surfaces (as actually built — see `docs/IMPLEMENTATION_PLAN.md` Phase 5C.1/5C.2 for
+Dashboard surfaces (as actually built — see `docs/IMPLEMENTATION_PLAN.md` Phase 5C.1/5C.2/5C.4 for
 the full design): an attention-sorted overview (`/dashboard`) grouping applications by a
-deterministically-derived next action rather than a flat list — attention-needed, follow-up
-suggestions (explicitly labeled as a Career OS recommendation, never a known employer deadline),
-a pipeline-stage count breakdown, and a recent-activity feed of real status-change events; a
-table view (`/applications`) with status filtering, free-text company/title search, and each
-row's next action; an application detail page (notes, associated résumé, generated-answer
-history, event timeline, manual status changes, undo for automated updates). No Kanban view,
-location/date filters, or rate-based summary metrics (interview rate, offer rate, etc.) exist
-yet — Phase 5C.2 deliberately preferred plain counts over percentages for a v1 with a small
-per-user sample size; a rate metric may be added later if it can be computed transparently.
+deterministically-derived next action rather than a flat list — attention-needed, applications to
+finish (Phase 5C.4 — a separately-labeled, still-`LOW`-priority home for `SAVED`/not-yet-reviewed
+applications, never counted as an urgent need), follow-up suggestions (explicitly labeled as a
+Career OS recommendation, never a known employer deadline), a pipeline-stage count breakdown, and
+a recent-activity feed of real status-change events; a table view (`/applications`) with status
+filtering, free-text company/title search, and each row's next action; an application detail page
+(notes, associated résumé, generated-answer history, event timeline, manual status changes, undo
+for automated updates). Every dashboard/table row linking to an application jumps straight to the
+relevant panel on the detail page via a plain page anchor — never a mechanism that bypasses the
+detail page's own re-check of what's currently true. No Kanban view, location/date filters, or
+rate-based summary metrics (interview rate, offer rate, etc.) exist yet — Phase 5C.2 deliberately
+preferred plain counts over percentages for a v1 with a small per-user sample size; a rate metric
+may be added later if it can be computed transparently.
 
 The application detail page also offers explicit, user-triggered AI *assistance* on top of two
 next actions (Phase 5C.3, see `docs/IMPLEMENTATION_PLAN.md` "Phase 5C.3" for the full design): a
 grounded follow-up-message draft when the next action is "Consider following up," and grounded
 interview-preparation material (role priorities, evidence to emphasize, STAR-story prompts,
-possible question topics, questions to ask, gaps to prepare) when the next action is "Prepare for
-the interview." Neither feature runs automatically, neither changes an application's status or
-priority, and neither can send anything — Career OS drafts, the user sends. AI never decides
-whether or when to follow up; that stays entirely deterministic.
+potential questions to prepare for, questions to ask, gaps to prepare) when the next action is
+"Prepare for the interview." Neither feature runs automatically, neither changes an application's
+status or priority, and neither can send anything — Career OS drafts, the user sends. AI never
+decides whether or when to follow up; that stays entirely deterministic. The extension popup, once
+a job is tracked, also offers a lightweight "Open in Career OS" handoff link to the same detail
+page (Phase 5C.4) — never AI content generation inside the popup itself.
 
 ## 8. Initial beta constraints
 
