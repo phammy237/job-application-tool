@@ -1,18 +1,31 @@
 /**
- * Hand-authored Supabase database types for the Phase 1 schema
- * (supabase/migrations/0001_init.sql). Regenerate/extend with
- * `supabase gen types typescript` once a live project exists — until then this file is the
- * source of truth for `packages/database`'s query layer and must be kept in sync with the
- * migration by hand.
+ * Hand-maintained Supabase database types — this is NOT a generated file, and it is not meant
+ * to become one on some future trigger. A live Supabase project has existed since the Phase 1
+ * commit, and every phase since (through Phase 6A) has continued to hand-add each migration's
+ * new tables/columns/functions here rather than switching to `supabase gen types typescript`.
+ * That is the established, intentional practice for this repo (see `packages/database/README.md`
+ * and docs/IMPLEMENTATION_PLAN.md's Phase 5B.1 file list, which already called this out
+ * explicitly) — not a stopgap. Whoever adds a migration keeps this file in sync by hand, in the
+ * same PR, matching each new/changed column's actual nullability and required-on-insert status.
  *
- * Every table includes `Relationships: []` even where FKs exist (e.g. experiences ->
+ * The live Supabase schema — not this file — is the authoritative source of truth. Verify this
+ * file against it periodically with `supabase gen types typescript --linked` (compare, don't
+ * blindly overwrite: the real output's shape differs structurally — `type` vs `interface`,
+ * per-column `Insert`/`Update` instead of this file's `Partial<Row> & {...}` pattern, real
+ * `Relationships` entries, an `__InternalSupabase` block, and a boilerplate `graphql_public`
+ * schema — so a wholesale replacement is a real design decision, not a routine sync).
+ *
+ * Every table here includes `Relationships: []` even where FKs exist (e.g. experiences ->
  * candidate_facts) because postgrest-js's `GenericTable` constraint requires the field to be
  * present for the query builder's generics to resolve at all — an empty array just means no
  * embedded-resource (`.select('*, other_table(*)')`) queries are typed yet. Add real
  * relationship descriptors here if/when a query needs to embed a related table.
  *
- * Tables intentionally NOT included yet (added in their respective phases):
- * email_connections / email_signals (Phase 5).
+ * CHECK-constrained text columns (e.g. `contacts.source`, `applications.status`) are typed as
+ * plain `string` here, matching what real generation would also produce — Postgres CHECK
+ * constraints don't reflect into TypeScript literal unions either way. The real enum narrowing
+ * for those columns lives in `@career-os/shared`'s Zod schemas, applied when a query module maps
+ * a raw row into its domain type.
  */
 
 export type Json = string | number | boolean | null | { [key: string]: Json } | Json[];
