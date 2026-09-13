@@ -189,6 +189,26 @@ false`, `visibleOnPublicProfile = false`. Nothing extracted is usable until step
 5. User can disconnect Gmail and delete all stored signals at any time from `/settings`; this
    also stops future syncs immediately.
 
+## 7A. Networking / contacts (Phase 6A)
+
+1. User opens **Network** from the sidebar. `/network` lists their own contacts, searchable by
+   name, company, title, or email, with each contact's relationship tags shown as badges.
+2. **Add a contact** (from `/network`, or from an application's People section): fills in a
+   name (the only required field) and any of email/phone/LinkedIn/company/title/location/notes/
+   tags. Before saving, Career OS checks for an exact email match, an exact LinkedIn match, or a
+   matching name+company against the user's existing contacts — a match shows "This may already
+   exist" with a link to the candidate; the user can open it instead, or save anyway. Nothing is
+   ever auto-merged.
+3. From an application's detail page, the **People** section shows everyone linked to that
+   application with their role on it (recruiter, referrer, interviewer, …) — distinct from the
+   contact's own longer-lived relationship tags. The user can link an existing contact (search +
+   pick a role) or add a new one, prefilled with that application's company.
+4. From a contact's own `/network/[id]` page, the user can edit any field (same duplicate check
+   re-runs, excluding the contact being edited from its own results), see every application
+   they're linked to, link/unlink applications, or delete the contact outright.
+5. Nothing here calls Claude, touches Gmail, or appears on any public page — contacts are
+   private, user-owned data end to end.
+
 ## 8. Deletion flows
 
 Each of the following is a first-class, discoverable action (not "contact support"):
@@ -198,14 +218,17 @@ Each of the following is a first-class, discoverable action (not "contact suppor
    answers as standalone profile history — UX decision made in Phase 1/4 design, not this
    doc). Its linked job snapshot and any requirement-mapping runs are **not** deleted — they're
    independently user-owned (Phase 5A) and only ever removed via full account deletion below;
-   there's no per-row deletion path for them in Phase 5A.
+   there's no per-row deletion path for them in Phase 5A. Any `application_contacts` links are
+   removed, but the linked contacts themselves are not (Phase 6A).
 2. **Delete a résumé** — removes the file from Storage and the `resumes` row; facts sourced
    from it are flagged (not silently deleted) so the user can decide whether to keep them as
    manually-verified.
 3. **Delete generated content** — removes a `generated_answers` row.
 4. **Disconnect Gmail** — revokes the OAuth token, deletes the `email_connections` row and
    all associated `email_signals`.
-5. **Delete entire account** — cascades through every user-owned table (enforced by FK
+5. **Delete a contact** (Phase 6A) — removes the `contacts` row along with its `contact_tags`
+   and any `application_contacts` links; the applications it was linked to are untouched.
+6. **Delete entire account** — cascades through every user-owned table (enforced by FK
    `ON DELETE CASCADE` from `auth.users`, see `docs/DATA_MODEL.md`), removes Storage objects,
    and revokes any external tokens (Gmail) before the row deletion completes.
 

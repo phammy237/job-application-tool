@@ -15,6 +15,7 @@ import { DeleteApplicationButton } from '../delete-application-button';
 import { FollowUpDraftPanel } from '../follow-up-draft-panel';
 import { InterviewPrepPanel } from '../interview-prep-panel';
 import { MarkAppliedPanel } from '../mark-applied-panel';
+import { PeopleSection } from '../people-section';
 import { RequirementAnalysisPanel } from '../requirement-analysis-panel';
 import { RevertEventButton } from '../revert-event-button';
 import { SubmissionPacketSection } from '../submission-packet-section';
@@ -195,6 +196,13 @@ export default async function ApplicationDetailPage({
           applicationId={application.id}
         />
       ) : null}
+
+      <PeopleSection
+        supabase={supabase}
+        userId={user.id}
+        applicationId={application.id}
+        company={application.company}
+      />
 
       <section className="space-y-3">
         <h2 className="text-muted-foreground text-sm font-medium">Timeline</h2>

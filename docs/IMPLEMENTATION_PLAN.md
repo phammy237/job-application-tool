@@ -48,8 +48,13 @@ phase depends on a later phase's output.
       fix, dashboard→detail action handoff, AI-assistance UX/copy polish, a lightweight
       extension→web handoff, and a recent-activity noise fix — no schema change, no migration, no
       new AI feature (see "Phase 5C.4" below)
-- [ ] Phase 6 — Multi-user beta hardening, privacy controls, testing, deployment
-- [ ] Phase 7 — Optional mypham.space integration, public onboarding, future sharing
+- [x] Phase 6A — Networking CRM foundation: private contacts, relationship tags,
+      application↔contact links, /network + application People UI, deterministic duplicate
+      warnings (migration 0017, pgTAP-verified live against the linked Supabase project — see
+      "Phase 6A" below). Interactions, reminders, Gmail contact suggestions, and any networking
+      AI are explicitly deferred to a later Phase 6 slice (6B+).
+- [ ] Phase 7 — Multi-user beta hardening, privacy controls, testing, deployment
+- [ ] Phase 8 — Optional mypham.space integration, public onboarding, future sharing
 
 The whole Phase 5B line (5B.0 through 5B.4, plus the hardening pass) is complete. Phase 5C is now
 complete end to end — 5C.1 (deterministic next actions) through 5C.4 (polish and closure) — see
@@ -601,7 +606,113 @@ Add `email_connections`, `email_signals` tables + RLS (per `docs/DATA_MODEL.md`)
 
 ---
 
-## Phase 6 — Multi-user beta hardening, privacy controls, testing, deployment
+## Phase 6 — Networking / CRM
+
+A private, user-owned networking layer alongside the existing application tracker — contacts,
+their relationship to the user, and their relationship to specific applications. Built as a
+sequence of narrow slices; later slices assume earlier ones are solid, same posture as Phase 5B/
+5C's lettered sub-phases.
+
+### Phase 6A — Networking CRM foundation (complete)
+
+The first slice: the private contact model and the two link tables everything else in Phase 6
+builds on, plus the minimum UI to use them. No AI, no Gmail, no extension changes, no
+interactions/reminders — see "Explicitly excluded from Phase 6A" below.
+
+**Established design decisions** (treated as settled for every 6A+ slice unless a real
+implementation constraint contradicts them): contacts are private, user-owned, and reusable
+across many applications (never duplicated per application), so application↔contact is a join
+table; `current_company` stays free text — no `companies` table; relationship tags are
+multi-select and distinct from a per-application role; ordinary CRM data uses normal editable
+RLS, not Phase 5B's immutable-history semantics; composite ownership FKs structurally reject
+cross-user relationships; duplicate detection warns and never auto-merges.
+
+#### Database changes
+
+Migration `0017_networking_contacts.sql` — three new tables, additive only, no existing table
+altered:
+
+- `contacts` — `display_name` and `source` required, everything else nullable. `source` is
+  `MANUAL | APPLICATION_CONTEXT | OTHER` — only the values this slice can actually produce; no
+  speculative `EMAIL_SUGGESTION`/`IMPORT` value added ahead of the feature that would create it.
+- `contact_tags` — multi-select relationship classification (`RECRUITER, HIRING_MANAGER,
+  EMPLOYEE, ALUMNI, MENTOR, PROFESSOR, FRIEND, CLASSMATE, REFERRER, NETWORKING_CONTACT, OTHER`),
+  primary key `(user_id, contact_id, tag)`.
+- `application_contacts` — join table with a per-application role (`RECRUITER, HIRING_MANAGER,
+  REFERRER, INTERVIEWER, EMPLOYEE_CONTACT, OTHER`), primary key `(user_id, application_id,
+  contact_id, role)`, composite FKs to both `applications(user_id, id)` and `contacts(user_id,
+  id)`.
+
+Full column-level detail: `docs/DATA_MODEL.md` "`contacts`", "`contact_tags`",
+"`application_contacts`". RLS: the ordinary four-policy pattern for `contacts`; `select`/
+`insert`/`delete` only for the two link tables (no mutable payload beyond their key, so no
+`update` policy is needed — see the migration's own comments).
+
+Deliberately **not** added in this slice, all confirmed as premature by the same review that
+scoped it: `source_email_signal_id` (no Gmail contact suggestions yet — the composite FK/
+`on delete set null` handling that would need isn't worth solving before the feature exists),
+`last_interaction_at`/`follow_up_at` (no interactions or reminders yet).
+
+#### Shared domain types (`packages/shared`)
+
+`schemas/contact.ts` — `contactSourceSchema`, `contactTagSchema`, `applicationContactRoleSchema`,
+`contactSchema`, `createContactInputSchema`/`updateContactInputSchema`,
+`applicationContactSchema`, `possibleDuplicateReasonSchema`/`possibleDuplicateContactSchema`.
+`lib/contact-duplicate-detection.ts` — pure normalizers (`normalizeContactEmail`,
+`normalizeLinkedInUrl`, `normalizeContactDisplayName`/`normalizeContactCompany`) and
+`findPossibleDuplicateContacts`, matching on exact normalized email, exact normalized LinkedIn
+URL, or normalized display name + company, in that priority order.
+
+#### Database query layer (`packages/database`)
+
+`queries/contacts.ts` — full CRUD plus `listOwnContactTagsForContacts`/
+`countOwnApplicationLinksForContacts` (batched across a list of contacts — the /network list page
+does not issue one query per row) and `findOwnPossibleDuplicateContacts` (fetches the user's own
+contacts, small by design, and runs the shared package's pure matcher against them).
+`queries/application-contacts.ts` — `listOwnApplicationContacts`/`listOwnApplicationsForContact`
+(each two queries: link rows, then a single batched `in(...)` fetch of the other side — never
+N+1), `linkOwnContactToApplication` (maps the primary key's unique-violation into a friendly
+error), `unlinkOwnContactFromApplication`.
+
+#### UI (`apps/web`)
+
+- `/network` — list, search (over `display_name`/`current_company`/`current_title`/`email`,
+  same simple `ilike` approach as the applications list's search), and an "Add contact" form.
+- `/network/[id]` — detail: contact info, tags, notes, linked applications (with unlink and a
+  "link to an existing application" control), edit, delete.
+- `apps/web/app/(app)/applications/[id]`'s new "People" section — contacts linked to that one
+  application, "link existing contact" (searches the user's own contacts) and "add new contact"
+  (prefills `current_company` from the application, source `APPLICATION_CONTEXT`, links
+  immediately on creation).
+- Shared `ContactForm` client component backs all three creation/edit surfaces above — every
+  save runs `findOwnPossibleDuplicateContacts` first; a match shows "This may already exist"
+  with a link to the existing contact and lets the user cancel or save anyway. Never blocks,
+  never auto-merges.
+- `Network` added to the authenticated app's sidebar nav. No public route touches any of this.
+
+#### Tests
+
+pgTAP: `supabase/tests/database/0021_networking_contacts.test.sql` (32 assertions) — RLS
+isolation and ownership for all three tables, cross-user composite-FK rejection on both sides of
+`application_contacts`, the primary key rejecting an exact duplicate link, and cascade behavior
+(deleting a contact removes its tags/links but never the application; deleting an application
+removes its links but never the contact). Unit tests across `packages/shared` (schemas,
+normalizers, `findPossibleDuplicateContacts`), `packages/database` (query modules, mocked
+Supabase client), and `apps/web` (server actions, the `ContactForm` duplicate-warning flow, the
+`/network` and `/network/[id]` pages, and the application People section).
+
+#### Explicitly excluded from Phase 6A (deferred to a later Phase 6 slice)
+
+- `contact_interactions`, coffee-chat/call/meeting logging.
+- `follow_up_at`/reminders, a networking next-action engine, thank-you heuristics.
+- Gmail → contact suggestions, sender-header parsing, `source_email_signal_id`.
+- Any AI: outreach drafting, referral drafting, coffee-chat prep, contact classification.
+- Dashboard networking widgets, extension networking features, LinkedIn/Google Contacts
+  integration, bulk import, a `companies` table, contact merge.
+
+---
+
+## Phase 7 — Multi-user beta hardening, privacy controls, testing, deployment
 
 ### Goals
 
@@ -651,14 +762,14 @@ completeness).
 - Staging deployment matches the target architecture in `docs/DEPLOYMENT.md`.
 - A small set of real test users (beyond the product owner) can use the full workflow.
 
-### Explicitly excluded from Phase 6
+### Explicitly excluded from Phase 7
 
 - Public signups (`public_signups_enabled` stays off).
 - Billing.
 
 ---
 
-## Phase 7 — Optional mypham.space integration, public onboarding, future sharing
+## Phase 8 — Optional mypham.space integration, public onboarding, future sharing
 
 ### Goals
 
@@ -693,8 +804,8 @@ place from Phase 1). Possibly a `public_slug`-based lookup index on `profiles`.
 - Public export accidentally including unapproved or private facts — mitigated by filtering
   `visible_on_public_profile = true` in the database query itself, not in a post-processing
   step that could be bypassed by a code path change.
-- Public signups reintroducing all Phase 6 isolation concerns at greater scale — mitigated by
-  treating the feature-flag flip as a deliberate go/no-go decision gated on Phase 6 sign-off,
+- Public signups reintroducing all Phase 7 isolation concerns at greater scale — mitigated by
+  treating the feature-flag flip as a deliberate go/no-go decision gated on Phase 7 sign-off,
   not an automatic consequence of this phase shipping code.
 
 ### Tests
@@ -709,7 +820,7 @@ place from Phase 1). Possibly a `public_slug`-based lookup index on `profiles`.
 - A documented (not necessarily executed) decision on whether/when to flip
   `public_signups_enabled`.
 
-### Explicitly excluded from Phase 7
+### Explicitly excluded from Phase 8
 
 - Billing implementation. This phase documents how plan limits could attach to the existing
   `user_settings.ai_request_limit` field and a future `plan` column, but does not build

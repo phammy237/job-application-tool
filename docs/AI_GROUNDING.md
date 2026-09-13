@@ -117,7 +117,7 @@ suggestion the user fills in themselves, never a fabricated one.
 
 Every AI request is attributed to `user_settings.ai_requests_this_period` /
 `ai_request_limit` (see `docs/DATA_MODEL.md`). This exists from Phase 1 onward even though
-limits are generous during solo/private-beta use, so opening signups later (Phase 7) doesn't
+limits are generous during solo/private-beta use, so opening signups later (Phase 8) doesn't
 require retrofitting cost controls.
 
 ## 8. Requirement-evidence mapping (Phase 5A)

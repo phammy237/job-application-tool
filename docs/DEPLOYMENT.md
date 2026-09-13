@@ -54,7 +54,7 @@ Google OAuth client.
 - Private beta: either unpacked distribution to the small test-user list, or an unlisted
   Chrome Web Store listing — sufficient for the "approved test users" constraint in
   `docs/PRODUCT_SPEC.md` §8 without a public listing.
-- Public (Phase 7+): standard Chrome Web Store listing, review process budgeted separately
+- Public (Phase 8+): standard Chrome Web Store listing, review process budgeted separately
   from the Gmail OAuth verification timeline (`docs/EMAIL_INTEGRATION.md` §6) — they are
   independent review processes with independent timelines.
 

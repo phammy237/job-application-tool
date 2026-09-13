@@ -47,7 +47,7 @@ AI-extracted `candidate_facts`).
 | `work_authorization`        | `text`                                                         | free text + optional enum tag; sensitive, see below               |
 | `relocation_preference`     | `text`                                                         |                                                                   |
 | `links`                     | `jsonb`                                                        | `{ linkedin, portfolio, github, website }`                        |
-| `public_slug`               | `text unique`                                                  | nullable; reserved for future public profile (Phase 7)            |
+| `public_slug`               | `text unique`                                                  | nullable; reserved for future public profile (Phase 8)            |
 | `visible_on_public_profile` | `boolean not null default false`                               | master switch; per-fact switches in `candidate_facts` still apply |
 | `onboarding_completed_at`   | `timestamptz`                                                  |                                                                   |
 
@@ -620,7 +620,7 @@ Unique: `(email_connection_id, provider_message_id)` — the dedup constraint re
 | `gmail_integration_enabled`    | `boolean not null default false`                               | user's own toggle, still gated by the global `gmail_integration_enabled` feature flag |
 | `ai_requests_this_period`      | `int not null default 0`                                       |                                                                                       |
 | `ai_request_period_started_at` | `timestamptz not null default now()`                           |                                                                                       |
-| `ai_request_limit`             | `int not null default 50`                                      | reserved for future plan-based limits, see `docs/IMPLEMENTATION_PLAN.md` Phase 7      |
+| `ai_request_limit`             | `int not null default 50`                                      | reserved for future plan-based limits, see `docs/IMPLEMENTATION_PLAN.md` Phase 8      |
 | `theme`                        | `text not null default 'system'`                               |                                                                                       |
 
 RLS: standard.
@@ -639,6 +639,100 @@ service-role only, reads to authenticated users (flags are not secret, just admi
 
 RLS: `select` for any authenticated (or even anon, for the signup-gate check) role; no
 `insert/update/delete` policy for regular users — changed only via service-role/migration.
+
+---
+
+## `contacts` (Phase 6A)
+
+Private, user-owned networking data — one row per person the user knows, reusable across many
+applications (never duplicated per application). Ordinary editable CRM data, not
+immutable-history like `job_snapshots`/`submission_packets`: a user can freely edit or delete
+their own contacts. Only `display_name` and `source` are required — a contact like "Jane — UF
+alum at Microsoft" is valid with nothing else filled in.
+
+| column             | type                                                          | notes                                                                                          |
+| ------------------ | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `id`                | `uuid pk`                                                      |                                                                                                 |
+| `user_id`           | `uuid not null references auth.users(id) on delete cascade`   |                                                                                                 |
+| `display_name`      | `text not null`                                                | the only required human-identity field; `check (length(trim(display_name)) > 0)`               |
+| `first_name`        | `text`                                                         | nullable                                                                                       |
+| `last_name`         | `text`                                                         | nullable                                                                                       |
+| `email`             | `text`                                                         | nullable; not unique — duplicate detection is advisory only, see below                          |
+| `phone`             | `text`                                                         | nullable                                                                                       |
+| `linkedin_url`      | `text`                                                         | nullable                                                                                       |
+| `current_company`   | `text`                                                         | nullable; free text, **not** a foreign key — there is no `companies` table in Phase 6A          |
+| `current_title`     | `text`                                                         | nullable                                                                                       |
+| `location`          | `text`                                                         | nullable                                                                                       |
+| `notes`             | `text`                                                         | nullable; never logged (see `docs/SECURITY_AND_PRIVACY.md`)                                     |
+| `source`            | `text not null`                                                | `MANUAL, APPLICATION_CONTEXT, OTHER` — only values Phase 6A can actually produce; widened additively (like `ai_usage_events.task_type`) when a real new source ships, e.g. Gmail suggestions in a later Phase 6 slice |
+| `created_at`        | `timestamptz`                                                  |                                                                                                 |
+| `updated_at`        | `timestamptz`                                                  |                                                                                                 |
+
+`unique (user_id, id)` lets `contact_tags`/`application_contacts` below use a composite FK back
+to this table, the same pattern `applications`/`resumes` adopted in migration 0013.
+
+**No `companies` table**: `current_company` stays free text, same posture as `applications.
+company`. An application's People section may copy the application's `company` into a new
+contact's `current_company` as a one-time prefill convenience — it is never a live-syncing
+relationship.
+
+**Duplicate detection is advisory, never auto-merge**: before creating or editing a contact,
+`findOwnPossibleDuplicateContacts` (`packages/database`) checks the user's own contacts for an
+exact normalized email match, an exact normalized LinkedIn URL match, or a normalized
+`display_name` + `current_company` match (`packages/shared`'s `contact-duplicate-detection.ts`
+normalizers). The UI shows candidates and lets the user cancel or proceed anyway — nothing here
+ever blocks creation or silently reuses an existing row.
+
+RLS: standard four-policy pattern (see "RLS policy pattern" below).
+
+## `contact_tags` (Phase 6A)
+
+Multi-select, longer-lived relationship classification per contact (e.g. `ALUMNI`, `RECRUITER`,
+`FRIEND`) — distinct from `application_contacts.role` below, which is the person's function on
+one specific application. Linking a contact to an application with a given role never mutates
+their tags, and vice versa.
+
+| column       | type                                                        | notes                                                                                                                     |
+| ------------ | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
+| `user_id`    | `uuid not null references auth.users(id) on delete cascade` | part of the primary key                                                                                                    |
+| `contact_id` | `uuid not null`                                              | composite FK to `contacts(user_id, id)` on delete cascade; part of the primary key                                          |
+| `tag`        | `text not null`                                              | `RECRUITER, HIRING_MANAGER, EMPLOYEE, ALUMNI, MENTOR, PROFESSOR, FRIEND, CLASSMATE, REFERRER, NETWORKING_CONTACT, OTHER`; part of the primary key |
+| `created_at` | `timestamptz`                                                |                                                                                                                              |
+
+Primary key `(user_id, contact_id, tag)` — a contact may hold many tags; the exact same tag
+twice is a structural no-op, not a new fact. No `update` policy/trigger: every column is part of
+the key, so changing a contact's tags is a delete-then-insert
+(`packages/database`'s `replaceOwnContactTags`), not a row update. RLS: `select`/`insert`/
+`delete` for `authenticated`, scoped by `user_id`.
+
+## `application_contacts` (Phase 6A)
+
+Join table linking a reusable `contacts` row to one specific `applications` row, with a role
+describing that person's function on **this** application.
+
+| column           | type                                                        | notes                                                                                                    |
+| ---------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| `user_id`        | `uuid not null references auth.users(id) on delete cascade` | part of the primary key                                                                                    |
+| `application_id` | `uuid not null`                                              | composite FK to `applications(user_id, id)` on delete cascade; part of the primary key                     |
+| `contact_id`     | `uuid not null`                                              | composite FK to `contacts(user_id, id)` on delete cascade; part of the primary key                         |
+| `role`           | `text not null`                                              | `RECRUITER, HIRING_MANAGER, REFERRER, INTERVIEWER, EMPLOYEE_CONTACT, OTHER`; part of the primary key       |
+| `created_at`     | `timestamptz`                                                |                                                                                                              |
+
+Primary key `(user_id, application_id, contact_id, role)` — one contact may hold more than one
+role on the same application (e.g. both `REFERRER` and `EMPLOYEE_CONTACT`), but the exact same
+`(application, contact, role)` triple twice is rejected structurally, not just by application
+logic. Both composite FKs make a cross-user application/contact pairing impossible at the
+database level, not merely checked in `packages/database`. Deleting a contact removes its
+`application_contacts` rows but never the application; deleting an application removes its
+`application_contacts` rows but never the contact — neither cascade reaches the other entity.
+Index `(user_id, contact_id)` supports "applications linked to this contact" (the reverse of the
+primary key's own `application_id`-first order). No `update` policy/trigger, same reasoning as
+`contact_tags`. RLS: `select`/`insert`/`delete` for `authenticated`, scoped by `user_id`.
+
+**Deferred to a later Phase 6 slice (not in 6A)**: `contact_interactions`, `follow_up_at`/
+reminders, `source_email_signal_id`/Gmail contact suggestions, a `companies` table, AI-generated
+outreach/coffee-chat prep. None of these exist in the schema yet — see
+`docs/IMPLEMENTATION_PLAN.md` "Phase 6" for the full list of what 6A deliberately excludes.
 
 ---
 

@@ -1,0 +1,100 @@
+// @vitest-environment jsdom
+import '@testing-library/jest-dom/vitest';
+import { cleanup, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const mocks = vi.hoisted(() => ({
+  requireUser: vi.fn(),
+  createClient: vi.fn(),
+  listOwnContacts: vi.fn(),
+  listOwnContactTagsForContacts: vi.fn(),
+  countOwnApplicationLinksForContacts: vi.fn(),
+}));
+
+vi.mock('@career-os/database', () => ({
+  listOwnContacts: mocks.listOwnContacts,
+  listOwnContactTagsForContacts: mocks.listOwnContactTagsForContacts,
+  countOwnApplicationLinksForContacts: mocks.countOwnApplicationLinksForContacts,
+}));
+
+vi.mock('../../../lib/auth', () => ({ requireUser: mocks.requireUser }));
+vi.mock('../../../lib/supabase/server', () => ({ createClient: mocks.createClient }));
+
+// ContactForm is a client component with its own dedicated tests — stub it here so this page
+// test stays focused on the page's own list/search/empty-state rendering.
+vi.mock('./contact-form', () => ({
+  ContactForm: () => <div data-testid="contact-form-stub" />,
+}));
+
+const { default: NetworkPage } = await import('./page');
+
+const USER_ID = '22222222-2222-4222-8222-222222222222';
+const SESSION_CLIENT = { tag: 'session-scoped' };
+
+const CONTACT_A = {
+  id: 'contact-a',
+  displayName: 'Jane Doe',
+  currentTitle: 'Recruiter',
+  currentCompany: 'Acme',
+  email: 'jane@example.com',
+};
+
+async function renderPage(searchParams: { q?: string } = {}) {
+  const element = await NetworkPage({ searchParams: Promise.resolve(searchParams) });
+  render(element);
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.requireUser.mockResolvedValue({ id: USER_ID });
+  mocks.createClient.mockResolvedValue(SESSION_CLIENT);
+  mocks.listOwnContactTagsForContacts.mockResolvedValue(new Map());
+  mocks.countOwnApplicationLinksForContacts.mockResolvedValue(new Map());
+});
+
+afterEach(() => {
+  cleanup();
+});
+
+describe('NetworkPage', () => {
+  it('shows a helpful empty state with no contacts and no search term', async () => {
+    mocks.listOwnContacts.mockResolvedValue([]);
+    await renderPage();
+    expect(
+      screen.getByText("No contacts yet. Add the first person you're networking with."),
+    ).toBeInTheDocument();
+  });
+
+  it('shows a distinct empty state when a search matches nothing', async () => {
+    mocks.listOwnContacts.mockResolvedValue([]);
+    await renderPage({ q: 'nobody' });
+    expect(screen.getByText('No contacts match your search.')).toBeInTheDocument();
+  });
+
+  it('lists contacts with a link to their detail page', async () => {
+    mocks.listOwnContacts.mockResolvedValue([CONTACT_A]);
+    await renderPage();
+    const link = screen.getByRole('link', { name: 'Jane Doe' });
+    expect(link).toHaveAttribute('href', '/network/contact-a');
+    expect(screen.getByText('Recruiter at Acme')).toBeInTheDocument();
+  });
+
+  it('passes the q search param through to listOwnContacts', async () => {
+    mocks.listOwnContacts.mockResolvedValue([]);
+    await renderPage({ q: 'jane' });
+    expect(mocks.listOwnContacts).toHaveBeenCalledWith(SESSION_CLIENT, USER_ID, {
+      search: 'jane',
+    });
+  });
+
+  it('batches tag and application-count lookups instead of querying per row', async () => {
+    mocks.listOwnContacts.mockResolvedValue([CONTACT_A, { ...CONTACT_A, id: 'contact-b' }]);
+    await renderPage();
+    expect(mocks.listOwnContactTagsForContacts).toHaveBeenCalledTimes(1);
+    expect(mocks.listOwnContactTagsForContacts).toHaveBeenCalledWith(SESSION_CLIENT, USER_ID, [
+      'contact-a',
+      'contact-b',
+    ]);
+    expect(mocks.countOwnApplicationLinksForContacts).toHaveBeenCalledTimes(1);
+  });
+});

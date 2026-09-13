@@ -7,7 +7,7 @@ Career OS lives in its own GitHub repository, fully independent from the reposit
 pipeline. The only connection between the two products is:
 
 - `mypham.space` may link to `apply.mypham.space` as a listed project.
-- `apply.mypham.space` may, in the far future (Phase 7), consume a small, explicitly-defined
+- `apply.mypham.space` may, in the far future (Phase 8), consume a small, explicitly-defined
   public export/import format from `mypham.space` — never a live database connection, and
   never scraped HTML. See "Personal site integration" below and `docs/DEPLOYMENT.md` for the
   domain/DNS split.
@@ -116,7 +116,7 @@ while is the product owner. Concretely:
   references a specific email, UUID, or "is this me" branch. The product owner's account is
   created through the exact same signup flow as every future user, gated only by the
   `public_signups_enabled` feature flag (closed during private beta — see
-  `docs/IMPLEMENTATION_PLAN.md` Phase 6/7).
+  `docs/IMPLEMENTATION_PLAN.md` Phase 7/8).
 - **Session-scoped extension auth.** The extension authenticates as a specific user (via
   Supabase auth session / token exchange) and every API call it makes is attributed to that
   user's `auth.uid()`. Two different users running the extension against the same job posting
@@ -142,7 +142,7 @@ Next.js app, split by route group and enforced by middleware:
 
 ## 6. Personal site integration (future, optional)
 
-Deferred to Phase 7 and explicitly optional. When built, it will be:
+Deferred to Phase 8 and explicitly optional. When built, it will be:
 
 - **One-directional and format-based, not live.** Career OS can generate a sanitized public
   JSON profile (`GET /api/public-profile/:userId` returning only facts with

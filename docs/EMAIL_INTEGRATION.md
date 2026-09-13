@@ -108,7 +108,7 @@ is used by more than a handful of test users. Concretely:
 - **Restricted scope review.** `gmail.readonly` is a "restricted" scope. Google requires a
   security assessment (including, for some scope combinations, a third-party CASA
   assessment) before the app can be used by the general public. This is a real cost/timeline
-  item, not just a checkbox — budget for it before Phase 7 public opt-in, not before Phase 5
+  item, not just a checkbox — budget for it before Phase 8 public opt-in, not before Phase 5
   private use.
 - **Unverified-app screen.** Until verified, Google shows an "unverified app" warning to any
   user connecting Gmail. This is acceptable for the product owner and a small, explicitly

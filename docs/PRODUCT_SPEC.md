@@ -29,6 +29,12 @@ without a rewrite.
    per-requirement breakdown of which approved facts support it. Never a fabricated match, and
    never reduced to a single "ATS score" or hiring-probability number — see §3 and
    `docs/AI_GROUNDING.md` §8.
+7. **Networking / CRM (Phase 6, foundation shipped in 6A)** — private, user-owned contacts,
+   reusable across applications, with a longer-lived relationship tag (recruiter, alumni,
+   friend, …) distinct from a per-application role (referrer, interviewer, …). Deterministic
+   duplicate warnings only — never auto-merged. No AI, no Gmail-derived suggestions, and no
+   interaction/reminder tracking yet — those are later Phase 6 slices, see
+   `docs/IMPLEMENTATION_PLAN.md` "Phase 6".
 
 ## 3. Non-goals (explicit)
 
@@ -47,7 +53,7 @@ These are deliberate exclusions, not gaps to be filled opportunistically:
   never a background job, cron, or webhook (`docs/EMAIL_INTEGRATION.md` §1).
 - **No billing in the initial version.** Usage limits and feature flags are built now so
   billing can be added later without restructuring; the billing system itself is documented,
-  not implemented (see `docs/IMPLEMENTATION_PLAN.md` Phase 7).
+  not implemented (see `docs/IMPLEMENTATION_PLAN.md` Phase 8).
 - **No coupling to mypham.space.** Separate repo, separate database, separate deploy
   pipeline. See `docs/ARCHITECTURE.md` §1 and §6.
 - **No aggregate match score.** The requirement-evidence mapping feature (Phase 5A) never
@@ -73,7 +79,7 @@ These are deliberate exclusions, not gaps to be filled opportunistically:
 
 - Real applications or application statuses
 - Résumés or résumé-derived content
-- Recruiter information
+- Recruiter information, or any networking contact/tag/application-link data (Phase 6)
 - Company email contents or Gmail signals
 - Generated answers
 - Work-authorization information
@@ -128,7 +134,9 @@ Career OS recommendation, never a known employer deadline), a pipeline-stage cou
 a recent-activity feed of real status-change events; a table view (`/applications`) with status
 filtering, free-text company/title search, and each row's next action; an application detail page
 (notes, associated résumé, generated-answer history, event timeline, manual status changes, undo
-for automated updates). Every dashboard/table row linking to an application jumps straight to the
+for automated updates, and — Phase 6A — a People section listing linked networking contacts and
+their role on that application, with link/unlink and "add new contact" affordances). Every
+dashboard/table row linking to an application jumps straight to the
 relevant panel on the detail page via a plain page anchor — never a mechanism that bypasses the
 detail page's own re-check of what's currently true. No Kanban view, location/date filters, or
 rate-based summary metrics (interview rate, offer rate, etc.) exist yet — Phase 5C.2 deliberately
@@ -154,5 +162,5 @@ page (Phase 5C.4) — never AI content generation inside the popup itself.
 - AI requests are rate-limited per user.
 - Onboarding is minimal but present (not a placeholder screen).
 - Demo data used anywhere in the public surface contains no real personal information.
-- No billing. See `docs/IMPLEMENTATION_PLAN.md` Phase 7 for how billing would attach later
+- No billing. See `docs/IMPLEMENTATION_PLAN.md` Phase 8 for how billing would attach later
   without restructuring the data model (plan-limit fields are reserved but unused).

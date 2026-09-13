@@ -6,6 +6,7 @@ const NAV_ITEMS = [
   { href: '/dashboard', label: 'Dashboard' },
   { href: '/profile', label: 'Profile' },
   { href: '/applications', label: 'Applications' },
+  { href: '/network', label: 'Network' },
   { href: '/settings', label: 'Settings' },
 ];
 

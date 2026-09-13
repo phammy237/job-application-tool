@@ -555,6 +555,64 @@ export interface Database {
         Update: Partial<Database['public']['Tables']['submission_packets']['Row']>;
         Relationships: [];
       };
+      contacts: {
+        Row: {
+          id: string;
+          user_id: string;
+          display_name: string;
+          first_name: string | null;
+          last_name: string | null;
+          email: string | null;
+          phone: string | null;
+          linkedin_url: string | null;
+          current_company: string | null;
+          current_title: string | null;
+          location: string | null;
+          notes: string | null;
+          source: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['contacts']['Row']> & {
+          user_id: string;
+          display_name: string;
+          source: string;
+        };
+        Update: Partial<Database['public']['Tables']['contacts']['Row']>;
+        Relationships: [];
+      };
+      contact_tags: {
+        Row: {
+          user_id: string;
+          contact_id: string;
+          tag: string;
+          created_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['contact_tags']['Row']> & {
+          user_id: string;
+          contact_id: string;
+          tag: string;
+        };
+        Update: Partial<Database['public']['Tables']['contact_tags']['Row']>;
+        Relationships: [];
+      };
+      application_contacts: {
+        Row: {
+          user_id: string;
+          application_id: string;
+          contact_id: string;
+          role: string;
+          created_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['application_contacts']['Row']> & {
+          user_id: string;
+          application_id: string;
+          contact_id: string;
+          role: string;
+        };
+        Update: Partial<Database['public']['Tables']['application_contacts']['Row']>;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: {

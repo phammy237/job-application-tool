@@ -85,6 +85,13 @@ deletion path for these three tables in Phase 5A: `job_snapshots` and
 `docs/DATA_MODEL.md`), and deleting a single snapshot or mapping isn't a capability exposed
 anywhere in the product yet — the cascade only ever fires as part of full account deletion.
 
+`contacts` (Phase 6A) is the first user-owned table to also expose a genuine **per-row** delete
+in the UI (`/network/[id]` "Delete contact"), not only the full-account cascade — deleting a
+contact cascades to its own `contact_tags` and `application_contacts` rows but never touches the
+applications it was linked to, and deleting an application never deletes a contact linked to it
+(verified in `supabase/tests/database/0021_networking_contacts.test.sql`). Contact `notes` are
+never logged or included in any AI request (Phase 6A makes zero AI calls) or public surface.
+
 ## 6. AI-specific risk: fabrication
 
 Covered in full in `docs/AI_GROUNDING.md`. Summarized here as a security/privacy concern
@@ -154,7 +161,7 @@ level, not filter in the response layer.
   between `mypham.space` and `apply.mypham.space` (which is just a subdomain link, not a
   trust relationship — Career OS does not accept a `mypham.space` session as proof of
   identity).
-- The only planned data flow (Phase 7, optional) is a one-directional, explicitly-formatted
+- The only planned data flow (Phase 8, optional) is a one-directional, explicitly-formatted
   JSON export of already-public-marked profile facts — never a shared table, never scraped
   HTML treated as a source of truth. See `docs/ARCHITECTURE.md` §6.
 
@@ -173,7 +180,7 @@ These are flagged now so they're revisited with intent rather than discovered la
    decision, not yet made.
 4. **Gmail verification timeline** — whether to pursue Google's CASA/restricted-scope
    verification at all before any public signup phase, or keep Gmail permanently in a
-   test-user-only posture, is a product decision deferred to Phase 6/7 planning.
+   test-user-only posture, is a product decision deferred to Phase 7/8 planning.
 5. **Backup/export** — no documented process yet for a user to export their own data
    wholesale (distinct from account deletion); worth deciding before public beta so "delete
    my account" isn't the only way a user can get their data out.
