@@ -56,7 +56,11 @@ export type AiUsageEventEscalationReason = z.infer<
  * and 'interview_prep' added in migration 0016 (Phase 5C.3) for packages/ai's
  * generate-follow-up-draft.ts / generate-interview-prep.ts — both explicit, user-triggered AI
  * *assistance* on top of the deterministic next-action engine's decision, never the thing that
- * makes the decision itself (docs/IMPLEMENTATION_PLAN.md "Phase 5C.3"). */
+ * makes the decision itself (docs/IMPLEMENTATION_PLAN.md "Phase 5C.3"). 'resume_tailoring'
+ * added in migration 0023 (Phase 7E) for packages/ai's generate-resume-tailoring-plan.ts — an
+ * explicit, user-triggered, ephemeral generation of a semantic edit plan against a copy of the
+ * base résumé; never a persisted result row, only this telemetry event
+ * (docs/IMPLEMENTATION_PLAN.md "Phase 7E" §21/§45). */
 export const aiUsageEventTaskTypeSchema = z.enum([
   'field_suggestion',
   'requirement_mapping',
@@ -64,6 +68,7 @@ export const aiUsageEventTaskTypeSchema = z.enum([
   'unsupported_claim_check',
   'follow_up_draft',
   'interview_prep',
+  'resume_tailoring',
 ]);
 export type AiUsageEventTaskType = z.infer<typeof aiUsageEventTaskTypeSchema>;
 

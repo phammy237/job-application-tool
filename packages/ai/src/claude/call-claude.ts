@@ -5,6 +5,7 @@ import {
   MAX_OUTPUT_TOKENS,
   MODEL_ID,
   REQUIREMENT_MAPPING_MAX_OUTPUT_TOKENS,
+  RESUME_TAILORING_MAX_OUTPUT_TOKENS,
   UNSUPPORTED_CLAIM_CHECK_MAX_OUTPUT_TOKENS,
 } from '../config';
 import { getAnthropicClient } from './client';
@@ -434,6 +435,94 @@ export async function callClaudeForInterviewPrep(
       messages: [{ role: 'user', content: userText }],
       output_config: {
         format: { type: 'json_schema', schema: INTERVIEW_PREP_JSON_SCHEMA },
+      },
+    });
+
+    if (response.stop_reason === 'refusal') {
+      return { status: 'refusal', category: response.stop_details?.category ?? null };
+    }
+
+    const textBlock = response.content.find((block) => block.type === 'text');
+    if (!textBlock || textBlock.type !== 'text') {
+      return { status: 'provider_error', message: 'No text content in Claude response' };
+    }
+    return { status: 'ok', rawText: textBlock.text };
+  } catch (error) {
+    return {
+      status: 'provider_error',
+      message: error instanceof Error ? error.message : 'Unknown Anthropic API error',
+    };
+  }
+}
+
+/**
+ * Mirrors `resumeTailoringPlanSchema` (packages/shared) — a single object with one array field,
+ * `operations`, each a discriminated union by `type`. JSON Schema itself cannot express Zod's
+ * discriminated-union/refine semantics (e.g. "ADD_BULLET requires min 1 sourceFactIds"), so this
+ * schema is intentionally the union of every operation type's fields as one loosely-typed object
+ * shape (every field optional except `type`/`reason`) — it only needs to keep the model roughly
+ * on-shape at the API level; the real, authoritative check is the independent Zod v3 parse in
+ * contract/validate-resume-tailoring-contract.ts followed by the shared, deep semantic validator
+ * (`validateResumeTailoringPlan`). No `latexSource`/`template`/free-form résumé field exists
+ * anywhere in this schema, by construction (docs/IMPLEMENTATION_PLAN.md "Phase 7E" §23/§44).
+ */
+const RESUME_TAILORING_JSON_SCHEMA = {
+  type: 'object',
+  properties: {
+    operations: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          type: {
+            type: 'string',
+            enum: [
+              'REWRITE_BULLET',
+              'ADD_BULLET',
+              'OMIT_BULLET',
+              'OMIT_ENTRY',
+              'MOVE_BULLET',
+              'MOVE_ENTRY',
+              'REORDER_SKILLS',
+            ],
+          },
+          bulletId: { type: 'string' },
+          entryId: { type: 'string' },
+          proposedText: { type: 'string' },
+          sourceFactIds: { type: 'array', items: { type: 'string' } },
+          requirementIds: { type: 'array', items: { type: 'string' } },
+          targetIndex: { type: 'integer' },
+          orderedSkillGroupIds: { type: 'array', items: { type: 'string' } },
+          reason: { type: 'string' },
+        },
+        required: ['type', 'reason'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['operations'],
+  additionalProperties: false,
+} as const;
+
+/**
+ * Same no-tools/thinking-disabled/schema-constrained posture as the other call* functions — the
+ * job snapshot, any requirement-mapping analysis, and the base résumé's own bullet text are all
+ * untrusted-ish content placed in the prompt (the résumé bullets are the user's own words, but
+ * are still treated with the same discipline as every other pipeline's prompt content).
+ */
+export async function callClaudeForResumeTailoring(
+  systemPrompt: string,
+  userText: string,
+): Promise<CallClaudeResult> {
+  try {
+    const response = await getAnthropicClient().messages.create({
+      model: MODEL_ID,
+      max_tokens: RESUME_TAILORING_MAX_OUTPUT_TOKENS,
+      thinking: { type: 'disabled' },
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userText }],
+      output_config: {
+        format: { type: 'json_schema', schema: RESUME_TAILORING_JSON_SCHEMA },
       },
     });
 

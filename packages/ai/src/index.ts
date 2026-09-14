@@ -36,5 +36,10 @@ export type {
   GenerateInterviewPrepParams,
   GenerateInterviewPrepResult,
 } from './generate-interview-prep';
+export { generateResumeTailoringPlan } from './generate-resume-tailoring-plan';
+export type {
+  GenerateResumeTailoringPlanParams,
+  GenerateResumeTailoringPlanResult,
+} from './generate-resume-tailoring-plan';
 export { deriveEligibleNextAction } from './derive-eligible-next-action';
 export { NEVER_SUGGEST_CLASSIFICATIONS } from './config';

@@ -96,3 +96,27 @@ export const INTERVIEW_PREP_PROMPT_VERSION = 'interview-prep-v1';
 /** Bounds worst-case injected content volume from a single frozen submission-packet answer
  * surfaced for consistency review — same rationale as ANSWER_TEXT_CHAR_CAP. */
 export const SUBMITTED_ANSWER_CHAR_CAP = 1000;
+
+/**
+ * Phase 7E explicit, user-triggered grounded résumé tailoring
+ * (packages/ai/src/generate-resume-tailoring-plan.ts) — the model returns a bounded array of
+ * semantic operations (never a résumé, never LaTeX), so the output-token budget sits between the
+ * short single-object pipelines and the larger array-of-sections interview-prep contract; a plan
+ * with up to MAX_RESUME_TAILORING_OPERATIONS (packages/shared) operations, each with a bounded
+ * text/reason/citation-count, comfortably fits well under this budget. Same single-model
+ * reasoning as FOLLOW_UP_DRAFT_MAX_OUTPUT_TOKENS/INTERVIEW_PREP_MAX_OUTPUT_TOKENS above.
+ */
+export const RESUME_TAILORING_MAX_OUTPUT_TOKENS = 8192;
+export const RESUME_TAILORING_PROMPT_VERSION = 'resume-tailoring-v1';
+/** Bounds worst-case injected content volume from the base résumé's own bullet/entry text placed
+ * in the prompt — same rationale as FACT_TEXT_CHAR_CAP; résumé bullets are already capped at 600
+ * chars by resumeBulletSchema, so this is a defensive backstop, not the primary limiter. */
+export const RESUME_BULLET_CHAR_CAP = 600;
+/**
+ * Bounded fallback fact set (docs/IMPLEMENTATION_PLAN.md "Phase 7E" §7) — when a current
+ * requirement mapping exists and/or the base résumé already cites facts, those are always
+ * included regardless of this cap; this only bounds how many *additional* approved facts (beyond
+ * those) are offered when there's room left, so a user with a very large approved-fact library
+ * doesn't produce an unbounded prompt. See retrieval/select-resume-tailoring-facts.ts.
+ */
+export const RESUME_TAILORING_MAX_FACTS = 60;
