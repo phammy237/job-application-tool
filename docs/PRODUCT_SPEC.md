@@ -131,9 +131,12 @@ A separate résumé library (`/resumes`, Phase 7A) tracks the user's master rés
 résumés as permanent version history — each edit creates a new version rather than changing one in
 place. An application may select a "working" résumé version to plan around, and — the one time an
 application is marked Applied — that version is frozen into the application's own immutable
-submission record (§5), independent of anything selected later. No résumé *content* (structured
-sections, LaTeX, a compiled PDF) exists yet; only identity and version history do — see
-`docs/DATA_MODEL.md` §"resumes"/§"resume_versions".
+submission record (§5), independent of anything selected later. As of Phase 7C, a version can hold
+real structured content (Header, Education, Experience, Projects, Leadership, Skills), edited
+manually in the Resume Studio (`/resumes/[id]/studio`) and deterministically rendered to LaTeX; an
+Advanced mode supports a custom LaTeX override. PDF compilation is not implemented yet (no
+sandboxed compilation environment exists in this deployment) — see `docs/RESUME_STUDIO.md`. No AI
+tailoring, no company research — see `docs/DATA_MODEL.md` §"resumes"/§"resume_versions".
 
 ## 7. Application tracker scope
 

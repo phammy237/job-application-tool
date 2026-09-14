@@ -60,6 +60,12 @@ export async function ResumeSection({
             >
               View
             </Link>
+            <Link
+              href={`/resumes/${workingVersion.resumeId}/studio?version=${workingVersion.id}`}
+              className="text-primary text-xs hover:underline"
+            >
+              Open Studio
+            </Link>
             <ClearWorkingResumeButton applicationId={applicationId} />
           </div>
         </div>

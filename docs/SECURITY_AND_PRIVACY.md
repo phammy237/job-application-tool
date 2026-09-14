@@ -161,6 +161,36 @@ information (`supabase/seed.sql`). Any future public-profile export endpoint
 (`docs/ARCHITECTURE.md` §6) must filter on `visible_on_public_profile = true` at the query
 level, not filter in the response layer.
 
+## 9A. Résumé LaTeX/PDF compilation risk (Phase 7C)
+
+User-editable LaTeX ("Advanced" mode, docs/RESUME_STUDIO.md) is a real attack surface — a TeX
+engine executing untrusted input can read/write files, and (depending on engine flags) execute
+shell commands via `\write18`/shell-escape. This repo's actual posture:
+
+- **No server-side LaTeX compilation exists at all, for either the deterministic generated LaTeX
+  or a custom override.** This is not an oversight-turned-mitigation; it's the explicit
+  architecture decision this phase made after finding no sandboxed compilation environment
+  available (no Docker, no TeX engine, no isolated worker/service — see
+  docs/RESUME_STUDIO.md §1). There is nothing here that "safely" runs LaTeX today because
+  nothing runs LaTeX at all.
+- The *generated* LaTeX (from structured content) is lower-risk by construction: every piece of
+  user text passes through `escapeLatex` before insertion, and the surrounding template is fixed
+  application code — a user cannot inject a LaTeX command through a structured field, only
+  literal escaped text (`packages/shared`'s `resume-latex-render.test.ts` asserts this for every
+  special character).
+- The *custom override* is arbitrary text with no escaping or sandboxing applied — a user
+  supplies raw LaTeX and it is stored and displayed back verbatim. This is safe **only** because
+  nothing ever executes it: it round-trips through Postgres (immutable JSON) and the browser (as
+  plain text in a `<textarea>`/`<pre>`, never rendered as HTML) and can be downloaded as a `.tex`
+  file the user compiles themselves, entirely outside Career OS's infrastructure.
+- **Before any future phase adds real compilation**, the override path specifically must not be
+  handed to a compiler without: shell-escape disabled, an isolated/ephemeral filesystem per
+  compile, no `\input`/`\include` of anything outside that one generated file, a hard execution
+  timeout, and output/source size limits — see docs/RESUME_STUDIO.md §1/§9 for the fuller
+  requirements list. The generated-LaTeX path is safer but should still go through the same
+  sandbox, not a shortcut, since a future structured-content bug could still produce unexpected
+  LaTeX.
+
 ## 10. Dependency and platform risk (lighter-touch, tracked not deeply mitigated yet)
 
 - Standard practices apply once implementation starts: dependency updates, `npm audit` in

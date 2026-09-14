@@ -4,7 +4,7 @@ import {
   listOwnResumeVersionsForResume,
   listOwnSubmittedApplicationsForResumeVersions,
 } from '@career-os/database';
-import { Button, Input, Label } from '@career-os/ui';
+import { Button, Input, Label, buttonVariants } from '@career-os/ui';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { requireUser } from '../../../../lib/auth';
@@ -12,6 +12,7 @@ import { createClient } from '../../../../lib/supabase/server';
 import { createResumeVersion, renameResume } from '../actions';
 import { DeleteResumeButton } from '../delete-resume-button';
 import { DeleteVersionButton } from '../delete-version-button';
+import { VersionLatexPreview } from '../version-latex-preview';
 
 export default async function ResumeDetailPage({
   params,
@@ -55,6 +56,12 @@ export default async function ResumeDetailPage({
             ) : null}
           </p>
         </div>
+        <Link
+          href={`/resumes/${resume.id}/studio`}
+          className={buttonVariants({ size: 'sm' })}
+        >
+          Open Studio
+        </Link>
       </div>
 
       <section className="space-y-2">
@@ -98,15 +105,28 @@ export default async function ResumeDetailPage({
                         Version {version.versionNumber} — {version.displayName}
                       </p>
                       <p className="text-muted-foreground mt-0.5 text-xs">
-                        Created {new Date(version.createdAt).toLocaleString()}
+                        Created {new Date(version.createdAt).toLocaleString()} ·{' '}
+                        {version.snapshotFormat === 'STRUCTURED_V1'
+                          ? 'Structured'
+                          : 'Metadata-only'}
                       </p>
                     </div>
-                    <DeleteVersionButton
-                      resumeId={resume.id}
-                      versionId={version.id}
-                      label={`version ${version.versionNumber}`}
-                    />
+                    <div className="flex items-center gap-3">
+                      <Link
+                        href={`/resumes/${resume.id}/studio?version=${version.id}`}
+                        className="text-primary text-xs hover:underline"
+                      >
+                        Edit as new version
+                      </Link>
+                      <DeleteVersionButton
+                        resumeId={resume.id}
+                        versionId={version.id}
+                        label={`version ${version.versionNumber}`}
+                      />
+                    </div>
                   </div>
+
+                  <VersionLatexPreview version={version} />
 
                   {submitted.length > 0 ? (
                     <p className="text-muted-foreground mt-2 text-xs">

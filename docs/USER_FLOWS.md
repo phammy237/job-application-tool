@@ -47,9 +47,33 @@ false`, `visibleOnPublicProfile = false`. Nothing extracted is usable until step
    none exists yet) and any tailored résumés, each with a permanent version history. Editing a
    résumé never changes an existing version; it creates a new one (§8 below covers what deleting
    one does and does not remove).
-2. From `/resumes/[id]`, the user renames the résumé or creates a new version (today, a version's
-   content is metadata-only — a name, a number, a timestamp — since no structured résumé content,
-   LaTeX, or PDF pipeline exists yet; see §3 above for what widens this later).
+2. From `/resumes/[id]`, the user renames the résumé, and opens the Resume Studio
+   (`/resumes/[id]/studio`, Phase 7C) to actually edit content: Education, Experience, Projects,
+   Leadership, and Skills sections, plus an Advanced mode for a custom LaTeX override — see §3B
+   below and `docs/RESUME_STUDIO.md`. A résumé created before Phase 7C (or one the user never
+   opened the Studio for) may still have only metadata-only versions — a name, a number, a
+   timestamp, no content — and the page says so plainly rather than pretending otherwise.
+
+## 3B. Resume Studio — structured editing (Phase 7C)
+
+1. User opens `/resumes/[id]/studio`, optionally with `?version=<id>` to start from a specific
+   existing version. The draft starts from that version's content, or the résumé's latest
+   structured version if none was specified, or a blank document (header pre-filled from the
+   user's own profile contact info) if no structured version exists yet.
+2. User edits Header, Education, Experience, Projects, Leadership, and Skills directly — add/
+   remove/reorder entries and bullets (explicit move-up/move-down controls, no drag-and-drop).
+   "Import from profile" is a separate, explicit action that replaces those sections with the
+   user's already-approved profile data for review, never auto-applied.
+3. A live LaTeX preview updates as the user types — deterministic and derived, never itself
+   editable in Structured mode. Advanced mode exposes it as an editable "custom LaTeX override";
+   once set, the override renders instead of the generated LaTeX until the user explicitly
+   resets it (structured content is never silently discarded either way).
+4. **Save New Version** validates the draft and creates a brand new immutable `resume_versions`
+   row — the version being edited from is never changed. There is no autosave and no draft
+   persisted server-side; unsaved changes are lost on navigation (with a warning) exactly like
+   any other unsaved browser form.
+5. PDF compilation is not available yet (`docs/RESUME_STUDIO.md` §1) — the user downloads the
+   generated `.tex` file and compiles it themselves (e.g. via Overleaf) in the meantime.
 3. On an application's detail page, the user selects which résumé version they are currently
    planning to submit ("working résumé") — changeable at any time before applying, and freely
    afterward too, with no effect on history (step 5). "Create resume for this application" creates

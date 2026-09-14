@@ -6,6 +6,7 @@ import {
   type CareerOsSupabaseClient,
 } from '@career-os/database';
 import { Badge } from '@career-os/ui';
+import { VersionLatexPreview } from '../resumes/version-latex-preview';
 
 /**
  * "What does Career OS actually have recorded about what I submitted?" (docs/IMPLEMENTATION_PLAN.md
@@ -177,13 +178,18 @@ export async function SubmissionPacketSection({
           <div>
             <h3 className="text-xs font-semibold uppercase tracking-wide">Résumé</h3>
             {packet.resumeVersionId ? (
-              <p className="text-muted-foreground mt-1 text-xs">
-                {submittedResumeVersion
-                  ? `Version ${submittedResumeVersion.versionNumber} — ${submittedResumeVersion.displayName}`
-                  : 'This application referenced a résumé version that is no longer available.'}{' '}
-                — locked to this submission; the working résumé selected above may have
-                since changed.
-              </p>
+              <>
+                <p className="text-muted-foreground mt-1 text-xs">
+                  {submittedResumeVersion
+                    ? `Version ${submittedResumeVersion.versionNumber} — ${submittedResumeVersion.displayName}`
+                    : 'This application referenced a résumé version that is no longer available.'}{' '}
+                  — locked to this submission; the working résumé selected above may have
+                  since changed.
+                </p>
+                {submittedResumeVersion ? (
+                  <VersionLatexPreview version={submittedResumeVersion} />
+                ) : null}
+              </>
             ) : packet.resumeId ? (
               <p className="text-muted-foreground mt-1 text-xs">
                 Résumé {packet.resumeId}

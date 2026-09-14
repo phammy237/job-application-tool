@@ -225,8 +225,8 @@ nothing ever updates a version's own row in place (database-enforced, same
 | `resume_id`         | `uuid not null`                                             | composite FK to `resumes(user_id, id)`, `on delete cascade`                                            |
 | `version_number`    | `int not null`                                              | server-computed only (see `create_resume_version` below), never client-supplied; unique per `resume_id` |
 | `display_name`      | `text not null`                                             | e.g. "My Resume -- Microsoft -- PM Intern" (see résumé naming helper, `packages/shared`)                |
-| `snapshot_format`    | `text not null default 'METADATA_ONLY'`                    | today's only real value — no structured content, LaTeX, or PDF exist yet; widened additively in a later phase as real formats exist |
-| `snapshot_payload`  | `jsonb`                                                     | always null while `snapshot_format = 'METADATA_ONLY'` (database-enforced) — never a fabricated placeholder |
+| `snapshot_format`    | `text not null default 'METADATA_ONLY'`                    | `METADATA_ONLY` (Phase 7A — no content, just identity) or `STRUCTURED_V1` (Phase 7C — `snapshot_payload` is a real `StructuredResumeV1` JSON document); widened additively, never in advance of the format it describes actually existing (migration 0022) |
+| `snapshot_payload`  | `jsonb`                                                     | null while `snapshot_format = 'METADATA_ONLY'`; a non-null `StructuredResumeV1` object while `snapshot_format = 'STRUCTURED_V1'` — both directions database-enforced (`resume_versions_snapshot_payload_matches_format`), never a fabricated placeholder either way. The JSON itself also carries its own `schemaVersion` field, independent of this column, so a future `STRUCTURED_V2` can exist without ever reinterpreting an existing `STRUCTURED_V1` row |
 | `created_at`        | `timestamptz`                                               |                                                                                                        |
 
 Unique: `(resume_id, version_number)`. Indexes: `(user_id)`, `(resume_id)`. RLS: `select`/`delete`
@@ -236,6 +236,14 @@ client-supplied or racy, so every version is created exclusively through the `cr
 RPC below. Deletion *is* ordinary — the real "a submitted version can never be deleted" invariant is
 enforced structurally by `submission_packets.resume_version_id`'s `on delete restrict` FK (Phase
 7B), not by withholding delete.
+
+**Phase 7C — structured content is canonical, LaTeX is derived.** `StructuredResumeV1`
+(`packages/shared`) is the one thing actually snapshotted; LaTeX is generated from it on demand
+by a pure function (`renderStructuredResumeToLatex`) and never itself stored — the one exception
+is an explicit user-authored "custom LaTeX override," stored as a field *inside* the same JSON
+payload (`renderOverride`), since it cannot be derived from anything else. See
+`docs/RESUME_STUDIO.md` for the full design record, including why PDF compilation is explicitly
+deferred (no sandboxed compilation environment exists in this deployment yet).
 
 ### `create_resume_version` (Phase 7A)
 

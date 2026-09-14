@@ -81,6 +81,18 @@ phase depends on a later phase's output.
       `mark_application_applied`), plus the application detail page's Resume section and the
       historical submission viewer's updated résumé rendering (migration 0021,
       pgTAP-verified live — see "Phase 7B" below).
+- [x] Phase 7C — Structured résumé content + deterministic LaTeX rendering:
+      `StructuredResumeV1` (Header/Education/Experience/Projects/Leadership/Skills, stable
+      entry ids, MANUAL/CANDIDATE_FACTS bullet provenance), a pure `renderStructuredResumeToLatex`
+      renderer with full LaTeX-special-character escaping, an optional user-authored custom LaTeX
+      override, and `resume_versions.snapshot_format` widened to add `STRUCTURED_V1` (migration
+      0022, pgTAP-verified live — see "Phase 7C" below). PDF compilation is explicitly deferred —
+      no sandboxed compilation environment exists in this deployment — see docs/RESUME_STUDIO.md.
+- [x] Phase 7D — Resume Studio: `/resumes/[id]/studio` manual structured editor (add/remove/
+      reorder entries and bullets, no drag-and-drop), an "Import from profile" action gated on
+      already-approved facts, Structured/Advanced mode switching, a live deterministic LaTeX
+      preview, and "Save New Version" (always creates a new immutable version, never edits one in
+      place) — see "Phase 7D" below. No AI, no company research, no PDF preview (§7C).
 - [ ] Phase 7 — Multi-user beta hardening, privacy controls, testing, deployment
 - [ ] Phase 8 — Optional mypham.space integration, public onboarding, future sharing
 
@@ -3720,3 +3732,169 @@ via its parent resume), and legacy-packet compatibility. All pass.
 Structured résumé content, LaTeX generation/compilation, PDF storage (no Supabase Storage bucket
 exists — none was created), AI tailoring, company research, a dashboard "résumé selected" badge.
 None of this phase's schema needs to change to add any of them later.
+
+## Phase 7C — Structured résumé content + deterministic LaTeX rendering
+
+Full design record in `docs/RESUME_STUDIO.md`; this section is the as-built summary.
+
+### Compilation architecture investigation
+
+Before writing any renderer code: no Docker, no `pdflatex`/`xelatex`/`tectonic`/`latexmk` exist
+anywhere in this repo or its dependencies; `docs/DEPLOYMENT.md` targets an ordinary Node
+serverless/edge host (e.g. Vercel) with no apt-level installs, no persistent filesystem, and no
+pre-existing isolated worker/service; no external compilation API is configured. Given that,
+this phase implements the deterministic structured-content-to-LaTeX half of the pipeline
+completely (real, tested, real templates) and explicitly defers LaTeX-to-PDF compilation — the
+task's own option "F" — rather than standing up an unverifiable, potentially unsafe compilation
+path blind. `docs/RESUME_STUDIO.md` §1 records the realistic future options (an isolated
+Tectonic worker, a client-side WASM engine, or a reviewed external API) without picking one
+sight-unseen.
+
+### Schema (migration 0022)
+
+Additive only — widens `resume_versions.snapshot_format` (Phase 7A: `METADATA_ONLY` only) to
+also allow `STRUCTURED_V1`, and replaces the old one-directional "METADATA_ONLY implies null
+payload" check with a format-aware, two-directional one (`STRUCTURED_V1` requires a non-null
+JSON *object* payload — a shallow `jsonb_typeof` guard, independent of the real shape validation
+Zod does in application code). No RPC signature change: `create_resume_version` already
+accepted `p_snapshot_format`/`p_snapshot_payload` as parameters since Phase 7A — nothing was
+hardcoded to `METADATA_ONLY`, that was simply the only value any caller had passed until now.
+Not one existing `METADATA_ONLY` row's format or payload is touched.
+
+### `StructuredResumeV1` (`packages/shared/src/schemas/resume-content.ts`)
+
+Header (name/email/phone/location/links — its own frozen snapshot per version, never a live
+read of `profiles`, so a historical submission stays reproducible even after the user changes
+their contact info later), Education, Experience, Projects, Leadership, Skills (named groups,
+mirroring the existing `skills.category` column rather than one flat list). Every entry and
+bullet carries a stable id (`crypto.randomUUID()`, generated once, kept for its whole life —
+editing text never changes it, duplicating an entry always generates a new one) — array order
+*is* display order, no separate ordering field. Dates are `{year, month: 1-12 | null}` pairs, a
+range being `{start, end, isPresent}` — presentation-safe ("May 2025"), not a precise timestamp;
+a Zod `.refine` rejects the nonsensical `isPresent: true` + non-null `end` combination. Bullet
+`provenance` is a discriminated union (`MANUAL` / `CANDIDATE_FACTS` with `sourceFactIds`), not an
+optional array, so "grounded in zero facts" can never be confused with "not grounded at all" —
+manual editing never requires the `CANDIDATE_FACTS` variant. `schemaVersion: 1` is embedded in
+the payload itself, independent of the `snapshot_format` column, so a future `StructuredResumeV2`
+can exist without ever reinterpreting an existing v1 snapshot.
+
+### Deterministic LaTeX renderer (`packages/shared/src/lib/resume-latex-render.ts`)
+
+`renderStructuredResumeToLatex` is a pure function — same input, same output, always, no I/O, no
+clock reads. A self-contained, ATS-friendly one-page-style template (the well-known
+`\resumeItem`/`\resumeSubheading`/`\resumeSubHeadingListStart` command family) with every macro
+defined inline in the generated document — no external `.cls`/`.sty` file, no `\input` of
+anything outside the one generated string. `escapeLatex` handles every LaTeX special/active
+character (`& % $ # _ { } ~ ^ \`), backslash first via a placeholder so the backslash it
+introduces while escaping e.g. `&` is never itself re-escaped on a later pass — user text can
+never inject LaTeX commands through a structured field, only literal escaped text. Empty
+sections (no entries) are omitted from the output entirely rather than rendered as an empty
+heading. `getLatexForResumeVersion` is the one function every caller uses: the user's custom
+override when present, the generated render otherwise — deciding that in exactly one place.
+
+### `buildStructuredResumeFromProfile` (`packages/shared/src/lib/resume-content-from-profile.ts`)
+
+The "Import from profile" content builder — filters `experiences`/`education`/`projects`/
+`skills` to `userApproved && approvedForApplications` (the same grounding bar every AI/autofill
+path already uses, applied here even though no model is called at all), maps a free-text
+`description` column into separate bullets by splitting on the user's own line breaks (never
+inventing new sentences), and carries a row's `sourceFactId` through as `CANDIDATE_FACTS`
+provenance when present. Never populates leadership (no structured source table exists for it —
+only flat `candidate_facts` rows with no organization/role/date shape, which would require
+guessing structure the user never entered). Header `fullName` falls back to the profile's email,
+then a plain "Your Name" placeholder, never a fabricated real name.
+
+### Tests (Phase 7C schema/renderer)
+
+`packages/shared`: `resume-content.test.ts` (+17), `resume-version.test.ts` (+7, the discriminated
+union), `resume-latex-render.test.ts` (+27, every escaped character individually and combined,
+date formatting, full/minimal/empty-section resumes, order preservation, determinism, override
+precedence), `resume-content-from-profile.test.ts` (+14). pgTAP:
+`0027_resume_structured_content.test.sql` (9 assertions) run live against the linked Supabase
+project — a `STRUCTURED_V1` version with a real payload, the unchanged `METADATA_ONLY` default
+path, both directions of the payload-matches-format constraint, a non-object payload rejected,
+an unrecognized format still rejected, and immutability holding for a `STRUCTURED_V1` row exactly
+like a `METADATA_ONLY` one. All pass; existing 0024-0026 suites re-run unchanged and still pass
+(35/35) — the widened constraint touches nothing Phase 7A/7B already relied on.
+
+## Phase 7D — Resume Studio
+
+### `/resumes/[id]/studio`
+
+A server component resolves the base version (the `?version=` query param if it belongs to this
+résumé, else the résumé's latest `STRUCTURED_V1` version, else blank) and precomputes the
+profile-import candidate, then hands both to a client component that owns all draft state. Every
+edit is a plain immutable array/object update (`array-utils.ts`'s `updateAt`/`removeAt`/`moveAt`/
+`insertAt`) — array order is display order throughout, matching the schema. Add/remove/reorder
+uses explicit move-up/move-down/remove buttons (`move-buttons.tsx`), not drag-and-drop — plain
+buttons are keyboard- and screen-reader-operable without a parallel accessible path. One generic
+`EntrySectionEditor<T>` (`entry-section-editor.tsx`) supplies the list mechanics (add a blank
+entry, remove, move) for Education/Experience/Projects/Leadership; each section supplies its own
+field layout via a render prop, factoring out `DateRangeFields` and `BulletsEditor` as the shared
+sub-pieces every section reuses.
+
+### Structured vs. Advanced mode
+
+Structured mode edits the fields directly; Advanced mode shows the currently-generated LaTeX
+read-only until the user clicks "Customize" (which seeds `renderOverride` with the current
+generated text as a starting point) — after that, it's a plain editable textarea, with "Reset to
+generated LaTeX" requiring an explicit confirmation before discarding the override. "Import from
+profile" replaces Education/Experience/Projects/Skills with the profile-derived draft (confirming
+first if the draft already has content) but always keeps the current header and any active
+override untouched.
+
+### Save New Version
+
+`saveNewStructuredResumeVersion` (server action): verify ownership of the target résumé, validate
+the draft against `structuredResumeV1Schema` (never trust client-side validation alone), then
+call `createOwnResumeVersion` with `snapshotFormat: 'STRUCTURED_V1'` via the admin client —
+`version_number` is computed server-side inside the RPC, never passed by this action or the
+client. A friendly, specific error is returned (not thrown across the server/client boundary) on
+either failure. Nothing here ever touches an existing version's row.
+
+### Live LaTeX preview and `.tex` download
+
+The preview is `getLatexForResumeVersion(draft)` computed client-side via `packages/shared` —
+cheap and pure, so it updates on every keystroke with no server round trip and no PDF compilation
+attempted (docs/RESUME_STUDIO.md §1). "Download .tex" builds a `Blob` and triggers a client-side
+download named via the existing Phase 7A naming helper (`buildResumeFileName`, extension `tex`)
+— no server route, no public URL, nothing persisted.
+
+### Résumé detail page and application detail integration
+
+`/resumes/[id]` gained an "Open Studio" entry point, a Structured/Metadata-only badge per
+version, a per-version "Edit as new version" link (`?version=<id>`), and `VersionLatexPreview` —
+a read-only expandable LaTeX view honest about `METADATA_ONLY` versions ("this version predates
+structured résumé content," never a fabricated render) with its own "Download .tex." The
+application detail page's Resume section gained an "Open Studio" link next to the working
+version; `SubmissionPacketSection`'s submitted-résumé display gained the same read-only LaTeX
+view for a `STRUCTURED_V1` submitted version — still clearly locked/historical, never editable
+from there (editing always means opening the Studio and saving a *new* version).
+
+### Tests (Phase 7D)
+
+`apps/web`: `resume-studio.test.tsx` (+11 — load/edit header, add/edit/remove/reorder an
+experience entry, add/remove a bullet, save success and error paths, Advanced mode
+customize/reset including a cancelled-confirmation case, import-from-profile keeping the current
+header), `version-latex-preview.test.tsx` (+2 — the honest `METADATA_ONLY` message, and expand/
+collapse for a `STRUCTURED_V1` version). All existing `submission-packet-section.test.tsx` cases
+(12) re-run unchanged and still pass.
+
+### Self-review findings (this pass)
+
+Audited and confirmed clean: no shell/subprocess execution anywhere in this phase (none exists to
+audit — no compilation happens at all); no client-specified `version_number` (still fully
+server-computed inside the RPC); no hardcoded "My Pham" (naming helper reused from Phase 7A,
+unchanged); structured data never silently diverges from what renders (override precedence is
+decided in exactly one function); raw LaTeX never replaces the factual structured model (the
+override is additive, structured content is always still valid and present); no AI, no company
+research introduced; no new Supabase Storage bucket created; no N+1 (the Studio page's profile-
+import data and version list are each single batched queries, matching the existing pattern from
+Phase 7A/7B).
+
+### Explicitly deferred to a future phase
+
+PDF compilation and preview (docs/RESUME_STUDIO.md §1/§9), PDF storage (§10), a version diff
+view, AI tailoring, company research. None of this phase's schema needs to change to add any of
+them later — `snapshot_format` and the JSON payload's own `schemaVersion` were designed
+specifically to absorb this without reinterpreting anything already saved.
