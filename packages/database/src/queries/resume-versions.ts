@@ -1,6 +1,11 @@
-import { resumeVersionSchema, type ResumeVersion } from '@career-os/shared';
+import {
+  resumeVersionSchema,
+  type ResumeSnapshotFormat,
+  type ResumeVersion,
+  type StructuredResumeV1,
+} from '@career-os/shared';
 import { DatabaseError, assertNoError, unwrapRow } from '../errors';
-import type { Database } from '../types/database.types';
+import type { Database, Json } from '../types/database.types';
 import type { CareerOsSupabaseClient } from '../types/client';
 
 type Row = Database['public']['Tables']['resume_versions']['Row'];
@@ -101,11 +106,23 @@ export async function countOwnResumeVersionsForResumes(
  * is service-role-only (same posture as `mark_application_applied`), so callers must pass an
  * admin client, with `userId` derived from the verified server-side session — never a
  * client-supplied field.
+ *
+ * `snapshotFormat`/`snapshotPayload` default to the RPC's own SQL-side defaults (`METADATA_ONLY`/
+ * `null`) when omitted — unchanged Phase 7A behavior. Phase 7C callers pass `STRUCTURED_V1` and
+ * an already-`structuredResumeV1Schema`-validated payload; this function does not re-validate it
+ * (the caller — the Studio's save action — validates before calling this), it only forwards it,
+ * same posture as every other query-layer function that trusts its caller for content shape and
+ * only re-derives ownership/identity itself.
  */
 export async function createOwnResumeVersion(
   supabase: CareerOsSupabaseClient,
   userId: string,
-  input: { resumeId: string; displayName: string },
+  input: {
+    resumeId: string;
+    displayName: string;
+    snapshotFormat?: ResumeSnapshotFormat;
+    snapshotPayload?: StructuredResumeV1;
+  },
 ): Promise<ResumeVersion> {
   // Note: create_resume_version returns a single public.resume_versions row (not SETOF/TABLE),
   // so — unlike mark_application_applied's `.rpc(...).single()` — PostgREST already hands back
@@ -114,6 +131,10 @@ export async function createOwnResumeVersion(
     p_user_id: userId,
     p_resume_id: input.resumeId,
     p_display_name: input.displayName,
+    ...(input.snapshotFormat ? { p_snapshot_format: input.snapshotFormat } : {}),
+    ...(input.snapshotPayload
+      ? { p_snapshot_payload: input.snapshotPayload as unknown as Json }
+      : {}),
   });
   return rowToResumeVersion(unwrapRow(data, error, 'createOwnResumeVersion'));
 }

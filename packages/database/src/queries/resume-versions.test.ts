@@ -70,6 +70,42 @@ describe('createOwnResumeVersion', () => {
     });
     expect(result.versionNumber).toBe(1);
   });
+
+  it('forwards snapshotFormat and snapshotPayload when creating a STRUCTURED_V1 version', async () => {
+    const structuredPayload = {
+      schemaVersion: 1,
+      header: { fullName: 'Ada', email: null, phone: null, location: null, links: {} },
+      education: [],
+      experience: [],
+      projects: [],
+      leadership: [],
+      skills: [],
+      renderOverride: null,
+    };
+    const structuredRow = {
+      ...BASE_ROW,
+      snapshot_format: 'STRUCTURED_V1',
+      snapshot_payload: structuredPayload,
+    };
+    const rpc = vi.fn().mockResolvedValue({ data: structuredRow, error: null });
+    const supabase = { rpc } as unknown as CareerOsSupabaseClient;
+
+    const result = await createOwnResumeVersion(supabase, USER_ID, {
+      resumeId: RESUME_ID,
+      displayName: 'v1',
+      snapshotFormat: 'STRUCTURED_V1',
+      snapshotPayload: structuredPayload as never,
+    });
+
+    expect(rpc).toHaveBeenCalledWith('create_resume_version', {
+      p_user_id: USER_ID,
+      p_resume_id: RESUME_ID,
+      p_display_name: 'v1',
+      p_snapshot_format: 'STRUCTURED_V1',
+      p_snapshot_payload: structuredPayload,
+    });
+    expect(result.snapshotFormat).toBe('STRUCTURED_V1');
+  });
 });
 
 describe('deleteOwnResumeVersion', () => {
