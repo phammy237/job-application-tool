@@ -5,6 +5,7 @@ import {
   contactSourceSchema,
   contactTagSchema,
   createContactInputSchema,
+  setContactFollowUpInputSchema,
   updateContactInputSchema,
 } from './contact';
 
@@ -22,6 +23,7 @@ const VALID_CONTACT = {
   location: null,
   notes: null,
   source: 'MANUAL',
+  followUpAt: null,
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z',
 };
@@ -59,6 +61,45 @@ describe('contactSchema', () => {
   it('rejects an empty displayName', () => {
     const result = contactSchema.safeParse({ ...VALID_CONTACT, displayName: '' });
     expect(result.success).toBe(false);
+  });
+
+  it('accepts a real followUpAt timestamp', () => {
+    const result = contactSchema.safeParse({
+      ...VALID_CONTACT,
+      followUpAt: '2026-06-14T12:00:00.000Z',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('requires the followUpAt key to be present (even if null) — no reminder is an explicit null, not an absent field', () => {
+    const { followUpAt: _followUpAt, ...withoutFollowUpAt } = VALID_CONTACT;
+    const result = contactSchema.safeParse(withoutFollowUpAt);
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('setContactFollowUpInputSchema', () => {
+  it('requires a real ISO datetime', () => {
+    expect(
+      setContactFollowUpInputSchema.safeParse({ followUpAt: '2026-06-14T12:00:00.000Z' })
+        .success,
+    ).toBe(true);
+  });
+
+  it('rejects a missing followUpAt', () => {
+    expect(setContactFollowUpInputSchema.safeParse({}).success).toBe(false);
+  });
+
+  it('rejects a date-only string without a time component', () => {
+    expect(setContactFollowUpInputSchema.safeParse({ followUpAt: '2026-06-14' }).success).toBe(
+      false,
+    );
+  });
+
+  it('rejects a malformed timestamp', () => {
+    expect(
+      setContactFollowUpInputSchema.safeParse({ followUpAt: 'not-a-date' }).success,
+    ).toBe(false);
   });
 });
 

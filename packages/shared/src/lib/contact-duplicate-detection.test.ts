@@ -23,6 +23,7 @@ function makeContact(overrides: Partial<Contact>): Contact {
     location: null,
     notes: null,
     source: 'MANUAL',
+    followUpAt: null,
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
     ...overrides,

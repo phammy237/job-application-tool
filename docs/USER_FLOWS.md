@@ -226,6 +226,28 @@ false`, `visibleOnPublicProfile = false`. Nothing extracted is usable until step
    that no longer exists).
 9. Nothing here calls Claude either — Phase 6B makes zero model calls, same as 6A.
 
+### Follow-up reminders + networking next actions (Phase 6C)
+
+10. From `/network/[id]`, near the top, the user can **Set a follow-up reminder** — an explicit
+    date/time they choose (defaulting to now, editable). Career OS never suggests or invents this
+    date; it only exists once the user sets it.
+11. Once set, the page shows the factual state: "Follow up on Sep 20" while it's still in the
+    future, or "Follow-up reminder due" once that date/time has arrived — never "you've
+    neglected this contact" or similar. The user can **Change** a future reminder, or once due,
+    **Reschedule** it or **Mark done**.
+12. **Mark done** simply clears the reminder. It does not log an interaction or assume the user
+    actually followed up — if the user wants that recorded, they log an interaction separately
+    (Phase 6B). Logging a new interaction also never silently clears an existing reminder — a
+    user might log an inbound recruiter email while still intending to follow up tomorrow.
+13. `/network`'s list gains a **Follow-ups due** section above the searchable contact list —
+    every contact whose reminder has arrived, earliest first — and every row in the main list
+    shows its reminder factually ("Follow up today," "Follow up Sep 20," or "No reminder") when
+    one is set. A future reminder never appears in "Follow-ups due."
+14. This determination — due or not — is computed fresh every time the page loads from the
+    reminder date alone; nothing about it is precomputed or stored. No AI is involved, and
+    nothing here sends a notification outside Career OS (no browser push, no email, no
+    background job) — the reminder only ever surfaces when the user opens the product themselves.
+
 ## 8. Deletion flows
 
 Each of the following is a first-class, discoverable action (not "contact support"):

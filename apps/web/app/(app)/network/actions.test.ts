@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   createOwnContactInteraction: vi.fn(),
   updateOwnContactInteraction: vi.fn(),
   deleteOwnContactInteraction: vi.fn(),
+  setOwnContactFollowUp: vi.fn(),
+  clearOwnContactFollowUp: vi.fn(),
 }));
 
 vi.mock('@career-os/database', () => ({
@@ -26,6 +28,8 @@ vi.mock('@career-os/database', () => ({
   createOwnContactInteraction: mocks.createOwnContactInteraction,
   updateOwnContactInteraction: mocks.updateOwnContactInteraction,
   deleteOwnContactInteraction: mocks.deleteOwnContactInteraction,
+  setOwnContactFollowUp: mocks.setOwnContactFollowUp,
+  clearOwnContactFollowUp: mocks.clearOwnContactFollowUp,
 }));
 
 vi.mock('../../../lib/auth', () => ({
@@ -49,6 +53,8 @@ const {
   createInteractionAction,
   updateInteractionAction,
   deleteInteractionAction,
+  setContactFollowUpAction,
+  clearContactFollowUpAction,
 } = await import('./actions');
 
 const USER_ID = '22222222-2222-4222-8222-222222222222';
@@ -338,5 +344,49 @@ describe('deleteInteractionAction', () => {
       USER_ID,
       INTERACTION_ID,
     );
+  });
+});
+
+describe('setContactFollowUpAction', () => {
+  it('sets the reminder scoped to the caller', async () => {
+    mocks.setOwnContactFollowUp.mockResolvedValue({ id: CONTACT_ID });
+    const result = await setContactFollowUpAction(CONTACT_ID, {
+      followUpAt: '2027-06-15T09:00:00.000Z',
+    });
+    expect(mocks.setOwnContactFollowUp).toHaveBeenCalledWith(
+      SESSION_CLIENT,
+      USER_ID,
+      CONTACT_ID,
+      '2027-06-15T09:00:00.000Z',
+    );
+    expect(result).toEqual({ status: 'ok' });
+  });
+
+  it('rejects an invalid input without calling the database', async () => {
+    const result = await setContactFollowUpAction(CONTACT_ID, { followUpAt: 'not-a-date' });
+    expect(mocks.setOwnContactFollowUp).not.toHaveBeenCalled();
+    expect(result.status).toBe('error');
+  });
+
+  it('rejects a missing followUpAt', async () => {
+    const result = await setContactFollowUpAction(CONTACT_ID, {});
+    expect(mocks.setOwnContactFollowUp).not.toHaveBeenCalled();
+    expect(result.status).toBe('error');
+  });
+});
+
+describe('clearContactFollowUpAction', () => {
+  it('clears the reminder scoped to the caller', async () => {
+    await clearContactFollowUpAction(CONTACT_ID);
+    expect(mocks.clearOwnContactFollowUp).toHaveBeenCalledWith(
+      SESSION_CLIENT,
+      USER_ID,
+      CONTACT_ID,
+    );
+  });
+
+  it('never calls createOwnContactInteraction — dismissing a reminder does not fabricate history', async () => {
+    await clearContactFollowUpAction(CONTACT_ID);
+    expect(mocks.createOwnContactInteraction).not.toHaveBeenCalled();
   });
 });

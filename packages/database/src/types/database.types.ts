@@ -583,6 +583,7 @@ export interface Database {
           location: string | null;
           notes: string | null;
           source: string;
+          follow_up_at: string | null;
           created_at: string;
           updated_at: string;
         };

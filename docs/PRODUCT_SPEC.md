@@ -29,15 +29,18 @@ without a rewrite.
    per-requirement breakdown of which approved facts support it. Never a fabricated match, and
    never reduced to a single "ATS score" or hiring-probability number — see §3 and
    `docs/AI_GROUNDING.md` §8.
-7. **Networking / CRM (Phase 6, foundation + interaction history shipped in 6A/6B)** — private,
-   user-owned contacts, reusable across applications, with a longer-lived relationship tag
-   (recruiter, alumni, friend, …) distinct from a per-application role (referrer, interviewer,
-   …). Deterministic duplicate warnings only — never auto-merged. A factual, user-editable
-   interaction history per contact (email, call, coffee chat, meeting, and more) answers "what
-   history do I have with this person?" — pure record-keeping, with no reminder, follow-up
-   recommendation, or AI attached to it yet. No AI, no Gmail-derived suggestions, and no
-   reminder/next-action tracking yet — those are later Phase 6 slices, see
-   `docs/IMPLEMENTATION_PLAN.md` "Phase 6".
+7. **Networking / CRM (Phase 6, foundation through 6C)** — private, user-owned contacts,
+   reusable across applications, with a longer-lived relationship tag (recruiter, alumni,
+   friend, …) distinct from a per-application role (referrer, interviewer, …). Deterministic
+   duplicate warnings only — never auto-merged. A factual, user-editable interaction history per
+   contact (email, call, coffee chat, meeting, and more) answers "what history do I have with
+   this person?" — pure record-keeping. An explicit, user-chosen follow-up reminder per contact
+   (never invented by Career OS) drives a small deterministic next-action engine — "who have I
+   said I need to follow up with, and is that due right now?" — surfaced on `/network`'s
+   "Follow-ups due" section and the contact detail page. No AI anywhere in this feature area, no
+   Gmail-derived contacts/interactions/reminders, no relationship scores or "reconnect"
+   heuristics, and no background notifications outside the product itself — see
+   `docs/IMPLEMENTATION_PLAN.md` "Phase 6" for what's still deferred.
 
 ## 3. Non-goals (explicit)
 

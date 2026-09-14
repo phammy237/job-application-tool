@@ -68,6 +68,13 @@ export const contactSchema = z.object({
   location: z.string().nullable(),
   notes: z.string().nullable(),
   source: contactSourceSchema,
+  /** An explicit, user-chosen reminder date/time — Career OS never invents or infers this
+   * (docs/IMPLEMENTATION_PLAN.md "Phase 6C" §4). Null means no reminder is set, which is the
+   * default, valid state for every contact; setting/clearing it is ordinary contact editing, not
+   * a separate immutable-history fact. The deterministic networking next-action engine
+   * (`deriveNetworkingNextAction`) is the only thing that ever reads this to decide whether a
+   * follow-up is currently due — nothing here persists that derived decision. */
+  followUpAt: isoDateTimeSchema.nullable(),
   createdAt: isoDateTimeSchema,
   updatedAt: isoDateTimeSchema,
 });
@@ -149,3 +156,17 @@ export const possibleDuplicateContactSchema = z.object({
   reason: possibleDuplicateReasonSchema,
 });
 export type PossibleDuplicateContact = z.infer<typeof possibleDuplicateContactSchema>;
+
+/**
+ * A dedicated, minimal input for setting/rescheduling a contact's follow-up reminder
+ * (docs/IMPLEMENTATION_PLAN.md "Phase 6C" §4/§12) — deliberately separate from
+ * `updateContactInputSchema` rather than adding `followUpAt` to that general identity/detail
+ * form, since setting a reminder is its own explicit action ("Set follow-up reminder"/
+ * "Reschedule"), not a field a user edits alongside their name or company. Clearing a reminder
+ * ("Mark follow-up done") takes no input at all — see `clearOwnContactFollowUp` in
+ * `packages/database` — so there is no corresponding "clear" schema here.
+ */
+export const setContactFollowUpInputSchema = z.object({
+  followUpAt: isoDateTimeSchema,
+});
+export type SetContactFollowUpInput = z.infer<typeof setContactFollowUpInputSchema>;

@@ -32,6 +32,7 @@ export function rowToContact(row: Row): Contact {
     location: row.location,
     notes: row.notes,
     source: row.source,
+    followUpAt: row.follow_up_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });
@@ -250,4 +251,74 @@ export async function findOwnPossibleDuplicateContacts(
 ): Promise<PossibleDuplicateContact[]> {
   const existing = await listOwnContacts(supabase, userId);
   return findPossibleDuplicateContacts(candidate, existing, excludeContactId);
+}
+
+/**
+ * Sets or reschedules a contact's explicit follow-up reminder (docs/IMPLEMENTATION_PLAN.md
+ * "Phase 6C" §4/§12) — a dedicated function, not folded into `updateOwnContact`, since this is
+ * its own explicit action ("Set follow-up reminder"/"Reschedule"), not a general identity/detail
+ * edit. `followUpAt` is always a real, user-chosen timestamp here — this function never invents
+ * one; see `clearOwnContactFollowUp` for the "no reminder" case.
+ */
+export async function setOwnContactFollowUp(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+  id: string,
+  followUpAt: string,
+): Promise<Contact> {
+  const { data, error } = await supabase
+    .from('contacts')
+    .update({ follow_up_at: followUpAt })
+    .eq('id', id)
+    .eq('user_id', userId)
+    .select('*')
+    .single();
+  return rowToContact(unwrapRow(data, error, 'setOwnContactFollowUp'));
+}
+
+/**
+ * "Mark follow-up done" — clears `follow_up_at` back to null (docs/IMPLEMENTATION_PLAN.md
+ * "Phase 6C" §11). Deliberately does nothing else: it does not log an interaction, does not
+ * assume the user actually contacted the person, and does not write any completion record — see
+ * that doc section's own reasoning for why inferring "followed up" from a dismissed reminder
+ * would be a fabricated fact, not an observed one.
+ */
+export async function clearOwnContactFollowUp(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+  id: string,
+): Promise<Contact> {
+  const { data, error } = await supabase
+    .from('contacts')
+    .update({ follow_up_at: null })
+    .eq('id', id)
+    .eq('user_id', userId)
+    .select('*')
+    .single();
+  return rowToContact(unwrapRow(data, error, 'clearOwnContactFollowUp'));
+}
+
+/**
+ * Contacts with a due (non-null, `<= now`) follow-up reminder, earliest first — one bounded,
+ * server-side-filtered query (docs/IMPLEMENTATION_PLAN.md "Phase 6C" §17/§25/§39), not "load
+ * every contact and filter in memory." Backs the /network page's "Follow-ups due" section.
+ * `now` is injected by the caller (never read internally via `new Date()`), the same
+ * pure-function-friendly posture as `deriveNetworkingNextAction` itself — this query and that
+ * pure engine must always agree on what "due" means, so both take the same `now` from the same
+ * caller-computed value.
+ */
+export async function listOwnContactsWithDueFollowUp(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+  now: string,
+): Promise<Contact[]> {
+  const { data, error } = await supabase
+    .from('contacts')
+    .select('*')
+    .eq('user_id', userId)
+    .not('follow_up_at', 'is', null)
+    .lte('follow_up_at', now)
+    .order('follow_up_at', { ascending: true });
+  assertNoError(error, 'listOwnContactsWithDueFollowUp');
+  return (data ?? []).map(rowToContact);
 }

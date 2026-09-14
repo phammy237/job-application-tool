@@ -1,6 +1,7 @@
 'use server';
 
 import {
+  clearOwnContactFollowUp,
   createOwnContact,
   createOwnContactInteraction,
   deleteOwnContact,
@@ -8,6 +9,7 @@ import {
   findOwnPossibleDuplicateContacts,
   linkOwnContactToApplication,
   listOwnContacts,
+  setOwnContactFollowUp,
   unlinkOwnContactFromApplication,
   updateOwnContact,
   updateOwnContactInteraction,
@@ -16,6 +18,7 @@ import {
   applicationContactRoleSchema,
   createContactInputSchema,
   createContactInteractionInputSchema,
+  setContactFollowUpInputSchema,
   updateContactInputSchema,
   updateContactInteractionInputSchema,
   type ApplicationContactRole,
@@ -268,5 +271,48 @@ export async function deleteInteractionAction(
   const user = await requireUser();
   const supabase = await createClient();
   await deleteOwnContactInteraction(supabase, user.id, interactionId);
+  revalidatePath(`/network/${contactId}`);
+}
+
+export type FollowUpActionResult =
+  | { status: 'ok' }
+  | { status: 'error'; message: string };
+
+/**
+ * Sets or reschedules a contact's follow-up reminder (docs/IMPLEMENTATION_PLAN.md "Phase 6C"
+ * §4/§12) — an explicit user-chosen date/time, never invented by Career OS. Also backs "Follow
+ * up on /network" and "Follow-ups due" — both revalidated here since a reminder change can move
+ * a contact into or out of either section.
+ */
+export async function setContactFollowUpAction(
+  contactId: string,
+  rawInput: unknown,
+): Promise<FollowUpActionResult> {
+  const user = await requireUser();
+  const supabase = await createClient();
+
+  const parsed = setContactFollowUpInputSchema.safeParse(rawInput);
+  if (!parsed.success) {
+    return { status: 'error', message: 'Choose a valid date and time.' };
+  }
+
+  await setOwnContactFollowUp(supabase, user.id, contactId, parsed.data.followUpAt);
+  revalidatePath('/network');
+  revalidatePath(`/network/${contactId}`);
+  return { status: 'ok' };
+}
+
+/**
+ * "Mark follow-up done" — clears the reminder. Deliberately does not log an interaction or any
+ * other completion record (docs/IMPLEMENTATION_PLAN.md "Phase 6C" §11/§37): Career OS cannot
+ * know the user actually followed up just because they dismissed a reminder, only that the
+ * reminder itself is no longer wanted. A user who wants that history logs an interaction
+ * separately.
+ */
+export async function clearContactFollowUpAction(contactId: string): Promise<void> {
+  const user = await requireUser();
+  const supabase = await createClient();
+  await clearOwnContactFollowUp(supabase, user.id, contactId);
+  revalidatePath('/network');
   revalidatePath(`/network/${contactId}`);
 }

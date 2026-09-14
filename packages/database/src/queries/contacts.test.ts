@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { CareerOsSupabaseClient } from '../types/client';
 import {
+  clearOwnContactFollowUp,
   createOwnContact,
   deleteOwnContact,
   findOwnPossibleDuplicateContacts,
@@ -8,7 +9,9 @@ import {
   listOwnContactTags,
   listOwnContactTagsForContacts,
   listOwnContacts,
+  listOwnContactsWithDueFollowUp,
   replaceOwnContactTags,
+  setOwnContactFollowUp,
   updateOwnContact,
 } from './contacts';
 
@@ -29,6 +32,7 @@ const BASE_ROW = {
   location: null,
   notes: null,
   source: 'MANUAL',
+  follow_up_at: null,
   created_at: '2026-01-01T00:00:00.000Z',
   updated_at: '2026-01-01T00:00:00.000Z',
 };
@@ -42,6 +46,8 @@ function makeChain(overrides: Record<string, unknown> = {}) {
   chain.eq = vi.fn(() => chain);
   chain.in = vi.fn(() => chain);
   chain.or = vi.fn(() => chain);
+  chain.not = vi.fn(() => chain);
+  chain.lte = vi.fn(() => chain);
   chain.order = vi.fn().mockResolvedValue({ data: [], error: null });
   chain.single = vi.fn().mockResolvedValue({ data: null, error: null });
   chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
@@ -328,5 +334,72 @@ describe('findOwnPossibleDuplicateContacts', () => {
     );
 
     expect(result).toHaveLength(0);
+  });
+});
+
+describe('setOwnContactFollowUp', () => {
+  it('sets follow_up_at scoped to id and user_id', async () => {
+    const chain = makeChain({
+      single: vi
+        .fn()
+        .mockResolvedValue({ data: { ...BASE_ROW, follow_up_at: '2026-06-14T12:00:00.000Z' }, error: null }),
+    });
+    const supabase = { from: vi.fn(() => chain) } as unknown as CareerOsSupabaseClient;
+
+    const contact = await setOwnContactFollowUp(
+      supabase,
+      USER_ID,
+      CONTACT_ID,
+      '2026-06-14T12:00:00.000Z',
+    );
+
+    expect(chain.update).toHaveBeenCalledWith({ follow_up_at: '2026-06-14T12:00:00.000Z' });
+    expect(chain.eq).toHaveBeenCalledWith('id', CONTACT_ID);
+    expect(chain.eq).toHaveBeenCalledWith('user_id', USER_ID);
+    expect(contact.followUpAt).toBe('2026-06-14T12:00:00.000Z');
+  });
+});
+
+describe('clearOwnContactFollowUp', () => {
+  it('nulls follow_up_at scoped to id and user_id, and does nothing else', async () => {
+    const chain = makeChain({
+      single: vi.fn().mockResolvedValue({ data: BASE_ROW, error: null }),
+    });
+    const supabase = { from: vi.fn(() => chain) } as unknown as CareerOsSupabaseClient;
+
+    const contact = await clearOwnContactFollowUp(supabase, USER_ID, CONTACT_ID);
+
+    expect(chain.update).toHaveBeenCalledWith({ follow_up_at: null });
+    expect(chain.eq).toHaveBeenCalledWith('id', CONTACT_ID);
+    expect(chain.eq).toHaveBeenCalledWith('user_id', USER_ID);
+    expect(contact.followUpAt).toBeNull();
+  });
+});
+
+describe('listOwnContactsWithDueFollowUp', () => {
+  it('filters by user_id, non-null follow_up_at, and <= now, ordered earliest first', async () => {
+    const chain = makeChain();
+    chain.order = vi.fn().mockResolvedValue({
+      data: [{ ...BASE_ROW, follow_up_at: '2026-06-14T12:00:00.000Z' }],
+      error: null,
+    });
+    const supabase = { from: vi.fn(() => chain) } as unknown as CareerOsSupabaseClient;
+
+    const result = await listOwnContactsWithDueFollowUp(supabase, USER_ID, '2026-06-15T00:00:00.000Z');
+
+    expect(chain.eq).toHaveBeenCalledWith('user_id', USER_ID);
+    expect(chain.not).toHaveBeenCalledWith('follow_up_at', 'is', null);
+    expect(chain.lte).toHaveBeenCalledWith('follow_up_at', '2026-06-15T00:00:00.000Z');
+    expect(chain.order).toHaveBeenCalledWith('follow_up_at', { ascending: true });
+    expect(result).toHaveLength(1);
+  });
+
+  it('returns an empty array when nothing is due', async () => {
+    const chain = makeChain();
+    chain.order = vi.fn().mockResolvedValue({ data: [], error: null });
+    const supabase = { from: vi.fn(() => chain) } as unknown as CareerOsSupabaseClient;
+
+    const result = await listOwnContactsWithDueFollowUp(supabase, USER_ID, '2026-06-15T00:00:00.000Z');
+    expect(result).toEqual([]);
   });
 });

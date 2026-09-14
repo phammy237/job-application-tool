@@ -100,6 +100,14 @@ touches the contact or application it referenced (verified in
 `supabase/tests/database/0022_contact_interactions.test.sql`). Interaction `subject`/`notes` are
 never logged or included in any AI request (Phase 6B also makes zero AI calls) or public surface.
 
+`contacts.follow_up_at` (Phase 6C) is a plain, ordinary column covered by `contacts`' existing
+RLS — no new policy was added because none was needed (verified, not assumed, in
+`supabase/tests/database/0023_contact_follow_up_reminders.test.sql`). It carries no automation
+risk: nothing reads this column except the product itself when the user opens it — no browser
+notification, email, SMS, or background/cron job of any kind is wired to it, and none is planned
+without a separate, explicit design pass. The derived networking next action is computed at
+read time and never persisted, and — like Phase 6A/6B — this slice makes zero AI calls.
+
 ## 6. AI-specific risk: fabrication
 
 Covered in full in `docs/AI_GROUNDING.md`. Summarized here as a security/privacy concern

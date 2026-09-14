@@ -53,6 +53,11 @@ vi.mock('./interaction-timeline', () => ({
     </div>
   ),
 }));
+vi.mock('./follow-up-reminder-controls', () => ({
+  FollowUpReminderControls: ({ isDue }: { isDue: boolean }) => (
+    <div data-testid="follow-up-reminder-controls-stub">{isDue ? 'due' : 'not-due'}</div>
+  ),
+}));
 
 const { default: ContactDetailPage } = await import('./page');
 
@@ -74,6 +79,7 @@ const BASE_CONTACT = {
   location: null,
   notes: null,
   source: 'MANUAL',
+  followUpAt: null,
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z',
 };
@@ -169,5 +175,47 @@ describe('ContactDetailPage', () => {
     ]);
     await renderPage();
     expect(screen.getByTestId('interaction-timeline-stub')).toHaveTextContent('app-1');
+  });
+
+  describe('follow-up reminder', () => {
+    it('shows "no reminder set" when follow_up_at is null', async () => {
+      mocks.getOwnContact.mockResolvedValue(BASE_CONTACT);
+      await renderPage();
+      expect(screen.getByText('No follow-up reminder set.')).toBeInTheDocument();
+      expect(screen.getByTestId('follow-up-reminder-controls-stub')).toHaveTextContent(
+        'not-due',
+      );
+    });
+
+    it('shows a factual "follow up on" state for a future reminder', async () => {
+      mocks.getOwnContact.mockResolvedValue({
+        ...BASE_CONTACT,
+        followUpAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30).toISOString(),
+      });
+      await renderPage();
+      expect(screen.getByText(/^Follow up on /)).toBeInTheDocument();
+      expect(screen.getByTestId('follow-up-reminder-controls-stub')).toHaveTextContent(
+        'not-due',
+      );
+    });
+
+    it('shows a due state for a past reminder', async () => {
+      mocks.getOwnContact.mockResolvedValue({
+        ...BASE_CONTACT,
+        followUpAt: '2020-01-01T00:00:00.000Z',
+      });
+      await renderPage();
+      expect(screen.getByText(/^Follow-up reminder due: /)).toBeInTheDocument();
+      expect(screen.getByTestId('follow-up-reminder-controls-stub')).toHaveTextContent('due');
+    });
+
+    it('never uses judgmental language like "neglected" or "overdue"', async () => {
+      mocks.getOwnContact.mockResolvedValue({
+        ...BASE_CONTACT,
+        followUpAt: '2020-01-01T00:00:00.000Z',
+      });
+      await renderPage();
+      expect(document.body.textContent?.toLowerCase()).not.toMatch(/neglect|overdue/);
+    });
   });
 });

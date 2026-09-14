@@ -9,12 +9,14 @@ const mocks = vi.hoisted(() => ({
   listOwnContacts: vi.fn(),
   listOwnContactTagsForContacts: vi.fn(),
   countOwnApplicationLinksForContacts: vi.fn(),
+  listOwnContactsWithDueFollowUp: vi.fn(),
 }));
 
 vi.mock('@career-os/database', () => ({
   listOwnContacts: mocks.listOwnContacts,
   listOwnContactTagsForContacts: mocks.listOwnContactTagsForContacts,
   countOwnApplicationLinksForContacts: mocks.countOwnApplicationLinksForContacts,
+  listOwnContactsWithDueFollowUp: mocks.listOwnContactsWithDueFollowUp,
 }));
 
 vi.mock('../../../lib/auth', () => ({ requireUser: mocks.requireUser }));
@@ -50,6 +52,7 @@ beforeEach(() => {
   mocks.createClient.mockResolvedValue(SESSION_CLIENT);
   mocks.listOwnContactTagsForContacts.mockResolvedValue(new Map());
   mocks.countOwnApplicationLinksForContacts.mockResolvedValue(new Map());
+  mocks.listOwnContactsWithDueFollowUp.mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -96,5 +99,61 @@ describe('NetworkPage', () => {
       'contact-b',
     ]);
     expect(mocks.countOwnApplicationLinksForContacts).toHaveBeenCalledTimes(1);
+  });
+
+  describe('Follow-ups due', () => {
+    it('shows an honest empty state with no due follow-ups', async () => {
+      mocks.listOwnContacts.mockResolvedValue([]);
+      mocks.listOwnContactsWithDueFollowUp.mockResolvedValue([]);
+      await renderPage();
+      expect(screen.getByText('No follow-ups due right now.')).toBeInTheDocument();
+    });
+
+    it('lists one due follow-up with a link to the contact', async () => {
+      mocks.listOwnContacts.mockResolvedValue([]);
+      mocks.listOwnContactsWithDueFollowUp.mockResolvedValue([
+        { ...CONTACT_A, followUpAt: '2020-01-01T00:00:00.000Z' },
+      ]);
+      await renderPage();
+      const link = screen.getByRole('link', { name: 'Jane Doe' });
+      expect(link).toHaveAttribute('href', '/network/contact-a');
+    });
+
+    it('lists multiple due follow-ups in the order the query already returned them', async () => {
+      mocks.listOwnContacts.mockResolvedValue([]);
+      mocks.listOwnContactsWithDueFollowUp.mockResolvedValue([
+        { ...CONTACT_A, id: 'contact-a', displayName: 'Alice', followUpAt: '2020-01-01T00:00:00.000Z' },
+        { ...CONTACT_A, id: 'contact-b', displayName: 'Bob', followUpAt: '2020-01-02T00:00:00.000Z' },
+      ]);
+      await renderPage();
+      const links = screen.getAllByRole('link', { name: /Alice|Bob/ });
+      expect(links.map((l) => l.textContent)).toEqual(['Alice', 'Bob']);
+    });
+
+    it('scopes the due query to the caller with a computed now', async () => {
+      mocks.listOwnContacts.mockResolvedValue([]);
+      await renderPage();
+      expect(mocks.listOwnContactsWithDueFollowUp).toHaveBeenCalledWith(
+        SESSION_CLIENT,
+        USER_ID,
+        expect.any(String),
+      );
+    });
+  });
+
+  describe('follow-up column', () => {
+    it('shows "No reminder" for a contact without one', async () => {
+      mocks.listOwnContacts.mockResolvedValue([{ ...CONTACT_A, followUpAt: null }]);
+      await renderPage();
+      expect(screen.getByText('No reminder')).toBeInTheDocument();
+    });
+
+    it('does not show a future reminder in the Follow-ups due section', async () => {
+      const future = new Date(Date.now() + 1000 * 60 * 60 * 24 * 30).toISOString();
+      mocks.listOwnContacts.mockResolvedValue([{ ...CONTACT_A, followUpAt: future }]);
+      mocks.listOwnContactsWithDueFollowUp.mockResolvedValue([]);
+      await renderPage();
+      expect(screen.getByText('No follow-ups due right now.')).toBeInTheDocument();
+    });
   });
 });

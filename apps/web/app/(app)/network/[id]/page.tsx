@@ -4,6 +4,7 @@ import {
   listOwnApplicationsForContact,
   listOwnContactTags,
 } from '@career-os/database';
+import { deriveNetworkingNextAction } from '@career-os/shared';
 import { StatusBadge } from '@career-os/ui';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
@@ -13,6 +14,7 @@ import { ContactForm } from '../contact-form';
 import { ContactTagBadges, formatEnumLabel } from '../contact-tag-badges';
 import { DeleteContactButton } from '../delete-contact-button';
 import { UnlinkButton } from '../unlink-button';
+import { FollowUpReminderControls } from './follow-up-reminder-controls';
 import { InteractionTimeline } from './interaction-timeline';
 import { LinkApplicationForm } from './link-application-form';
 
@@ -36,6 +38,12 @@ export default async function ContactDetailPage({
     listOwnApplications(supabase, user.id),
   ]);
 
+  // Phase 6C: derived, never persisted — the same read-time posture as the Phase 5C application
+  // next-action engine, for the same synchronization reasons (docs/IMPLEMENTATION_PLAN.md
+  // "Phase 6C" §6).
+  const now = new Date().toISOString();
+  const networkingNextAction = deriveNetworkingNextAction({ followUpAt: contact.followUpAt, now });
+
   return (
     <div className="max-w-2xl space-y-8">
       <div className="flex items-start justify-between gap-4">
@@ -49,6 +57,24 @@ export default async function ContactDetailPage({
           </p>
         </div>
       </div>
+
+      <section className="space-y-2">
+        {contact.followUpAt ? (
+          <p className="text-sm">
+            {networkingNextAction.type === 'FOLLOW_UP_WITH_CONTACT'
+              ? 'Follow-up reminder due: '
+              : 'Follow up on '}
+            {new Date(contact.followUpAt).toLocaleString()}
+          </p>
+        ) : (
+          <p className="text-muted-foreground text-sm">No follow-up reminder set.</p>
+        )}
+        <FollowUpReminderControls
+          contactId={contact.id}
+          followUpAt={contact.followUpAt}
+          isDue={networkingNextAction.type === 'FOLLOW_UP_WITH_CONTACT'}
+        />
+      </section>
 
       <ContactTagBadges tags={tags} />
 

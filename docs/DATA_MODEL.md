@@ -642,7 +642,7 @@ RLS: `select` for any authenticated (or even anon, for the signup-gate check) ro
 
 ---
 
-## `contacts` (Phase 6A)
+## `contacts` (Phase 6A, extended in Phase 6C)
 
 Private, user-owned networking data — one row per person the user knows, reusable across many
 applications (never duplicated per application). Ordinary editable CRM data, not
@@ -665,11 +665,14 @@ alum at Microsoft" is valid with nothing else filled in.
 | `location`        | `text`                                                      | nullable                                                                                                                                                                                                              |
 | `notes`           | `text`                                                      | nullable; never logged (see `docs/SECURITY_AND_PRIVACY.md`)                                                                                                                                                           |
 | `source`          | `text not null`                                             | `MANUAL, APPLICATION_CONTEXT, OTHER` — only values Phase 6A can actually produce; widened additively (like `ai_usage_events.task_type`) when a real new source ships, e.g. Gmail suggestions in a later Phase 6 slice |
+| `follow_up_at`    | `timestamptz`                                               | nullable (Phase 6C, migration 0019) — an explicit, user-chosen reminder date/time; null (the default) means no reminder. Career OS never invents or infers this value; see "Networking follow-up reminders" below     |
 | `created_at`      | `timestamptz`                                               |                                                                                                                                                                                                                       |
 | `updated_at`      | `timestamptz`                                               |                                                                                                                                                                                                                       |
 
 `unique (user_id, id)` lets `contact_tags`/`application_contacts` below use a composite FK back
-to this table, the same pattern `applications`/`resumes` adopted in migration 0013.
+to this table, the same pattern `applications`/`resumes` adopted in migration 0013. A partial
+index `(user_id, follow_up_at) where follow_up_at is not null` (Phase 6C) backs the "due
+reminders" query — see "Networking follow-up reminders" below.
 
 **No `companies` table**: `current_company` stays free text, same posture as `applications.
 company`. An application's People section may copy the application's `company` into a new
@@ -792,6 +795,35 @@ needs: one contact's timeline, most recent first.
 reminders, a networking next-action engine, a denormalized `last_interaction_at` anywhere, any
 AI (coffee-chat prep, outreach drafting, summaries). See `docs/IMPLEMENTATION_PLAN.md` "Phase 6B"
 for the full list.
+
+## Networking follow-up reminders (Phase 6C)
+
+`contacts.follow_up_at` (see the `contacts` table above) is the entire persisted model — no
+`networking_reminders` table, no recurrence, no reminder history. Setting, rescheduling, or
+clearing it is ordinary contact editing under the existing `contacts` RLS; no new policy exists
+because none is needed.
+
+**Derived, never persisted**: the networking next action (`FOLLOW_UP_WITH_CONTACT` when
+`follow_up_at` is due, `NO_ACTION` otherwise) is computed at read time by
+`deriveNetworkingNextAction` (`packages/shared`) — the same posture as Phase 5C's application
+next-action engine, and for the same reason: a persisted `next_action` column would go stale the
+moment a reminder is set, rescheduled, or cleared, requiring careful invalidation Phase 5C
+already decided isn't worth the correctness risk. There is no `next_actions` table and no
+`next_action_due_at` column anywhere in this schema.
+
+**"Mark follow-up done" only clears the column** — it does not insert a `contact_interactions`
+row or any other completion record. Career OS cannot know the user actually contacted the
+person just because they dismissed a reminder; a user who wants that history logs an interaction
+separately (Phase 6B). This is a deliberate distinction, not an oversight.
+
+**Not a background reminder**: `follow_up_at` being due means only that Career OS will show it
+the next time the user opens the product. No browser notification, email, SMS, or cron job of
+any kind reads this column — see `docs/SECURITY_AND_PRIVACY.md` if that ever changes.
+
+**`SEND_THANK_YOU` was considered and explicitly deferred** — see
+`docs/IMPLEMENTATION_PLAN.md` "Phase 6C" for the full reasoning (short version: the Phase 6B
+interaction model has no way to tell whether a thank-you was already sent, so a rule based on
+"no later interaction" would be guessing, not deriving).
 
 ---
 

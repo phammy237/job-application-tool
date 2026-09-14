@@ -58,6 +58,13 @@ phase depends on a later phase's output.
       linked-application context, on the contact detail page (migration 0018, pgTAP-verified live
       — see "Phase 6B" below). Record-keeping only — no reminders, next-action recommendations,
       Gmail-derived interactions, or AI, all still deferred to a later Phase 6 slice (6C+).
+- [x] Phase 6C — Networking follow-up reminders + deterministic next actions: an explicit,
+      user-chosen `contacts.follow_up_at` (migration 0019) and a pure `deriveNetworkingNextAction`
+      engine (`FOLLOW_UP_WITH_CONTACT`/`NO_ACTION` only — `SEND_THANK_YOU` explicitly deferred,
+      see "Phase 6C" below for why), surfaced on `/network`'s new "Follow-ups due" section and
+      `/network/[id]`. Zero AI, zero persisted next-action state, no background notifications —
+      Gmail-derived reminders and any heuristic networking action still deferred to a later
+      Phase 6 slice (6D+).
 - [ ] Phase 7 — Multi-user beta hardening, privacy controls, testing, deployment
 - [ ] Phase 8 — Optional mypham.space integration, public onboarding, future sharing
 
@@ -816,6 +823,137 @@ validation), and `apps/web` (server actions, the `InteractionForm` component, an
   technically easy via a batched grouped query, but deliberately deferred to keep this slice's
   diff and test surface focused on the detail-page timeline, which is the actual priority.
 - Interaction search/filtering beyond the plain timeline; a global interactions page.
+
+### Phase 6C — Networking follow-up reminders + deterministic next actions (complete)
+
+Answers "who have I explicitly said I need to follow up with, and what networking action is
+factually supported right now?" Applies Phase 5C's core principle to networking: a deterministic
+engine decides *what* should happen, derived at read time from explicit persisted facts —
+never a heuristic guess about relationship health, social appropriateness, or whether a contact
+has been "neglected." No AI; zero model calls.
+
+#### Database changes
+
+Migration `0019_contact_follow_up_reminders.sql` — one nullable column, no new table:
+
+- `contacts.follow_up_at timestamptz` — an explicit, user-chosen reminder date/time. Null means
+  no reminder, the default valid state. Career OS never invents or infers this value; setting,
+  rescheduling, or clearing it is ordinary contact editing, not immutable-history data. Covered
+  by the existing four-policy `contacts` RLS (migration 0017) with no policy change — verified
+  directly, not assumed, in `supabase/tests/database/0023_contact_follow_up_reminders.test.sql`.
+- Partial index `(user_id, follow_up_at) where follow_up_at is not null`, backing the "due
+  reminders" query.
+
+Deliberately **not** added, all confirmed premature by the same review that scoped this slice:
+`last_interaction_at`, `networking_priority`/`relationship_score` (no invented social-pressure
+metrics), `next_action`/`next_action_due_at` (derived, never persisted — see below), any
+reminder/task table, any recurrence field.
+
+#### Why next actions are never persisted
+
+Same reasoning as Phase 5C's application next-action engine: a networking next action depends on
+`follow_up_at`, which can change (set, rescheduled, cleared) independently of any "next action"
+a persisted value would otherwise go stale against. The server assembles the one input the
+engine needs, `deriveNetworkingNextAction` computes a fresh result every time, and the UI
+formats it — no `next_actions` table, no synchronization bugs.
+
+#### Networking next-action domain model (`packages/shared`)
+
+`schemas/networking-next-action.ts` — deliberately narrow output vocabulary:
+`networkingNextActionTypeSchema` (`FOLLOW_UP_WITH_CONTACT | NO_ACTION` only — see "SEND_THANK_YOU
+decision" below), `networkingNextActionSourceSchema` (`EXPLICIT_FOLLOW_UP_REMINDER`, the only
+value this phase needs), and `networkingNextActionSchema` reusing `nextActionPrioritySchema`
+from the application domain (not a second five-level enum) rather than duplicating it — this
+engine only ever emits `MEDIUM` or `NONE`, enforced in the rule engine itself.
+
+`lib/networking-next-action-rules.ts` — `deriveNetworkingNextAction`: pure, DB-free, takes
+`{ followUpAt, now }`. The entire rule: `followUpAt !== null && followUpAt <= now` →
+`FOLLOW_UP_WITH_CONTACT` (priority `MEDIUM`), otherwise `NO_ACTION` (priority `NONE`) — a future
+reminder is a fact worth displaying but deliberately not yet "attention needed." No
+interaction-age heuristic, no "you haven't talked in N days," no AI.
+
+`lib/format-networking-next-action.ts` — `formatNetworkingNextAction`: UI title/reason text,
+factual and never judgmental (never "neglected," "overdue," or "you should have") — this is the
+user's own reminder, not Career OS evaluating the relationship. Does not embed a formatted
+calendar date (that's the caller's job, in a web component, per §25 below).
+
+#### SEND_THANK_YOU decision: deferred (option A)
+
+Considered and explicitly **not implemented**. The Phase 6B interaction model
+(`interaction_type`, `direction`, `occurred_at`, `subject`, `notes`, `application_id`) has no
+signal for whether a thank-you was already sent — in person, outside Career OS, or logged under
+a different interaction type — so a rule like "coffee chat yesterday with no later interaction →
+suggest a thank-you" would be *guessing* a gap in the record, not deriving a fact from it. That
+fails the same bar `FOLLOW_UP_WITH_CONTACT` cleanly clears (an explicit, unambiguous user
+signal). `ASK_FOR_REFERRAL`, `RECONNECT`, `REQUEST_INTRO`, and similar are excluded for the more
+obvious reason that no supporting context exists in this schema at all. This keeps the type
+union to exactly two values and means the engine needs zero interaction reads — a real
+simplicity benefit, not just a conservative choice.
+
+#### Data assembly (`apps/web/lib/networking.ts`)
+
+Mirrors `apps/web/lib/dashboard.ts`'s split: `attachNetworkingNextActions` wires an
+already-fetched `Contact[]` to `deriveNetworkingNextAction`, and `sortContactsByFollowUpDue`
+orders by earliest `followUpAt` then a display-name tie-break (not a priority sort like the
+application dashboard's `compareByAttention` — everything this sorts already shares one
+priority). Neither function touches Supabase.
+
+#### Database query layer (`packages/database`)
+
+Three new functions in `queries/contacts.ts`: `setOwnContactFollowUp` / `clearOwnContactFollowUp`
+(dedicated, not folded into the general `updateOwnContact` — setting a reminder is its own
+explicit action), and `listOwnContactsWithDueFollowUp` (one bounded, server-filtered query —
+`follow_up_at is not null and follow_up_at <= now`, ordered ascending — never "load every
+contact and filter in memory").
+
+#### UI (`apps/web`)
+
+- `/network` — a new "Follow-ups due" section above the searchable contact list (earliest due
+  first; an honest "No follow-ups due right now" empty state), and a "Follow-up" column on every
+  row ("Follow up today" / "Follow up Sep 20" / "No reminder"). The main list's own sort is
+  unchanged — only the due section is reminder-ordered.
+- `/network/[id]` — a compact follow-up section near the top: the factual state ("Follow up on
+  Sep 20" / "Follow-up reminder due: …" / "No follow-up reminder set.") plus contextual controls
+  (`FollowUpReminderControls`, a client component): "Set follow-up reminder" when none exists;
+  "Change"/"Clear" for a future reminder; "Mark done"/"Reschedule" once due. No large
+  `NO_ACTION` card.
+- "Mark done" only clears `follow_up_at` — it never logs an interaction or any other completion
+  record (§37 below: dismissing a reminder is not evidence the user actually followed up).
+- Application detail's People section and the main `/dashboard` are deliberately **untouched** —
+  networking actions never intermix with application actions, and a tiny "N follow-ups due" count
+  was considered for both and explicitly deferred as unnecessary polish for this slice.
+
+#### Date/time handling
+
+Reuses Phase 6B's `toDatetimeLocalValue`/`fromDatetimeLocalValue` conversion helpers unchanged —
+no new conversion logic was needed. `FollowUpReminderControls`' date field renders only after an
+explicit user click (never visible on first render), so — unlike `InteractionForm` — it needs no
+mount-gating for a hydration-safe default: the local-time value is always computed from a
+post-hydration browser event.
+
+#### Tests
+
+pgTAP: `supabase/tests/database/0023_contact_follow_up_reminders.test.sql` (12 assertions) —
+confirms the *existing* `contacts` RLS already covers the new column (own select/update, cross-
+user isolation, anon denial) and the due-query's filter semantics (null excluded, future
+excluded, past/exactly-now included, scoped to the caller). Unit tests across `packages/shared`
+(the rule engine's boundary behavior, the formatter's factual-language guarantee), `packages/
+database` (the three new query functions), and `apps/web` (server actions, `networking.ts`'s
+assembly/sort functions, `FollowUpReminderControls`, and both `/network`/`/network/[id]` page
+tests).
+
+#### Explicitly excluded from Phase 6C (deferred to a later Phase 6 slice)
+
+- `SEND_THANK_YOU` and every other heuristic networking action (`ASK_FOR_REFERRAL`, `RECONNECT`,
+  `REQUEST_INTRO`, `ASK_FOR_HELP`, `PREPARE_COFFEE_CHAT`) — see the decision note above.
+- Gmail-derived interactions/reminders, Gmail → contact suggestions.
+- Any AI: coffee-chat prep, outreach drafting, summaries. Zero model calls in this slice;
+  `ai_usage_events` untouched.
+- Background delivery of any kind: browser notifications, email/SMS reminders, cron, a
+  background task. `follow_up_at` only ever means "show it when the user opens Career OS."
+  networking campaigns, calendar integration.
+- Relationship scores, "reconnect every N months" heuristics, auto-created follow-up dates.
+- A "last interaction" affordance anywhere (still deferred from Phase 6B, unchanged).
 
 ---
 

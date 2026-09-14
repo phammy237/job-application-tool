@@ -2,13 +2,27 @@ import {
   countOwnApplicationLinksForContacts,
   listOwnContactTagsForContacts,
   listOwnContacts,
+  listOwnContactsWithDueFollowUp,
 } from '@career-os/database';
 import { Input, Label } from '@career-os/ui';
 import Link from 'next/link';
 import { requireUser } from '../../../lib/auth';
+import { attachNetworkingNextActions } from '../../../lib/networking';
 import { createClient } from '../../../lib/supabase/server';
 import { ContactForm } from './contact-form';
 import { ContactTagBadges } from './contact-tag-badges';
+
+/** "Follow up today" when the reminder falls on today's calendar date, otherwise "Follow up
+ * <month> <day>" (docs/IMPLEMENTATION_PLAN.md "Phase 6C" §18) — purely cosmetic date formatting,
+ * done here (a server component) rather than in packages/shared, same posture as every other
+ * displayed timestamp in this product. */
+function formatFollowUpLabel(followUpAt: string, now: Date): string {
+  const date = new Date(followUpAt);
+  if (date.toDateString() === now.toDateString()) {
+    return 'Follow up today';
+  }
+  return `Follow up ${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
+}
 
 export default async function NetworkPage({
   searchParams,
@@ -18,8 +32,15 @@ export default async function NetworkPage({
   const { q } = await searchParams;
   const user = await requireUser();
   const supabase = await createClient();
+  const now = new Date();
+  const nowIso = now.toISOString();
 
-  const contacts = await listOwnContacts(supabase, user.id, { search: q || undefined });
+  const [contacts, dueContacts] = await Promise.all([
+    listOwnContacts(supabase, user.id, { search: q || undefined }),
+    // One bounded, server-filtered query (docs/IMPLEMENTATION_PLAN.md "Phase 6C" §17/§25/§39) —
+    // never every contact loaded and filtered client-side.
+    listOwnContactsWithDueFollowUp(supabase, user.id, nowIso),
+  ]);
   const contactIds = contacts.map((c) => c.id);
 
   // Phase 6A §32 N+1 review: both of these are single batched queries across every contact on
@@ -29,6 +50,13 @@ export default async function NetworkPage({
     countOwnApplicationLinksForContacts(supabase, user.id, contactIds),
   ]);
 
+  // Derived, never persisted (docs/IMPLEMENTATION_PLAN.md "Phase 6C" §6) — computed in-memory
+  // over the already-fetched list, not a second query.
+  const contactsWithNextAction = attachNetworkingNextActions(contacts, nowIso);
+  const nextActionByContact = new Map(
+    contactsWithNextAction.map(({ contact, nextAction }) => [contact.id, nextAction]),
+  );
+
   return (
     <div className="space-y-6">
       <div>
@@ -37,6 +65,32 @@ export default async function NetworkPage({
           {contacts.length} contact{contacts.length === 1 ? '' : 's'}
         </p>
       </div>
+
+      <section className="space-y-3">
+        <h2 className="text-sm font-medium">Follow-ups due</h2>
+        {dueContacts.length === 0 ? (
+          <p className="text-muted-foreground text-sm">No follow-ups due right now.</p>
+        ) : (
+          <ul className="space-y-2">
+            {dueContacts.map((contact) => (
+              <li
+                key={contact.id}
+                className="border-border flex items-center justify-between rounded-md border px-3 py-2 text-sm"
+              >
+                <Link
+                  href={`/network/${contact.id}`}
+                  className="hover:text-primary font-medium hover:underline"
+                >
+                  {contact.displayName}
+                </Link>
+                <span className="text-muted-foreground text-xs">
+                  {formatFollowUpLabel(contact.followUpAt as string, now)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
       <form className="flex flex-wrap items-end gap-3" method="get">
         <div className="space-y-1.5">
@@ -61,35 +115,54 @@ export default async function NetworkPage({
               <th className="px-4 py-2 font-medium">Tags</th>
               <th className="px-4 py-2 font-medium">Email</th>
               <th className="px-4 py-2 font-medium">Applications</th>
+              <th className="px-4 py-2 font-medium">Follow-up</th>
             </tr>
           </thead>
           <tbody>
-            {contacts.map((contact) => (
-              <tr key={contact.id} className="border-border border-b last:border-0">
-                <td className="px-4 py-3">
-                  <Link
-                    href={`/network/${contact.id}`}
-                    className="hover:text-primary font-medium hover:underline"
-                  >
-                    {contact.displayName}
-                  </Link>
-                </td>
-                <td className="text-muted-foreground px-4 py-3">
-                  {[contact.currentTitle, contact.currentCompany].filter(Boolean).join(' at ') ||
-                    '—'}
-                </td>
-                <td className="px-4 py-3">
-                  <ContactTagBadges tags={tagsByContact.get(contact.id) ?? []} />
-                </td>
-                <td className="text-muted-foreground px-4 py-3">{contact.email ?? '—'}</td>
-                <td className="text-muted-foreground px-4 py-3">
-                  {applicationCountByContact.get(contact.id) ?? 0}
-                </td>
-              </tr>
-            ))}
+            {contacts.map((contact) => {
+              const nextAction = nextActionByContact.get(contact.id);
+              return (
+                <tr key={contact.id} className="border-border border-b last:border-0">
+                  <td className="px-4 py-3">
+                    <Link
+                      href={`/network/${contact.id}`}
+                      className="hover:text-primary font-medium hover:underline"
+                    >
+                      {contact.displayName}
+                    </Link>
+                  </td>
+                  <td className="text-muted-foreground px-4 py-3">
+                    {[contact.currentTitle, contact.currentCompany].filter(Boolean).join(' at ') ||
+                      '—'}
+                  </td>
+                  <td className="px-4 py-3">
+                    <ContactTagBadges tags={tagsByContact.get(contact.id) ?? []} />
+                  </td>
+                  <td className="text-muted-foreground px-4 py-3">{contact.email ?? '—'}</td>
+                  <td className="text-muted-foreground px-4 py-3">
+                    {applicationCountByContact.get(contact.id) ?? 0}
+                  </td>
+                  <td className="px-4 py-3">
+                    {contact.followUpAt ? (
+                      <span
+                        className={
+                          nextAction?.type === 'FOLLOW_UP_WITH_CONTACT'
+                            ? 'font-medium'
+                            : 'text-muted-foreground'
+                        }
+                      >
+                        {formatFollowUpLabel(contact.followUpAt, now)}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground">No reminder</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
             {contacts.length === 0 ? (
               <tr>
-                <td colSpan={5} className="text-muted-foreground px-4 py-8 text-center">
+                <td colSpan={6} className="text-muted-foreground px-4 py-8 text-center">
                   {q
                     ? 'No contacts match your search.'
                     : "No contacts yet. Add the first person you're networking with."}
