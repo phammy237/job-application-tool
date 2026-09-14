@@ -42,6 +42,17 @@ vi.mock('../unlink-button', () => ({
 vi.mock('./link-application-form', () => ({
   LinkApplicationForm: () => <div data-testid="link-application-form-stub" />,
 }));
+vi.mock('./interaction-timeline', () => ({
+  InteractionTimeline: ({
+    linkedApplications,
+  }: {
+    linkedApplications: { id: string; company: string; title: string }[];
+  }) => (
+    <div data-testid="interaction-timeline-stub">
+      {linkedApplications.map((a) => a.id).join(',')}
+    </div>
+  ),
+}));
 
 const { default: ContactDetailPage } = await import('./page');
 
@@ -68,7 +79,9 @@ const BASE_CONTACT = {
 };
 
 async function renderPage() {
-  const element = await ContactDetailPage({ params: Promise.resolve({ id: CONTACT_ID }) });
+  const element = await ContactDetailPage({
+    params: Promise.resolve({ id: CONTACT_ID }),
+  });
   render(element);
 }
 
@@ -111,7 +124,12 @@ describe('ContactDetailPage', () => {
     mocks.getOwnContact.mockResolvedValue(BASE_CONTACT);
     mocks.listOwnApplicationsForContact.mockResolvedValue([
       {
-        application: { id: 'app-1', company: 'Acme', title: 'Backend Engineer', status: 'INTERVIEW' },
+        application: {
+          id: 'app-1',
+          company: 'Acme',
+          title: 'Backend Engineer',
+          status: 'INTERVIEW',
+        },
         role: 'INTERVIEWER',
         createdAt: '2026-01-01T00:00:00.000Z',
       },
@@ -133,5 +151,23 @@ describe('ContactDetailPage', () => {
     await renderPage();
     expect(screen.getByTestId('contact-form-stub')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Delete Jane Doe' })).toBeInTheDocument();
+  });
+
+  it('passes the contact’s own linked applications through to the interaction timeline', async () => {
+    mocks.getOwnContact.mockResolvedValue(BASE_CONTACT);
+    mocks.listOwnApplicationsForContact.mockResolvedValue([
+      {
+        application: {
+          id: 'app-1',
+          company: 'Acme',
+          title: 'Backend Engineer',
+          status: 'INTERVIEW',
+        },
+        role: 'INTERVIEWER',
+        createdAt: '2026-01-01T00:00:00.000Z',
+      },
+    ]);
+    await renderPage();
+    expect(screen.getByTestId('interaction-timeline-stub')).toHaveTextContent('app-1');
   });
 });

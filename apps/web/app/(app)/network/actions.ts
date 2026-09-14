@@ -2,17 +2,22 @@
 
 import {
   createOwnContact,
+  createOwnContactInteraction,
   deleteOwnContact,
+  deleteOwnContactInteraction,
   findOwnPossibleDuplicateContacts,
   linkOwnContactToApplication,
   listOwnContacts,
   unlinkOwnContactFromApplication,
   updateOwnContact,
+  updateOwnContactInteraction,
 } from '@career-os/database';
 import {
   applicationContactRoleSchema,
   createContactInputSchema,
+  createContactInteractionInputSchema,
   updateContactInputSchema,
+  updateContactInteractionInputSchema,
   type ApplicationContactRole,
   type Contact,
   type PossibleDuplicateContact,
@@ -181,5 +186,87 @@ export async function unlinkContactFromApplicationAction(
     role: parsedRole,
   });
   revalidatePath(`/applications/${applicationId}`);
+  revalidatePath(`/network/${contactId}`);
+}
+
+export type InteractionFormResult =
+  { status: 'ok'; interactionId: string } | { status: 'error'; message: string };
+
+/**
+ * Logs a new manual interaction against a contact (docs/IMPLEMENTATION_PLAN.md "Phase 6B") —
+ * unlike `createContactAction`, there is no duplicate check here: interaction history is
+ * factual record-keeping, not a second identity to dedupe against. Returns a discriminated
+ * result (rather than throwing) so the form can surface the query layer's own linked-application
+ * validation message inline, the same posture as `linkContactToApplicationAction`.
+ */
+export async function createInteractionAction(
+  contactId: string,
+  rawInput: unknown,
+): Promise<InteractionFormResult> {
+  const user = await requireUser();
+  const supabase = await createClient();
+
+  const parsed = createContactInteractionInputSchema.safeParse(rawInput);
+  if (!parsed.success) {
+    return { status: 'error', message: 'Please check the form for errors.' };
+  }
+
+  try {
+    const interaction = await createOwnContactInteraction(
+      supabase,
+      user.id,
+      contactId,
+      parsed.data,
+    );
+    revalidatePath(`/network/${contactId}`);
+    return { status: 'ok', interactionId: interaction.id };
+  } catch (error) {
+    return {
+      status: 'error',
+      message: error instanceof Error ? error.message : 'Could not log this interaction.',
+    };
+  }
+}
+
+export async function updateInteractionAction(
+  contactId: string,
+  interactionId: string,
+  rawInput: unknown,
+): Promise<InteractionFormResult> {
+  const user = await requireUser();
+  const supabase = await createClient();
+
+  const parsed = updateContactInteractionInputSchema.safeParse(rawInput);
+  if (!parsed.success) {
+    return { status: 'error', message: 'Please check the form for errors.' };
+  }
+
+  try {
+    const interaction = await updateOwnContactInteraction(
+      supabase,
+      user.id,
+      interactionId,
+      parsed.data,
+    );
+    revalidatePath(`/network/${contactId}`);
+    return { status: 'ok', interactionId: interaction.id };
+  } catch (error) {
+    return {
+      status: 'error',
+      message:
+        error instanceof Error ? error.message : 'Could not update this interaction.',
+    };
+  }
+}
+
+/** Removes only the interaction row — the contact, its tags, its linked applications, and any
+ * application_contacts rows are untouched (docs/IMPLEMENTATION_PLAN.md "Phase 6B" §17). */
+export async function deleteInteractionAction(
+  contactId: string,
+  interactionId: string,
+): Promise<void> {
+  const user = await requireUser();
+  const supabase = await createClient();
+  await deleteOwnContactInteraction(supabase, user.id, interactionId);
   revalidatePath(`/network/${contactId}`);
 }

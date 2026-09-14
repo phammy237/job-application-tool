@@ -53,6 +53,11 @@ phase depends on a later phase's output.
       warnings (migration 0017, pgTAP-verified live against the linked Supabase project — see
       "Phase 6A" below). Interactions, reminders, Gmail contact suggestions, and any networking
       AI are explicitly deferred to a later Phase 6 slice (6B+).
+- [x] Phase 6B — Contact interaction history: a factual, user-editable timeline per contact
+      (email, call, coffee chat, meeting, LinkedIn message, event, introduction, note), optional
+      linked-application context, on the contact detail page (migration 0018, pgTAP-verified live
+      — see "Phase 6B" below). Record-keeping only — no reminders, next-action recommendations,
+      Gmail-derived interactions, or AI, all still deferred to a later Phase 6 slice (6C+).
 - [ ] Phase 7 — Multi-user beta hardening, privacy controls, testing, deployment
 - [ ] Phase 8 — Optional mypham.space integration, public onboarding, future sharing
 
@@ -709,6 +714,108 @@ Supabase client), and `apps/web` (server actions, the `ContactForm` duplicate-wa
 - Any AI: outreach drafting, referral drafting, coffee-chat prep, contact classification.
 - Dashboard networking widgets, extension networking features, LinkedIn/Google Contacts
   integration, bulk import, a `companies` table, contact merge.
+
+### Phase 6B — Contact interaction history (complete)
+
+Answers "what history do I have with this person?" — a factual, user-controlled record of past
+interactions with a contact, editable like any other personal note (not Phase 5B's immutable-
+history semantics). Treats Phase 6A as settled architecture; nothing in 6A was redesigned.
+
+#### Database changes
+
+Migration `0018_contact_interactions.sql` — one new table, additive only, no Phase 6A table
+altered:
+
+- `contact_interactions` — `contact_id`, `interaction_type`, and `occurred_at` required;
+  `direction`, `subject`, `notes`, and `application_id` all nullable. `interaction_type` is the
+  medium (`EMAIL, CALL, COFFEE_CHAT, MEETING, LINKEDIN_MESSAGE, EVENT, INTRODUCTION, NOTE,
+  OTHER`), deliberately not a purpose — `THANK_YOU`/`FOLLOW_UP`/`REFERRAL_REQUEST` describe *why*
+  an interaction happened and were left out on purpose (that belongs in `subject`/`notes`, or a
+  later explicit purpose field if actually needed). `direction` (`INBOUND, OUTBOUND, MUTUAL`) is
+  nullable — many interaction types have no natural direction. `source` supports only `MANUAL` in
+  this slice.
+- Composite FK `(user_id, contact_id) → contacts(user_id, id) on delete cascade` — an
+  interaction has no meaning once its contact is gone.
+- Composite FK `(user_id, application_id) → applications(user_id, id) on delete set null
+  (application_id)` — Postgres 15+'s column-scoped `ON DELETE SET NULL` for a composite FK
+  (the same pattern migration 0013 established for `applications.submission_packet_id`), so
+  deleting an application only nulls this one column; `user_id` is never touched and the
+  interaction survives as real history.
+- The optional `application_id` must additionally be one of *this contact's* already-linked
+  applications (an `application_contacts` row must already exist) — a business-rule check, not a
+  cross-user ownership boundary, so it lives in `packages/database` (like
+  `createOwnApplication`'s status guard), not as a table CHECK constraint (which can't reference
+  another table).
+
+Full column-level detail: `docs/DATA_MODEL.md` "`contact_interactions`". RLS: the ordinary
+four-policy pattern, unlike Phase 6A's `contact_tags`/`application_contacts` — every column here
+besides the key is real mutable payload, so `update` is a genuine row update (users can correct
+mistakes), not a delete-then-insert.
+
+Deliberately **not** added, all confirmed premature by the same review that scoped this slice: a
+`GMAIL_SIGNAL` source (no Gmail-derived interactions yet), any reminder/follow-up field
+(`follow_up_at`, a `networking_reminders`/`career_tasks` table), a denormalized
+`last_interaction_at` on `contacts` (the timeline query is a single indexed, batched read —
+nothing here needed a denormalized shortcut).
+
+#### Shared domain types (`packages/shared`)
+
+`schemas/contact-interaction.ts` — `contactInteractionTypeSchema`, `interactionDirectionSchema`,
+`contactInteractionSourceSchema`, `contactInteractionSchema`,
+`createContactInteractionInputSchema`/`updateContactInteractionInputSchema` (only
+`interactionType`/`occurredAt` required; no `source` field — Phase 6B only ever creates `MANUAL`
+rows, so the query layer sets it, never the caller). `lib/datetime-local.ts` —
+`toDatetimeLocalValue`/`fromDatetimeLocalValue`, the pure conversion between an HTML
+`datetime-local` input's timezone-less value and a real ISO-8601 UTC timestamp; both directions
+are only correct when run in the browser's own local timezone, never server-side.
+
+#### Database query layer (`packages/database`)
+
+`queries/contact-interactions.ts` — `listOwnContactInteractions` (one contact's timeline,
+`occurred_at desc` then `created_at desc`, backed by the migration's own composite index),
+`getOwnContactInteraction`, `createOwnContactInteraction`/`updateOwnContactInteraction` (both
+enforce the "application must already be linked to this contact" rule before writing),
+`deleteOwnContactInteraction`.
+
+#### UI (`apps/web`)
+
+- `/network/[id]`'s new "Interaction history" section: reverse-chronological list (type,
+  date/time, direction, subject, notes, and a human-readable "Related application" link — never
+  a raw UUID), a "Log interaction" form, and per-row edit/delete.
+- The interaction form's "Related application" picker only ever lists the contact's own already-
+  linked applications (never an arbitrary one), and its date/time field renders a loading
+  placeholder until mounted, then fills in a local-time default — computing that during server
+  rendering would use the server's timezone and risk a hydration mismatch.
+- Empty state: "No interactions logged yet." with a "Log interaction" call to action — no
+  suggestion, AI or otherwise, of what to log next.
+- No new nav entry, no changes to `/network`'s list page or the application People section in
+  this slice (a "last interaction" affordance on either was considered and deliberately deferred
+  — see "Explicitly excluded from Phase 6B" below).
+
+#### Tests
+
+pgTAP: `supabase/tests/database/0022_contact_interactions.test.sql` (25 assertions) — RLS
+isolation and ownership, cross-user composite-FK rejection on both the contact and application
+sides, the exact application-deletion semantics (interaction survives, `application_id` nulled,
+`user_id` untouched, contact untouched), contact-deletion cascade, and confirmation that deleting
+an interaction never deletes the contact or application it referenced. Unit tests across
+`packages/shared` (schemas, the interaction-type/direction/source enums, `datetime-local`
+round-trip conversion), `packages/database` (query modules, including the linked-application
+validation), and `apps/web` (server actions, the `InteractionForm` component, and the
+`InteractionTimeline` section).
+
+#### Explicitly excluded from Phase 6B (deferred to a later Phase 6 slice)
+
+- Gmail-derived interactions, sender-header parsing, a `GMAIL_SIGNAL` source.
+- Any reminder/follow-up architecture: `follow_up_at`, `networking_reminders`, `career_tasks`.
+- A networking next-action engine (`deriveNetworkingNextAction`, `FOLLOW_UP_WITH_CONTACT`,
+  `SEND_THANK_YOU`) — interaction history needs to be reliable first.
+- Any AI: coffee-chat prep, outreach drafting, summaries, classification. Zero model calls in
+  this slice; `ai_usage_events` untouched.
+- A "last interaction" affordance on `/network`'s list or the application People section —
+  technically easy via a batched grouped query, but deliberately deferred to keep this slice's
+  diff and test surface focused on the detail-page timeline, which is the actual priority.
+- Interaction search/filtering beyond the plain timeline; a global interactions page.
 
 ---
 

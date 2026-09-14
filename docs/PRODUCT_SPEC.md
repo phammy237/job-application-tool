@@ -29,11 +29,14 @@ without a rewrite.
    per-requirement breakdown of which approved facts support it. Never a fabricated match, and
    never reduced to a single "ATS score" or hiring-probability number — see §3 and
    `docs/AI_GROUNDING.md` §8.
-7. **Networking / CRM (Phase 6, foundation shipped in 6A)** — private, user-owned contacts,
-   reusable across applications, with a longer-lived relationship tag (recruiter, alumni,
-   friend, …) distinct from a per-application role (referrer, interviewer, …). Deterministic
-   duplicate warnings only — never auto-merged. No AI, no Gmail-derived suggestions, and no
-   interaction/reminder tracking yet — those are later Phase 6 slices, see
+7. **Networking / CRM (Phase 6, foundation + interaction history shipped in 6A/6B)** — private,
+   user-owned contacts, reusable across applications, with a longer-lived relationship tag
+   (recruiter, alumni, friend, …) distinct from a per-application role (referrer, interviewer,
+   …). Deterministic duplicate warnings only — never auto-merged. A factual, user-editable
+   interaction history per contact (email, call, coffee chat, meeting, and more) answers "what
+   history do I have with this person?" — pure record-keeping, with no reminder, follow-up
+   recommendation, or AI attached to it yet. No AI, no Gmail-derived suggestions, and no
+   reminder/next-action tracking yet — those are later Phase 6 slices, see
    `docs/IMPLEMENTATION_PLAN.md` "Phase 6".
 
 ## 3. Non-goals (explicit)
@@ -79,7 +82,8 @@ These are deliberate exclusions, not gaps to be filled opportunistically:
 
 - Real applications or application statuses
 - Résumés or résumé-derived content
-- Recruiter information, or any networking contact/tag/application-link data (Phase 6)
+- Recruiter information, or any networking contact/tag/application-link/interaction data
+  (Phase 6)
 - Company email contents or Gmail signals
 - Generated answers
 - Work-authorization information

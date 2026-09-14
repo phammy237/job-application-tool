@@ -76,9 +76,11 @@ export type Contact = z.infer<typeof contactSchema>;
 /**
  * Trims a plain text field and normalizes an empty result to null — every optional identity
  * field on the create/update inputs below shares this, so "" from a form submit doesn't become
- * a stored empty string sitting alongside genuinely-null.
+ * a stored empty string sitting alongside genuinely-null. Exported for reuse by other Phase 6
+ * input schemas (e.g. `contact-interaction.ts`'s `subject`/`notes`) that want the identical
+ * trim-and-nullify behavior rather than a second, subtly different implementation.
  */
-function optionalTrimmedText(maxLength: number) {
+export function optionalTrimmedText(maxLength: number) {
   return z
     .string()
     .trim()

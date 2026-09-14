@@ -30,5 +30,6 @@ export * from './queries/submission-packets';
 export * from './queries/consistency';
 export * from './queries/contacts';
 export * from './queries/application-contacts';
+export * from './queries/contact-interactions';
 export * from './crypto/extension-token';
 export * from './crypto/token-encryption';

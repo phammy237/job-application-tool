@@ -92,6 +92,14 @@ applications it was linked to, and deleting an application never deletes a conta
 (verified in `supabase/tests/database/0021_networking_contacts.test.sql`). Contact `notes` are
 never logged or included in any AI request (Phase 6A makes zero AI calls) or public surface.
 
+`contact_interactions` (Phase 6B) is user-editable, not immutable-history — a genuine per-row
+update and delete, both in the UI. Deleting a contact cascades to its interactions; deleting the
+application an interaction referenced only clears that one column (`application_id`), preserving
+the interaction as real history rather than silently erasing it; deleting an interaction never
+touches the contact or application it referenced (verified in
+`supabase/tests/database/0022_contact_interactions.test.sql`). Interaction `subject`/`notes` are
+never logged or included in any AI request (Phase 6B also makes zero AI calls) or public surface.
+
 ## 6. AI-specific risk: fabrication
 
 Covered in full in `docs/AI_GROUNDING.md`. Summarized here as a security/privacy concern

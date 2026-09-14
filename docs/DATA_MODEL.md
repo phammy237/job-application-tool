@@ -650,23 +650,23 @@ immutable-history like `job_snapshots`/`submission_packets`: a user can freely e
 their own contacts. Only `display_name` and `source` are required — a contact like "Jane — UF
 alum at Microsoft" is valid with nothing else filled in.
 
-| column             | type                                                          | notes                                                                                          |
-| ------------------ | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `id`                | `uuid pk`                                                      |                                                                                                 |
-| `user_id`           | `uuid not null references auth.users(id) on delete cascade`   |                                                                                                 |
-| `display_name`      | `text not null`                                                | the only required human-identity field; `check (length(trim(display_name)) > 0)`               |
-| `first_name`        | `text`                                                         | nullable                                                                                       |
-| `last_name`         | `text`                                                         | nullable                                                                                       |
-| `email`             | `text`                                                         | nullable; not unique — duplicate detection is advisory only, see below                          |
-| `phone`             | `text`                                                         | nullable                                                                                       |
-| `linkedin_url`      | `text`                                                         | nullable                                                                                       |
-| `current_company`   | `text`                                                         | nullable; free text, **not** a foreign key — there is no `companies` table in Phase 6A          |
-| `current_title`     | `text`                                                         | nullable                                                                                       |
-| `location`          | `text`                                                         | nullable                                                                                       |
-| `notes`             | `text`                                                         | nullable; never logged (see `docs/SECURITY_AND_PRIVACY.md`)                                     |
-| `source`            | `text not null`                                                | `MANUAL, APPLICATION_CONTEXT, OTHER` — only values Phase 6A can actually produce; widened additively (like `ai_usage_events.task_type`) when a real new source ships, e.g. Gmail suggestions in a later Phase 6 slice |
-| `created_at`        | `timestamptz`                                                  |                                                                                                 |
-| `updated_at`        | `timestamptz`                                                  |                                                                                                 |
+| column            | type                                                        | notes                                                                                                                                                                                                                 |
+| ----------------- | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`              | `uuid pk`                                                   |                                                                                                                                                                                                                       |
+| `user_id`         | `uuid not null references auth.users(id) on delete cascade` |                                                                                                                                                                                                                       |
+| `display_name`    | `text not null`                                             | the only required human-identity field; `check (length(trim(display_name)) > 0)`                                                                                                                                      |
+| `first_name`      | `text`                                                      | nullable                                                                                                                                                                                                              |
+| `last_name`       | `text`                                                      | nullable                                                                                                                                                                                                              |
+| `email`           | `text`                                                      | nullable; not unique — duplicate detection is advisory only, see below                                                                                                                                                |
+| `phone`           | `text`                                                      | nullable                                                                                                                                                                                                              |
+| `linkedin_url`    | `text`                                                      | nullable                                                                                                                                                                                                              |
+| `current_company` | `text`                                                      | nullable; free text, **not** a foreign key — there is no `companies` table in Phase 6A                                                                                                                                |
+| `current_title`   | `text`                                                      | nullable                                                                                                                                                                                                              |
+| `location`        | `text`                                                      | nullable                                                                                                                                                                                                              |
+| `notes`           | `text`                                                      | nullable; never logged (see `docs/SECURITY_AND_PRIVACY.md`)                                                                                                                                                           |
+| `source`          | `text not null`                                             | `MANUAL, APPLICATION_CONTEXT, OTHER` — only values Phase 6A can actually produce; widened additively (like `ai_usage_events.task_type`) when a real new source ships, e.g. Gmail suggestions in a later Phase 6 slice |
+| `created_at`      | `timestamptz`                                               |                                                                                                                                                                                                                       |
+| `updated_at`      | `timestamptz`                                               |                                                                                                                                                                                                                       |
 
 `unique (user_id, id)` lets `contact_tags`/`application_contacts` below use a composite FK back
 to this table, the same pattern `applications`/`resumes` adopted in migration 0013.
@@ -692,12 +692,12 @@ Multi-select, longer-lived relationship classification per contact (e.g. `ALUMNI
 one specific application. Linking a contact to an application with a given role never mutates
 their tags, and vice versa.
 
-| column       | type                                                        | notes                                                                                                                     |
-| ------------ | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
-| `user_id`    | `uuid not null references auth.users(id) on delete cascade` | part of the primary key                                                                                                    |
-| `contact_id` | `uuid not null`                                              | composite FK to `contacts(user_id, id)` on delete cascade; part of the primary key                                          |
-| `tag`        | `text not null`                                              | `RECRUITER, HIRING_MANAGER, EMPLOYEE, ALUMNI, MENTOR, PROFESSOR, FRIEND, CLASSMATE, REFERRER, NETWORKING_CONTACT, OTHER`; part of the primary key |
-| `created_at` | `timestamptz`                                                |                                                                                                                              |
+| column       | type                                                        | notes                                                                                                                                             |
+| ------------ | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `user_id`    | `uuid not null references auth.users(id) on delete cascade` | part of the primary key                                                                                                                           |
+| `contact_id` | `uuid not null`                                             | composite FK to `contacts(user_id, id)` on delete cascade; part of the primary key                                                                |
+| `tag`        | `text not null`                                             | `RECRUITER, HIRING_MANAGER, EMPLOYEE, ALUMNI, MENTOR, PROFESSOR, FRIEND, CLASSMATE, REFERRER, NETWORKING_CONTACT, OTHER`; part of the primary key |
+| `created_at` | `timestamptz`                                               |                                                                                                                                                   |
 
 Primary key `(user_id, contact_id, tag)` — a contact may hold many tags; the exact same tag
 twice is a structural no-op, not a new fact. No `update` policy/trigger: every column is part of
@@ -710,13 +710,13 @@ the key, so changing a contact's tags is a delete-then-insert
 Join table linking a reusable `contacts` row to one specific `applications` row, with a role
 describing that person's function on **this** application.
 
-| column           | type                                                        | notes                                                                                                    |
-| ---------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
-| `user_id`        | `uuid not null references auth.users(id) on delete cascade` | part of the primary key                                                                                    |
-| `application_id` | `uuid not null`                                              | composite FK to `applications(user_id, id)` on delete cascade; part of the primary key                     |
-| `contact_id`     | `uuid not null`                                              | composite FK to `contacts(user_id, id)` on delete cascade; part of the primary key                         |
-| `role`           | `text not null`                                              | `RECRUITER, HIRING_MANAGER, REFERRER, INTERVIEWER, EMPLOYEE_CONTACT, OTHER`; part of the primary key       |
-| `created_at`     | `timestamptz`                                                |                                                                                                              |
+| column           | type                                                        | notes                                                                                                |
+| ---------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `user_id`        | `uuid not null references auth.users(id) on delete cascade` | part of the primary key                                                                              |
+| `application_id` | `uuid not null`                                             | composite FK to `applications(user_id, id)` on delete cascade; part of the primary key               |
+| `contact_id`     | `uuid not null`                                             | composite FK to `contacts(user_id, id)` on delete cascade; part of the primary key                   |
+| `role`           | `text not null`                                             | `RECRUITER, HIRING_MANAGER, REFERRER, INTERVIEWER, EMPLOYEE_CONTACT, OTHER`; part of the primary key |
+| `created_at`     | `timestamptz`                                               |                                                                                                      |
 
 Primary key `(user_id, application_id, contact_id, role)` — one contact may hold more than one
 role on the same application (e.g. both `REFERRER` and `EMPLOYEE_CONTACT`), but the exact same
@@ -729,10 +729,69 @@ Index `(user_id, contact_id)` supports "applications linked to this contact" (th
 primary key's own `application_id`-first order). No `update` policy/trigger, same reasoning as
 `contact_tags`. RLS: `select`/`insert`/`delete` for `authenticated`, scoped by `user_id`.
 
-**Deferred to a later Phase 6 slice (not in 6A)**: `contact_interactions`, `follow_up_at`/
-reminders, `source_email_signal_id`/Gmail contact suggestions, a `companies` table, AI-generated
-outreach/coffee-chat prep. None of these exist in the schema yet — see
-`docs/IMPLEMENTATION_PLAN.md` "Phase 6" for the full list of what 6A deliberately excludes.
+**Deferred to a later Phase 6 slice (not in 6A)**: `contact_interactions` (added in Phase 6B,
+below), `follow_up_at`/reminders, `source_email_signal_id`/Gmail contact suggestions, a
+`companies` table, AI-generated outreach/coffee-chat prep. See `docs/IMPLEMENTATION_PLAN.md`
+"Phase 6" for the full list of what each slice deliberately excludes.
+
+## `contact_interactions` (Phase 6B)
+
+A factual, user-editable record of past interactions with a contact — answers "what history do
+I have with this person?" Ordinary editable CRM data like `contacts` itself (not immutable-
+history like `job_snapshots`/`submission_packets`): a user can freely correct or remove their own
+interaction records.
+
+| column             | type                                                        | notes                                                                                                                             |
+| ------------------ | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `id`               | `uuid pk`                                                   |                                                                                                                                   |
+| `user_id`          | `uuid not null references auth.users(id) on delete cascade` |                                                                                                                                   |
+| `contact_id`       | `uuid not null`                                             | composite FK to `contacts(user_id, id)` on delete cascade                                                                         |
+| `interaction_type` | `text not null`                                             | `EMAIL, CALL, COFFEE_CHAT, MEETING, LINKEDIN_MESSAGE, EVENT, INTRODUCTION, NOTE, OTHER` — the medium, not the purpose (see below) |
+| `direction`        | `text`                                                      | nullable; `INBOUND, OUTBOUND, MUTUAL` — many interaction types have no natural direction and this is never forced                 |
+| `occurred_at`      | `timestamptz not null`                                      | when the interaction actually happened (user-editable, defaults to "now" in the UI) — not the row's `created_at`                  |
+| `subject`          | `text`                                                      | nullable                                                                                                                          |
+| `notes`            | `text`                                                      | nullable; never logged (see `docs/SECURITY_AND_PRIVACY.md`)                                                                       |
+| `application_id`   | `uuid`                                                      | nullable; composite FK to `applications(user_id, id)`, `on delete set null (application_id)` — see "Application context" below    |
+| `source`           | `text not null default 'MANUAL'`                            | only `MANUAL` exists in Phase 6B — the user's own "Log interaction" form                                                          |
+| `created_at`       | `timestamptz`                                               |                                                                                                                                   |
+| `updated_at`       | `timestamptz`                                               |                                                                                                                                   |
+
+**Medium, not purpose**: `interaction_type` deliberately excludes purpose-shaped values like
+`THANK_YOU`, `FOLLOW_UP`, or `REFERRAL_REQUEST` — those describe _why_ an interaction happened,
+which belongs in `subject`/`notes` (or a later, explicit purpose field if actually needed), not a
+second axis conflated onto the medium.
+
+**Application context**: `application_id` is optional, and when set must be one of _this
+contact's_ already-linked applications — an `application_contacts` row for the same
+`(user_id, contact_id, application_id)` must already exist. This is a business-rule check
+enforced in `packages/database` (`createOwnContactInteraction`/`updateOwnContactInteraction`),
+not a table constraint — a CHECK constraint can't reference another table, and unlike the
+composite FK below, this isn't a cross-user security boundary.
+
+**Deletion semantics** — deliberately asymmetric, matching what history should and shouldn't
+survive:
+
+- Deleting the **contact** cascades to delete its interactions (`on delete cascade`) — an
+  interaction has no meaning once the contact it's about is gone.
+- Deleting the **application** does _not_ delete the interaction: only `application_id` on that
+  row is set to null (`on delete set null (application_id)`, Postgres 15+'s column-scoped
+  variant for a composite FK — the same pattern `applications.submission_packet_id` established
+  in migration 0013). `user_id` is never touched. A real conversation with a real person must
+  survive losing its application context.
+- Deleting the **interaction** never deletes the contact, the application, contact tags, or
+  `application_contacts` rows — only that one row is removed.
+
+RLS: the ordinary four-policy pattern (see "RLS policy pattern" below) — unlike Phase 6A's
+`contact_tags`/`application_contacts`, every column here besides the key is real mutable payload,
+so `update` is a genuine row update (users can correct mistakes), not a delete-then-insert.
+
+Index `(user_id, contact_id, occurred_at desc)` backs the one query this table's UI actually
+needs: one contact's timeline, most recent first.
+
+**Deferred to a later Phase 6 slice (not in 6B)**: a `GMAIL_SIGNAL` source, `follow_up_at`/
+reminders, a networking next-action engine, a denormalized `last_interaction_at` anywhere, any
+AI (coffee-chat prep, outreach drafting, summaries). See `docs/IMPLEMENTATION_PLAN.md` "Phase 6B"
+for the full list.
 
 ---
 

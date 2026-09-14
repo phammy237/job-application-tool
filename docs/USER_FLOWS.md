@@ -209,6 +209,23 @@ false`, `visibleOnPublicProfile = false`. Nothing extracted is usable until step
 5. Nothing here calls Claude, touches Gmail, or appears on any public page — contacts are
    private, user-owned data end to end.
 
+### Interaction history (Phase 6B)
+
+6. Further down the same `/network/[id]` page, an **Interaction history** section lists every
+   past interaction with this contact, most recent first — email, call, coffee chat, meeting,
+   LinkedIn message, event, introduction, or note. **Log interaction** captures a type and a
+   date/time (defaulting to now), plus optional direction, subject, notes, and — only if the
+   contact is already linked to one — a related application. This is pure record-keeping:
+   Career OS never suggests what to log or what to do about it.
+7. Each entry can be edited (correcting a mistake, changing the linked application) or deleted
+   outright, with the same "must already be one of this contact's linked applications" rule
+   re-checked whenever the linked application changes.
+8. Deleting the linked **application** never erases the interaction — only its application link
+   is cleared, the history with the person itself stays intact. Deleting the **contact** removes
+   its interactions along with it (there's no meaning to interaction history about a contact
+   that no longer exists).
+9. Nothing here calls Claude either — Phase 6B makes zero model calls, same as 6A.
+
 ## 8. Deletion flows
 
 Each of the following is a first-class, discoverable action (not "contact support"):
@@ -219,16 +236,21 @@ Each of the following is a first-class, discoverable action (not "contact suppor
    doc). Its linked job snapshot and any requirement-mapping runs are **not** deleted — they're
    independently user-owned (Phase 5A) and only ever removed via full account deletion below;
    there's no per-row deletion path for them in Phase 5A. Any `application_contacts` links are
-   removed, but the linked contacts themselves are not (Phase 6A).
+   removed, but the linked contacts themselves are not (Phase 6A); any `contact_interactions`
+   row that referenced this application keeps existing with its `application_id` cleared, not
+   deleted (Phase 6B).
 2. **Delete a résumé** — removes the file from Storage and the `resumes` row; facts sourced
    from it are flagged (not silently deleted) so the user can decide whether to keep them as
    manually-verified.
 3. **Delete generated content** — removes a `generated_answers` row.
 4. **Disconnect Gmail** — revokes the OAuth token, deletes the `email_connections` row and
    all associated `email_signals`.
-5. **Delete a contact** (Phase 6A) — removes the `contacts` row along with its `contact_tags`
-   and any `application_contacts` links; the applications it was linked to are untouched.
-6. **Delete entire account** — cascades through every user-owned table (enforced by FK
+5. **Delete a contact** (Phase 6A) — removes the `contacts` row along with its `contact_tags`,
+   any `application_contacts` links, and (Phase 6B) its `contact_interactions` history; the
+   applications it was linked to are untouched.
+6. **Delete a single interaction** (Phase 6B) — removes one `contact_interactions` row; the
+   contact, its tags, its other interactions, and any linked application are untouched.
+7. **Delete entire account** — cascades through every user-owned table (enforced by FK
    `ON DELETE CASCADE` from `auth.users`, see `docs/DATA_MODEL.md`), removes Storage objects,
    and revokes any external tokens (Gmail) before the row deletion completes.
 

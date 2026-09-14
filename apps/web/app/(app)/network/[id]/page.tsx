@@ -13,6 +13,7 @@ import { ContactForm } from '../contact-form';
 import { ContactTagBadges, formatEnumLabel } from '../contact-tag-badges';
 import { DeleteContactButton } from '../delete-contact-button';
 import { UnlinkButton } from '../unlink-button';
+import { InteractionTimeline } from './interaction-timeline';
 import { LinkApplicationForm } from './link-application-form';
 
 export default async function ContactDetailPage({
@@ -41,7 +42,9 @@ export default async function ContactDetailPage({
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{contact.displayName}</h1>
           <p className="text-muted-foreground mt-1">
-            {[contact.currentTitle, contact.currentCompany].filter(Boolean).join(' at ') || null}
+            {[contact.currentTitle, contact.currentCompany]
+              .filter(Boolean)
+              .join(' at ') || null}
             {contact.location ? ` · ${contact.location}` : ''}
           </p>
         </div>
@@ -95,13 +98,21 @@ export default async function ContactDetailPage({
                   {application.company} — {application.title}
                 </Link>
                 <StatusBadge status={application.status} />
-                <span className="text-muted-foreground text-xs">{formatEnumLabel(role)}</span>
+                <span className="text-muted-foreground text-xs">
+                  {formatEnumLabel(role)}
+                </span>
               </span>
-              <UnlinkButton applicationId={application.id} contactId={contact.id} role={role} />
+              <UnlinkButton
+                applicationId={application.id}
+                contactId={contact.id}
+                role={role}
+              />
             </li>
           ))}
           {linkedApplications.length === 0 ? (
-            <p className="text-muted-foreground text-sm">Not linked to any applications yet.</p>
+            <p className="text-muted-foreground text-sm">
+              Not linked to any applications yet.
+            </p>
           ) : null}
         </ul>
         <LinkApplicationForm
@@ -114,6 +125,17 @@ export default async function ContactDetailPage({
           }))}
         />
       </section>
+
+      <InteractionTimeline
+        supabase={supabase}
+        userId={user.id}
+        contactId={contact.id}
+        linkedApplications={linkedApplications.map(({ application }) => ({
+          id: application.id,
+          company: application.company,
+          title: application.title,
+        }))}
+      />
 
       <details className="border-border rounded-lg border border-dashed p-4">
         <summary className="cursor-pointer text-sm font-medium">Edit contact</summary>

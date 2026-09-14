@@ -10,6 +10,9 @@ const mocks = vi.hoisted(() => ({
   linkOwnContactToApplication: vi.fn(),
   unlinkOwnContactFromApplication: vi.fn(),
   listOwnContacts: vi.fn(),
+  createOwnContactInteraction: vi.fn(),
+  updateOwnContactInteraction: vi.fn(),
+  deleteOwnContactInteraction: vi.fn(),
 }));
 
 vi.mock('@career-os/database', () => ({
@@ -20,6 +23,9 @@ vi.mock('@career-os/database', () => ({
   linkOwnContactToApplication: mocks.linkOwnContactToApplication,
   unlinkOwnContactFromApplication: mocks.unlinkOwnContactFromApplication,
   listOwnContacts: mocks.listOwnContacts,
+  createOwnContactInteraction: mocks.createOwnContactInteraction,
+  updateOwnContactInteraction: mocks.updateOwnContactInteraction,
+  deleteOwnContactInteraction: mocks.deleteOwnContactInteraction,
 }));
 
 vi.mock('../../../lib/auth', () => ({
@@ -40,11 +46,15 @@ const {
   searchOwnContactsAction,
   linkContactToApplicationAction,
   unlinkContactFromApplicationAction,
+  createInteractionAction,
+  updateInteractionAction,
+  deleteInteractionAction,
 } = await import('./actions');
 
 const USER_ID = '22222222-2222-4222-8222-222222222222';
 const CONTACT_ID = '33333333-3333-4333-8333-333333333333';
 const APPLICATION_ID = '44444444-4444-4444-8444-444444444444';
+const INTERACTION_ID = '55555555-5555-4555-8555-555555555555';
 const SESSION_CLIENT = { tag: 'session-scoped' };
 
 const VALID_INPUT = { displayName: 'Jane Doe' };
@@ -101,11 +111,15 @@ describe('createContactAction', () => {
       linkToApplication: { applicationId: APPLICATION_ID, role: 'REFERRER' },
     });
 
-    expect(mocks.linkOwnContactToApplication).toHaveBeenCalledWith(SESSION_CLIENT, USER_ID, {
-      applicationId: APPLICATION_ID,
-      contactId: CONTACT_ID,
-      role: 'REFERRER',
-    });
+    expect(mocks.linkOwnContactToApplication).toHaveBeenCalledWith(
+      SESSION_CLIENT,
+      USER_ID,
+      {
+        applicationId: APPLICATION_ID,
+        contactId: CONTACT_ID,
+        role: 'REFERRER',
+      },
+    );
   });
 
   it('does not link when linkToApplication is not given', async () => {
@@ -152,7 +166,11 @@ describe('updateContactAction', () => {
 describe('deleteContactAction', () => {
   it('deletes the contact scoped to the caller', async () => {
     await deleteContactAction(CONTACT_ID);
-    expect(mocks.deleteOwnContact).toHaveBeenCalledWith(SESSION_CLIENT, USER_ID, CONTACT_ID);
+    expect(mocks.deleteOwnContact).toHaveBeenCalledWith(
+      SESSION_CLIENT,
+      USER_ID,
+      CONTACT_ID,
+    );
   });
 });
 
@@ -176,17 +194,29 @@ describe('searchOwnContactsAction', () => {
 
 describe('linkContactToApplicationAction', () => {
   it('links with a valid role', async () => {
-    const result = await linkContactToApplicationAction(APPLICATION_ID, CONTACT_ID, 'REFERRER');
-    expect(mocks.linkOwnContactToApplication).toHaveBeenCalledWith(SESSION_CLIENT, USER_ID, {
-      applicationId: APPLICATION_ID,
-      contactId: CONTACT_ID,
-      role: 'REFERRER',
-    });
+    const result = await linkContactToApplicationAction(
+      APPLICATION_ID,
+      CONTACT_ID,
+      'REFERRER',
+    );
+    expect(mocks.linkOwnContactToApplication).toHaveBeenCalledWith(
+      SESSION_CLIENT,
+      USER_ID,
+      {
+        applicationId: APPLICATION_ID,
+        contactId: CONTACT_ID,
+        role: 'REFERRER',
+      },
+    );
     expect(result).toEqual({ status: 'ok' });
   });
 
   it('rejects an invalid role without calling the database', async () => {
-    const result = await linkContactToApplicationAction(APPLICATION_ID, CONTACT_ID, 'NOT_A_ROLE');
+    const result = await linkContactToApplicationAction(
+      APPLICATION_ID,
+      CONTACT_ID,
+      'NOT_A_ROLE',
+    );
     expect(mocks.linkOwnContactToApplication).not.toHaveBeenCalled();
     expect(result.status).toBe('error');
   });
@@ -195,7 +225,11 @@ describe('linkContactToApplicationAction', () => {
     mocks.linkOwnContactToApplication.mockRejectedValue(
       new Error('This contact already has that role on this application.'),
     );
-    const result = await linkContactToApplicationAction(APPLICATION_ID, CONTACT_ID, 'REFERRER');
+    const result = await linkContactToApplicationAction(
+      APPLICATION_ID,
+      CONTACT_ID,
+      'REFERRER',
+    );
     expect(result).toEqual({
       status: 'error',
       message: 'This contact already has that role on this application.',
@@ -206,10 +240,103 @@ describe('linkContactToApplicationAction', () => {
 describe('unlinkContactFromApplicationAction', () => {
   it('unlinks scoped to the caller', async () => {
     await unlinkContactFromApplicationAction(APPLICATION_ID, CONTACT_ID, 'INTERVIEWER');
-    expect(mocks.unlinkOwnContactFromApplication).toHaveBeenCalledWith(SESSION_CLIENT, USER_ID, {
-      applicationId: APPLICATION_ID,
-      contactId: CONTACT_ID,
-      role: 'INTERVIEWER',
+    expect(mocks.unlinkOwnContactFromApplication).toHaveBeenCalledWith(
+      SESSION_CLIENT,
+      USER_ID,
+      {
+        applicationId: APPLICATION_ID,
+        contactId: CONTACT_ID,
+        role: 'INTERVIEWER',
+      },
+    );
+  });
+});
+
+const VALID_INTERACTION_INPUT = {
+  interactionType: 'EMAIL',
+  occurredAt: '2026-01-01T00:00:00.000Z',
+};
+
+describe('createInteractionAction', () => {
+  it('creates the interaction scoped to the caller and contact', async () => {
+    mocks.createOwnContactInteraction.mockResolvedValue({ id: INTERACTION_ID });
+
+    const result = await createInteractionAction(CONTACT_ID, VALID_INTERACTION_INPUT);
+
+    expect(mocks.createOwnContactInteraction).toHaveBeenCalledWith(
+      SESSION_CLIENT,
+      USER_ID,
+      CONTACT_ID,
+      expect.objectContaining({ interactionType: 'EMAIL' }),
+    );
+    expect(result).toEqual({ status: 'ok', interactionId: INTERACTION_ID });
+  });
+
+  it('returns a validation error without calling the database for invalid input', async () => {
+    const result = await createInteractionAction(CONTACT_ID, {
+      interactionType: 'NOT_A_TYPE',
     });
+    expect(result.status).toBe('error');
+    expect(mocks.createOwnContactInteraction).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a query-layer error (e.g. unlinked application) as a friendly result', async () => {
+    mocks.createOwnContactInteraction.mockRejectedValue(
+      new Error('This application is not linked to this contact — link it first.'),
+    );
+    const result = await createInteractionAction(CONTACT_ID, VALID_INTERACTION_INPUT);
+    expect(result).toEqual({
+      status: 'error',
+      message: 'This application is not linked to this contact — link it first.',
+    });
+  });
+});
+
+describe('updateInteractionAction', () => {
+  it('updates the interaction scoped to the caller', async () => {
+    mocks.updateOwnContactInteraction.mockResolvedValue({ id: INTERACTION_ID });
+
+    const result = await updateInteractionAction(CONTACT_ID, INTERACTION_ID, {
+      subject: 'Updated',
+    });
+
+    expect(mocks.updateOwnContactInteraction).toHaveBeenCalledWith(
+      SESSION_CLIENT,
+      USER_ID,
+      INTERACTION_ID,
+      expect.objectContaining({ subject: 'Updated' }),
+    );
+    expect(result).toEqual({ status: 'ok', interactionId: INTERACTION_ID });
+  });
+
+  it('returns a validation error without calling the database for invalid input', async () => {
+    const result = await updateInteractionAction(CONTACT_ID, INTERACTION_ID, {
+      applicationId: 'not-a-uuid',
+    });
+    expect(result.status).toBe('error');
+    expect(mocks.updateOwnContactInteraction).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a not-found/not-owned error as a friendly result', async () => {
+    mocks.updateOwnContactInteraction.mockRejectedValue(
+      new Error(
+        'updateOwnContactInteraction: interaction not found or not owned by this user.',
+      ),
+    );
+    const result = await updateInteractionAction(CONTACT_ID, INTERACTION_ID, {
+      subject: 'x',
+    });
+    expect(result.status).toBe('error');
+  });
+});
+
+describe('deleteInteractionAction', () => {
+  it('deletes the interaction scoped to the caller', async () => {
+    await deleteInteractionAction(CONTACT_ID, INTERACTION_ID);
+    expect(mocks.deleteOwnContactInteraction).toHaveBeenCalledWith(
+      SESSION_CLIENT,
+      USER_ID,
+      INTERACTION_ID,
+    );
   });
 });

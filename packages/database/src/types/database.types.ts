@@ -626,6 +626,30 @@ export interface Database {
         Update: Partial<Database['public']['Tables']['application_contacts']['Row']>;
         Relationships: [];
       };
+      contact_interactions: {
+        Row: {
+          id: string;
+          user_id: string;
+          contact_id: string;
+          interaction_type: string;
+          direction: string | null;
+          occurred_at: string;
+          subject: string | null;
+          notes: string | null;
+          application_id: string | null;
+          source: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['contact_interactions']['Row']> & {
+          user_id: string;
+          contact_id: string;
+          interaction_type: string;
+          occurred_at: string;
+        };
+        Update: Partial<Database['public']['Tables']['contact_interactions']['Row']>;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: {
