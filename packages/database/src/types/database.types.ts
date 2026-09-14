@@ -182,7 +182,7 @@ export interface Database {
         Update: Partial<Database['public']['Tables']['skills']['Row']>;
         Relationships: [];
       };
-      resumes: {
+      resume_uploads: {
         Row: {
           id: string;
           user_id: string;
@@ -195,12 +195,56 @@ export interface Database {
           created_at: string;
           updated_at: string;
         };
-        Insert: Partial<Database['public']['Tables']['resumes']['Row']> & {
+        Insert: Partial<Database['public']['Tables']['resume_uploads']['Row']> & {
           user_id: string;
           file_path: string;
           file_name: string;
         };
+        Update: Partial<Database['public']['Tables']['resume_uploads']['Row']>;
+        Relationships: [];
+      };
+      /** Migration 0020 (Phase 7A) — logical résumé identity. Distinct from `resume_uploads`
+       * above (the unrelated, still-unwired uploaded-file/extraction concept this table's `resumes`
+       * name was renamed away from in the same migration). */
+      resumes: {
+        Row: {
+          id: string;
+          user_id: string;
+          name: string;
+          kind: string;
+          parent_resume_id: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['resumes']['Row']> & {
+          user_id: string;
+          name: string;
+          kind: string;
+        };
         Update: Partial<Database['public']['Tables']['resumes']['Row']>;
+        Relationships: [];
+      };
+      /** Migration 0020 (Phase 7A) — immutable résumé version snapshots. Written only through the
+       * `create_resume_version` RPC (see Functions below); no ordinary insert/update from
+       * `authenticated`. */
+      resume_versions: {
+        Row: {
+          id: string;
+          user_id: string;
+          resume_id: string;
+          version_number: number;
+          display_name: string;
+          snapshot_format: string;
+          snapshot_payload: Json | null;
+          created_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['resume_versions']['Row']> & {
+          user_id: string;
+          resume_id: string;
+          version_number: number;
+          display_name: string;
+        };
+        Update: Partial<Database['public']['Tables']['resume_versions']['Row']>;
         Relationships: [];
       };
       jobs: {
@@ -784,6 +828,25 @@ export interface Database {
           submission_packet_id: string;
           packet_created: boolean;
         }[];
+      };
+      create_resume_version: {
+        Args: {
+          p_user_id: string;
+          p_resume_id: string;
+          p_display_name: string;
+          p_snapshot_format?: string;
+          p_snapshot_payload?: Json | null;
+        };
+        Returns: {
+          id: string;
+          user_id: string;
+          resume_id: string;
+          version_number: number;
+          display_name: string;
+          snapshot_format: string;
+          snapshot_payload: Json | null;
+          created_at: string;
+        };
       };
     };
     Enums: Record<string, never>;
