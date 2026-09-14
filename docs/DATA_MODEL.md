@@ -255,6 +255,27 @@ guarantee. `security invoker`, granted only to `service_role` — called via the
 Next.js server action, with `userId` derived from the verified session, never a client-supplied
 field.
 
+### `save_reviewed_tailored_resume` (Phase 7F)
+
+The one atomic path for persisting a reviewed Phase 7E tailoring draft (`docs/IMPLEMENTATION_PLAN.md`
+"Phase 7F"). Row-locks the `applications` row for the transaction and re-checks two optimistic-
+concurrency anchors against it before doing anything else: the caller's claimed
+`p_expected_working_resume_version_id`/`p_expected_job_snapshot_id` must still match the row's
+current `working_resume_version_id`/`job_snapshot_id`, or the function raises `stale_base_resume`/
+`stale_job_context` (with the row's actual current value as the exception `DETAIL`) — the real
+concurrency guarantee: two saves generated from the same stale base cannot both succeed, since the
+second one observes the first's already-committed pointer update once it acquires the lock.
+Either appends the next version to an existing logical résumé (`p_target_resume_id`) or creates a
+new TAILORED one first (`p_new_resume_name`/`p_new_resume_parent_id`, reusing
+`enforce_resume_parent_is_master`'s existing lineage-validity trigger) — exactly one of the two,
+enforced at the top of the function body. Computes the next version number under the same
+row-lock-then-insert pattern as `create_resume_version` (a second, independent path, not a
+refactor of it — the two have different enough parameter shapes that sharing one function would
+obscure both). Sets `applications.working_resume_version_id` to the new version in the same
+transaction. `security invoker`, granted only to `service_role`, same calling convention as
+`create_resume_version`. Never references `submission_packets` — no parameter, no code path
+reaches it, so a submitted résumé's frozen record is structurally unreachable from this function.
+
 ---
 
 ## `jobs`

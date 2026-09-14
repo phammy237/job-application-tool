@@ -1,8 +1,9 @@
 'use client';
 
-import { buildResumeFileName, type ResumeTailoringProposal } from '@career-os/shared';
-import { Badge, Button } from '@career-os/ui';
+import type { ResumeTailoringProposal } from '@career-os/shared';
+import { Button } from '@career-os/ui';
 import { useCallback, useState } from 'react';
+import { ResumeTailoringReviewSession } from './resume-tailoring-review-session';
 
 type GenerationState =
   | { status: 'idle' }
@@ -15,25 +16,35 @@ type GenerationState =
   | { status: 'error'; message: string };
 
 /**
- * Phase 7E — explicit, user-triggered grounded résumé tailoring. Same no-fetch-on-mount posture
- * as InterviewPrepPanel/FollowUpDraftPanel: the only network call this component ever makes is
- * the one POST triggered by clicking "Tailor resume for this job" (or "Regenerate").
- *
- * The result is a read-only PROPOSAL, never a save (docs/IMPLEMENTATION_PLAN.md "Phase 7E" §21/
- * §37/§45) — nothing here creates a résumé version, changes the working résumé selection, or
- * touches the base résumé in any way. A page refresh loses the proposal, same as every other
- * ephemeral AI-assistance panel in this codebase; if the user wants to keep a change, they make it
- * themselves in the Resume Studio, which is the one real save path.
+ * Phase 7E generates the proposal (docs/IMPLEMENTATION_PLAN.md "Phase 7E") — an explicit,
+ * user-triggered, read-only call. Phase 7F takes over from there: reviewing, editing, and
+ * optionally saving that proposal (`ResumeTailoringReviewSession`) is a separate, deterministic,
+ * zero-AI-call layer (§16/§42/§61). Same no-fetch-on-mount posture as InterviewPrepPanel/
+ * FollowUpDraftPanel: the only network call this top-level component makes on its own is the one
+ * POST triggered by clicking "Tailor resume for this job" (or "Regenerate") — the review session
+ * below makes its own single POST only when the user explicitly clicks Save.
  */
 export function ResumeTailoringPanel({ applicationId }: { applicationId: string }) {
   const [generation, setGeneration] = useState<GenerationState>({ status: 'idle' });
 
   const generate = useCallback(async () => {
+    if (
+      generation.status === 'ready' &&
+      !window.confirm(
+        'Generating a new proposal discards your current, unsaved review. Continue?',
+      )
+    ) {
+      return;
+    }
+
     setGeneration({ status: 'generating' });
     try {
-      const response = await fetch(`/api/applications/${applicationId}/resume-tailoring`, {
-        method: 'POST',
-      });
+      const response = await fetch(
+        `/api/applications/${applicationId}/resume-tailoring`,
+        {
+          method: 'POST',
+        },
+      );
       const body = (await response.json()) as {
         status?: string;
         proposal?: ResumeTailoringProposal;
@@ -68,7 +79,7 @@ export function ResumeTailoringPanel({ applicationId }: { applicationId: string 
     } catch {
       setGeneration({ status: 'error', message: 'Tailoring failed. Try again.' });
     }
-  }, [applicationId]);
+  }, [applicationId, generation.status]);
 
   const isGenerating = generation.status === 'generating';
   const isReady = generation.status === 'ready';
@@ -99,8 +110,8 @@ export function ResumeTailoringPanel({ applicationId }: { applicationId: string 
       ) : null}
       {generation.status === 'unsupported_resume_format' ? (
         <p className="text-muted-foreground text-sm">
-          The selected working résumé doesn&apos;t have structured content yet. Open it in the
-          Resume Studio and save a version there first.
+          The selected working résumé doesn&apos;t have structured content yet. Open it in
+          the Resume Studio and save a version there first.
         </p>
       ) : null}
       {generation.status === 'missing_job_snapshot' ? (
@@ -118,143 +129,12 @@ export function ResumeTailoringPanel({ applicationId }: { applicationId: string 
         <p className="text-destructive text-sm">{generation.message}</p>
       ) : null}
 
-      {isReady ? <ProposalView proposal={generation.proposal} /> : null}
+      {isReady ? (
+        <ResumeTailoringReviewSession
+          applicationId={applicationId}
+          proposal={generation.proposal}
+        />
+      ) : null}
     </section>
   );
-}
-
-function ProposalView({ proposal }: { proposal: ResumeTailoringProposal }) {
-  const { summary, coverage } = proposal;
-
-  function handleDownloadTex() {
-    const filename = buildResumeFileName(`${proposal.baseResumeDisplayName}-tailored`, 'tex');
-    const blob = new Blob([proposal.proposedResumeLatex], { type: 'text/x-tex' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  return (
-    <div className="space-y-4">
-      <p className="text-muted-foreground text-xs">
-        Based on {proposal.baseResumeDisplayName} (v{proposal.baseResumeVersionNumber}).{' '}
-        <span className="font-medium">Nothing has been saved yet</span> — this is a preview only.
-        To keep a change, make it yourself in the Resume Studio.
-      </p>
-
-      {proposal.customLatexOverridePresent ? (
-        <p className="text-destructive text-sm">
-          This résumé has a custom Advanced LaTeX override. This preview reflects only the
-          structured-content changes below — it does not modify or include your override.
-        </p>
-      ) : null}
-
-      <div className="flex flex-wrap gap-2 text-xs">
-        <Badge variant="outline">{summary.rewrittenBullets} rewritten</Badge>
-        <Badge variant="outline">{summary.addedBullets} added</Badge>
-        <Badge variant="outline">{summary.omittedBullets} bullets omitted</Badge>
-        <Badge variant="outline">{summary.omittedEntries} entries omitted</Badge>
-        <Badge variant="outline">{summary.movedBullets} bullets moved</Badge>
-        <Badge variant="outline">{summary.movedEntries} entries moved</Badge>
-        {summary.skillsReordered ? <Badge variant="outline">Skills reordered</Badge> : null}
-      </div>
-
-      <div className="space-y-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wide">Requirement coverage</h3>
-        <p className="text-muted-foreground text-sm">
-          {coverage.coveredRequirementIds.length} of {coverage.totalRequirementCount} requirement
-          {coverage.totalRequirementCount === 1 ? '' : 's'} addressed by this proposal.
-        </p>
-        {coverage.unsupportedRequirements.length > 0 ? (
-          <ul className="space-y-1">
-            {coverage.unsupportedRequirements.map((req) => (
-              <li key={req.id} className="text-muted-foreground text-sm">
-                No grounded evidence found for:{' '}
-                <span className="text-foreground">{req.text}</span>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-      </div>
-
-      {proposal.operations.length > 0 ? (
-        <div className="space-y-2">
-          <h3 className="text-xs font-semibold uppercase tracking-wide">Proposed changes</h3>
-          <ul className="space-y-2">
-            {proposal.operations.map((op, index) => (
-              <li key={index} className="border-border rounded-lg border p-3 text-sm">
-                <OperationDescription op={op} />
-                <p className="text-muted-foreground mt-1 text-xs">{op.reason}</p>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : (
-        <p className="text-muted-foreground text-sm">
-          Nothing needed to change for this role.
-        </p>
-      )}
-
-      <Button variant="outline" size="sm" onClick={handleDownloadTex}>
-        Download .tex preview
-      </Button>
-    </div>
-  );
-}
-
-function OperationDescription({ op }: { op: ResumeTailoringProposal['operations'][number] }) {
-  switch (op.type) {
-    case 'REWRITE_BULLET':
-      return (
-        <div>
-          <p className="text-muted-foreground text-xs">{op.entryLabel}</p>
-          <p className="text-muted-foreground line-through">{op.before}</p>
-          <p>{op.after}</p>
-        </div>
-      );
-    case 'ADD_BULLET':
-      return (
-        <div>
-          <p className="text-muted-foreground text-xs">Add to {op.entryLabel}</p>
-          <p>{op.after}</p>
-        </div>
-      );
-    case 'OMIT_BULLET':
-      return (
-        <div>
-          <p className="text-muted-foreground text-xs">Omit from {op.entryLabel}</p>
-          <p className="text-muted-foreground line-through">{op.omittedText}</p>
-        </div>
-      );
-    case 'OMIT_ENTRY':
-      return <p>Omit entry: {op.entryLabel}</p>;
-    case 'MOVE_BULLET':
-      return (
-        <div>
-          <p className="text-muted-foreground text-xs">
-            Reorder within {op.entryLabel} (position {op.fromIndex + 1} → {op.toIndex + 1})
-          </p>
-          <p>{op.movedText}</p>
-        </div>
-      );
-    case 'MOVE_ENTRY':
-      return (
-        <p>
-          Reorder entry: {op.entryLabel} (position {op.fromIndex + 1} → {op.toIndex + 1})
-        </p>
-      );
-    case 'REORDER_SKILLS':
-      return (
-        <p className="text-muted-foreground text-xs">
-          Reorder skill groups: {op.after.join(', ')}
-        </p>
-      );
-    default: {
-      const exhaustiveCheck: never = op;
-      return exhaustiveCheck;
-    }
-  }
 }

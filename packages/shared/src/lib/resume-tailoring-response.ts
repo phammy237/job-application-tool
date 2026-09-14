@@ -150,7 +150,13 @@ export function buildResumeTailoringOperationViews(
         const before = baseResume.skills.map((g) => g.label);
         const byId = new Map(baseResume.skills.map((g) => [g.id, g.label]));
         const after = op.orderedSkillGroupIds.map((id) => byId.get(id) ?? id);
-        return { type: 'REORDER_SKILLS', before, after, reason: op.reason };
+        return {
+          type: 'REORDER_SKILLS',
+          before,
+          after,
+          orderedSkillGroupIds: op.orderedSkillGroupIds,
+          reason: op.reason,
+        };
       }
     }
   });

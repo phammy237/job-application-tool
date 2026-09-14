@@ -14,10 +14,37 @@ function jsonResponse(body: unknown, status = 200) {
   } as Response);
 }
 
+const HEADER = { fullName: 'Ada', email: null, phone: null, location: null, links: {} };
+
+const BASE_RESUME = {
+  schemaVersion: 1,
+  header: HEADER,
+  education: [],
+  experience: [
+    {
+      id: 'exp-1',
+      organization: 'Acme',
+      role: 'Engineer',
+      location: null,
+      dateRange: { start: null, end: null, isPresent: false },
+      bullets: [
+        { id: 'b1', text: 'Built the referral workflow', provenance: { type: 'MANUAL' } },
+      ],
+    },
+  ],
+  projects: [],
+  leadership: [],
+  skills: [],
+  renderOverride: null,
+};
+
 const FULL_PROPOSAL = {
   baseResumeVersionId: 'version-1',
   baseResumeDisplayName: 'Software Engineer Resume',
   baseResumeVersionNumber: 2,
+  jobSnapshotId: 'snapshot-1',
+  requirementMappingRunId: null,
+  baseResume: BASE_RESUME,
   customLatexOverridePresent: false,
   operations: [
     {
@@ -53,7 +80,15 @@ const FULL_PROPOSAL = {
 
 beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn());
-  vi.stubGlobal('URL', { ...URL, createObjectURL: vi.fn(() => 'blob:mock'), revokeObjectURL: vi.fn() });
+  vi.stubGlobal('URL', {
+    ...URL,
+    createObjectURL: vi.fn(() => 'blob:mock'),
+    revokeObjectURL: vi.fn(),
+  });
+  vi.stubGlobal(
+    'confirm',
+    vi.fn(() => true),
+  );
 });
 
 afterEach(() => {
@@ -90,27 +125,30 @@ describe('ResumeTailoringPanel', () => {
     expect(screen.getByRole('button', { name: 'Tailoring…' })).toBeDisabled();
   });
 
-  it('renders the summary, coverage, before/after, provenance, and an explicit "nothing saved" note on success', async () => {
+  it('renders every operation PENDING by default, with before/after and provenance — never pre-accepted', async () => {
     (fetch as ReturnType<typeof vi.fn>).mockReturnValue(
       jsonResponse({ status: 'ok', proposal: FULL_PROPOSAL }),
     );
     render(<ResumeTailoringPanel applicationId={APPLICATION_ID} />);
     fireEvent.click(screen.getByRole('button', { name: 'Tailor resume for this job' }));
 
-    await waitFor(() => expect(screen.getByText(/Nothing has been saved yet/)).toBeInTheDocument());
-    expect(screen.getByText(/Software Engineer Resume/)).toBeInTheDocument();
-    expect(screen.getByText('1 rewritten')).toBeInTheDocument();
-    expect(screen.getByText(/1 of 2 requirement/)).toBeInTheDocument();
-    expect(screen.getByText(/No grounded evidence found for:/)).toBeInTheDocument();
-    expect(screen.getByText('Experience with Snowflake')).toBeInTheDocument();
-    expect(screen.getByText('Built the referral workflow')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByText('Built the referral workflow')).toBeInTheDocument(),
+    );
     expect(screen.getByText('Led the referral workflow rebuild')).toBeInTheDocument();
+    expect(screen.getByText('Led a team of 5 engineers')).toBeInTheDocument();
+    expect(
+      screen.getAllByText('5+ years of engineering experience').length,
+    ).toBeGreaterThan(0);
     expect(
       screen.getByText('Emphasizes leadership experience relevant to the role'),
     ).toBeInTheDocument();
+    expect(screen.getByText('Pending review')).toBeInTheDocument();
+    expect(screen.getByText('1 pending')).toBeInTheDocument();
+    expect(screen.getByText('0 accepted')).toBeInTheDocument();
   });
 
-  it('shows the custom-LaTeX-override warning only when the base version has one', async () => {
+  it('shows the custom-LaTeX-override warning and requires acknowledgement only when the base version has one', async () => {
     (fetch as ReturnType<typeof vi.fn>).mockReturnValue(
       jsonResponse({
         status: 'ok',
@@ -130,7 +168,9 @@ describe('ResumeTailoringPanel', () => {
     );
     render(<ResumeTailoringPanel applicationId={APPLICATION_ID} />);
     fireEvent.click(screen.getByRole('button', { name: 'Tailor resume for this job' }));
-    await waitFor(() => expect(screen.getByText('1 rewritten')).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText('Built the referral workflow')).toBeInTheDocument(),
+    );
     expect(screen.queryByText(/custom Advanced LaTeX override/)).not.toBeInTheDocument();
   });
 
@@ -138,13 +178,19 @@ describe('ResumeTailoringPanel', () => {
     (fetch as ReturnType<typeof vi.fn>).mockReturnValue(
       jsonResponse({
         status: 'ok',
-        proposal: { ...FULL_PROPOSAL, operations: [], summary: { ...FULL_PROPOSAL.summary, rewrittenBullets: 0 } },
+        proposal: {
+          ...FULL_PROPOSAL,
+          operations: [],
+          summary: { ...FULL_PROPOSAL.summary, rewrittenBullets: 0 },
+        },
       }),
     );
     render(<ResumeTailoringPanel applicationId={APPLICATION_ID} />);
     fireEvent.click(screen.getByRole('button', { name: 'Tailor resume for this job' }));
     await waitFor(() =>
-      expect(screen.getByText('Nothing needed to change for this role.')).toBeInTheDocument(),
+      expect(
+        screen.getByText('Nothing needed to change for this role.'),
+      ).toBeInTheDocument(),
     );
   });
 
@@ -155,7 +201,9 @@ describe('ResumeTailoringPanel', () => {
     render(<ResumeTailoringPanel applicationId={APPLICATION_ID} />);
     fireEvent.click(screen.getByRole('button', { name: 'Tailor resume for this job' }));
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Download .tex preview' })).toBeInTheDocument(),
+      expect(
+        screen.getByRole('button', { name: 'Download .tex preview' }),
+      ).toBeInTheDocument(),
     );
     (fetch as ReturnType<typeof vi.fn>).mockClear();
     fireEvent.click(screen.getByRole('button', { name: 'Download .tex preview' }));
@@ -164,11 +212,27 @@ describe('ResumeTailoringPanel', () => {
     expect(screen.queryByText(/pdf/i)).not.toBeInTheDocument();
   });
 
-  it('shows a no_working_resume message', async () => {
-    (fetch as ReturnType<typeof vi.fn>).mockReturnValue(jsonResponse({ status: 'no_working_resume' }));
+  it('warns before discarding an in-progress review when Regenerate is clicked', async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockReturnValue(
+      jsonResponse({ status: 'ok', proposal: FULL_PROPOSAL }),
+    );
     render(<ResumeTailoringPanel applicationId={APPLICATION_ID} />);
     fireEvent.click(screen.getByRole('button', { name: 'Tailor resume for this job' }));
-    await waitFor(() => expect(screen.getByText(/Select a working résumé/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Regenerate')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }));
+    expect(confirm).toHaveBeenCalled();
+  });
+
+  it('shows a no_working_resume message', async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockReturnValue(
+      jsonResponse({ status: 'no_working_resume' }),
+    );
+    render(<ResumeTailoringPanel applicationId={APPLICATION_ID} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Tailor resume for this job' }));
+    await waitFor(() =>
+      expect(screen.getByText(/Select a working résumé/)).toBeInTheDocument(),
+    );
   });
 
   it('shows an unsupported_resume_format message', async () => {
@@ -188,20 +252,28 @@ describe('ResumeTailoringPanel', () => {
     );
     render(<ResumeTailoringPanel applicationId={APPLICATION_ID} />);
     fireEvent.click(screen.getByRole('button', { name: 'Tailor resume for this job' }));
-    await waitFor(() => expect(screen.getByText(/no saved job posting/)).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText(/no saved job posting/)).toBeInTheDocument(),
+    );
   });
 
   it('shows a rate-limit message on 429', async () => {
-    (fetch as ReturnType<typeof vi.fn>).mockReturnValue(jsonResponse({ error: 'limit' }, 429));
+    (fetch as ReturnType<typeof vi.fn>).mockReturnValue(
+      jsonResponse({ error: 'limit' }, 429),
+    );
     render(<ResumeTailoringPanel applicationId={APPLICATION_ID} />);
     fireEvent.click(screen.getByRole('button', { name: 'Tailor resume for this job' }));
     await waitFor(() => expect(screen.getByText(/AI request limit/)).toBeInTheDocument());
   });
 
   it('shows an error message on provider failure', async () => {
-    (fetch as ReturnType<typeof vi.fn>).mockReturnValue(jsonResponse({ error: 'AI provider error' }, 502));
+    (fetch as ReturnType<typeof vi.fn>).mockReturnValue(
+      jsonResponse({ error: 'AI provider error' }, 502),
+    );
     render(<ResumeTailoringPanel applicationId={APPLICATION_ID} />);
     fireEvent.click(screen.getByRole('button', { name: 'Tailor resume for this job' }));
-    await waitFor(() => expect(screen.getByText('AI provider error')).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText('AI provider error')).toBeInTheDocument(),
+    );
   });
 });

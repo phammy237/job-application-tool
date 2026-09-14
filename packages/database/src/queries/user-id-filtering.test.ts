@@ -24,8 +24,15 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
  * each of which is itself covered by this same test. There is nothing for a literal
  * `.eq('user_id', ...)` pattern to match here without adding a redundant, unused filter just to
  * satisfy this scan.
+ *
+ * resume-tailoring-save.ts (Phase 7F) is exempt for the same "no direct table query" reason: its
+ * one function only calls the service-role-only `save_reviewed_tailored_resume` RPC, passing
+ * `p_user_id` as an RPC argument rather than a `.eq('user_id', ...)` filter — ownership is
+ * verified inside that row-locked database function itself (migration 0024), proven by the
+ * pgTAP cross-user rejection assertions in supabase/tests/database/0029_resume_tailoring_save.
+ * test.sql, not by a PostgREST-level filter this file could add.
  */
-const EXEMPT_FILES = new Set(['feature-flags.ts', 'consistency.ts']);
+const EXEMPT_FILES = new Set(['feature-flags.ts', 'consistency.ts', 'resume-tailoring-save.ts']);
 
 describe('every user-scoped query filters by user_id explicitly', () => {
   const queriesDir = __dirname;

@@ -79,3 +79,40 @@ export async function listOwnSubmittedApplicationsForResumeVersions(
   }
   return result;
 }
+
+/**
+ * "Is this logical TAILORED résumé currently the working résumé for some OTHER application?"
+ * (docs/IMPLEMENTATION_PLAN.md "Phase 7F" §18/§29) — the deciding check for whether a Phase 7F
+ * save into an already-TAILORED base should append the next version to that same logical résumé
+ * (sole use, the common "Tailor Again" case) or clone into a new application-specific TAILORED
+ * résumé instead (the base is shared with at least one other application, so mutating its lineage
+ * in place would silently change what that other application's "working résumé" means). Reads
+ * every version of `resumeId` at once rather than joining resume_versions inline, matching this
+ * file's existing batched-lookup style.
+ */
+export async function isOwnResumeWorkingForOtherApplication(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+  resumeId: string,
+  excludeApplicationId: string,
+): Promise<boolean> {
+  const { data: versionRows, error: versionError } = await supabase
+    .from('resume_versions')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('resume_id', resumeId);
+  assertNoError(versionError, 'isOwnResumeWorkingForOtherApplication (versions)');
+
+  const versionIds = (versionRows ?? []).map((row) => row.id);
+  if (versionIds.length === 0) return false;
+
+  const { data, error } = await supabase
+    .from('applications')
+    .select('id')
+    .eq('user_id', userId)
+    .neq('id', excludeApplicationId)
+    .in('working_resume_version_id', versionIds)
+    .limit(1);
+  assertNoError(error, 'isOwnResumeWorkingForOtherApplication');
+  return (data ?? []).length > 0;
+}

@@ -279,6 +279,9 @@ export async function generateResumeTailoringPlan(
     baseResumeVersionId: resumeVersion.id,
     baseResumeDisplayName: resumeVersion.displayName,
     baseResumeVersionNumber: resumeVersion.versionNumber,
+    jobSnapshotId: snapshot.id,
+    requirementMappingRunId: currentRun?.id ?? null,
+    baseResume,
     customLatexOverridePresent: baseResume.renderOverride !== null,
     operations: buildResumeTailoringOperationViews(
       outcome.operations,

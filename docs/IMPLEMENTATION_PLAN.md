@@ -100,6 +100,17 @@ phase depends on a later phase's output.
       produces a proposed structured résumé, rendered via the existing Phase 7C renderer. Fully
       ephemeral — no version is created, no working-résumé pointer changes, nothing is saved
       without the user separately doing so in the Studio — see "Phase 7E" below.
+- [x] Phase 7F — Résumé tailoring review, acceptance, editing, and immutable save: the
+      user-control layer over a Phase 7E proposal. Every operation starts PENDING; a pure
+      `buildReviewedTailoredResume` (`packages/shared`) recomputes the reviewed résumé, coverage,
+      and counts client-side on every accept/reject/edit with zero network calls; a user-edited
+      bullet is honestly reprovenanced (`CANDIDATE_FACTS` only if kept grounded and re-verified,
+      `MANUAL` otherwise — never silently mislabeled). Saving is one atomic, concurrency-safe RPC
+      (`save_reviewed_tailored_resume`, migration 0024) that independently re-verifies ownership,
+      base-résumé/job-context staleness, fact ownership, and grounding against fresh database
+      state before creating a new TAILORED résumé (from a MASTER base) or the next version of the
+      same one (from a TAILORED base not shared with another application) — see "Phase 7F" below.
+      Zero AI provider calls anywhere in this phase.
 - [ ] Phase 7 — Multi-user beta hardening, privacy controls, testing, deployment
 - [ ] Phase 8 — Optional mypham.space integration, public onboarding, future sharing
 
@@ -4106,5 +4117,194 @@ was never attempted rather than faked.
 
 PDF compilation/preview of a tailored proposal (still no sandboxed compiler exists — unchanged
 from Phase 7C/7D), "save this proposal as a new version" (a deliberate v1 scope decision — keeping
-a change always means the Studio today), diffing a tailored proposal against a different base
-version, `ADD_SKILL`/skill-group creation, and multi-provider model routing for this pipeline.
+a change always means the Studio today; **superseded by Phase 7F below**, which adds exactly this
+as a reviewed, revalidated save — never a raw "accept the whole proposal" shortcut), diffing a
+tailored proposal against a different base version, `ADD_SKILL`/skill-group creation, and
+multi-provider model routing for this pipeline.
+
+## Phase 7F — Résumé tailoring review, acceptance, editing, and immutable save
+
+Phase 7E's proposal is a read-only, ephemeral preview; Phase 7F is the user-control layer that
+turns a reviewed subset of it into a real, immutable résumé version. The product rule this phase
+exists to enforce: **the user must never have to accept the model's entire proposal blindly**, and
+**nothing the model proposed is ever labeled fact-grounded unless it still is, after any edit**.
+
+### Architecture — builds directly on 7E, no parallel proposal representation
+
+Nothing about 7E's contract changed except two small, additive fields on
+`ResumeTailoringProposal`: `jobSnapshotId`/`requirementMappingRunId` (the two staleness anchors a
+later save re-checks, §14/§15) and `baseResume` (the exact `StructuredResumeV1` operations were
+computed against — already fetched by the pipeline, now also returned so the review UI can build
+a fully client-side live preview with zero network calls per click, §46). `REORDER_SKILLS`'s
+operation *view* additionally carries `orderedSkillGroupIds` alongside its existing before/after
+label arrays, so a save can reconstruct the operation unambiguously even if two skill groups share
+a label. Nothing else about 7E's schema, validator, or applier changed.
+
+Operation identity (§4): a stable `operationId` (`op-0`, `op-1`, …) is assigned once, the moment a
+proposal is loaded into review state — deterministic and derived from the proposal's own
+(never-reordered) array position, never from the model and never from render/list position. It is
+a client-side/wire-level bookkeeping concept only; the server never trusts it for anything
+security-relevant — every save request re-validates the actual operation content, not the id.
+
+### The pure review builder (§12)
+
+`buildReviewedTailoredResume` (`packages/shared/src/lib/build-reviewed-tailored-resume.ts`) is
+Phase 7F's one recomputation engine, run identically on the client (live preview, every
+accept/reject/edit) and the server (the authoritative content the save path actually persists).
+Given a base résumé, the tagged operations, a decision map (`PENDING`/`ACCEPTED`/`REJECTED` —
+missing means `PENDING`, never `ACCEPTED`, §5), and an edit map, it:
+
+1. filters to `ACCEPTED` operations only (§6 — pending/rejected operations never affect the
+   preview);
+2. for an edited `REWRITE_BULLET`/`ADD_BULLET`, resolves final text + provenance: `MANUAL` always
+   succeeds; `KEEP_GROUNDED` re-runs the exact same deterministic numeric/technology guards 7E
+   used, against the cited facts' text and (for a rewrite) the original bullet text — a failure is
+   surfaced as a `groundingViolation`, never silently downgraded to MANUAL and never silently
+   saved as grounded (§7/§8/§13/§30);
+3. applies rewrite → omit → reposition → append in the same fixed order as 7E's own
+   `applyResumeTailoringPlan`, but — deliberately independent of that function — always sets an
+   explicit, freshly-decided provenance rather than 7E's "keep existing provenance" fallback,
+   which would let an edited bullet inherit a stale grounding claim;
+4. always resets `renderOverride` to `null` (§39 — a tailored save never carries an Advanced
+   override forward, regenerated LaTeX only);
+5. recomputes coverage from ONLY the accepted operations' own cited requirements
+   (`recomputeReviewedCoverage`, §34 option A) — a requirement whose only citing operation was
+   rejected is no longer reported as covered;
+6. reports `hasChangesFromBase` (content-equality, ignoring `renderOverride`, §37/§38) so an
+   all-rejected or no-op review can be refused before it ever reaches the network.
+
+### Provenance honesty (§7/§8/§30–§32)
+
+An untouched, accepted grounded operation keeps `CANDIDATE_FACTS` with its original cited fact
+ids. An edited operation is `MANUAL` by default and only stays `CANDIDATE_FACTS` if the user
+explicitly chose "Keep as fact-grounded" *and* it re-passes the grounding guards — both client-side
+(for immediate feedback, using the operation's own claimed evidence) and, authoritatively,
+server-side (using freshly-fetched real fact text and the real base bullet text, never the
+client's own claims about either — see the save path below). Rejected operations leave no durable
+trace anywhere, including in this phase's telemetry (§33 — 7E's own `ai_usage_events` row from
+generation already exists and is sufficient).
+
+### The save path — one atomic RPC, fully revalidated (§13/§47–§51)
+
+`POST /api/applications/:id/resume-tailoring/save`
+(`apps/web/app/api/applications/[id]/resume-tailoring/save/route.ts`) is the one persistence path.
+Zero AI provider calls (§16/§42/§61 — this route imports nothing from `@career-os/ai`). In order:
+
+1. auth + application ownership;
+2. `baseResumeVersionId`/`jobSnapshotId` staleness — the request's claimed values must equal the
+   application's CURRENT `working_resume_version_id`/`job_snapshot_id`, or the save is rejected as
+   `stale_base_resume`/`stale_job_context` (§14/§15) before any heavier work runs;
+3. the base version must still be `STRUCTURED_V1`; a custom LaTeX override on it requires the
+   client's explicit `acknowledgeCustomLatexOverrideReset` (§39) or the save is refused;
+4. every operation must have an explicit `ACCEPTED`/`REJECTED` decision — any `PENDING` one
+   refuses the save (§35);
+5. `validateResumeTailoringSaveSubmission`
+   (`packages/shared/src/lib/validate-resume-tailoring-save.ts`) — the authoritative gate. It
+   never trusts the client's own `groundedFacts` labels or `before` text as evidence the way the
+   client-facing preview necessarily does: every cited fact id is checked against
+   `listOwnApprovedFactsForGeneration`'s CURRENT result (freshly fetched this request — a fact
+   unapproved or belonging to another user since generation fails the save, §51), and the
+   numeric/technology guards re-run against that fact's REAL text and the REAL base-résumé bullet
+   text, never anything the client claimed;
+6. `buildReviewedTailoredResume` builds the final content from the same (now-verified) inputs;
+   `hasChangesFromBase === false` refuses as `no_changes` (§37/§38) — an all-rejected review, or
+   one whose edits net out to the original text, never creates a pointless version;
+7. the final `StructuredResumeV1` is schema-validated one more time before it ever reaches a
+   database write.
+
+### Target-résumé decision (§17–§19/§28/§29)
+
+Computed from the base version's own logical résumé, read fresh this request:
+
+- base `kind = MASTER` → always creates a new TAILORED résumé (naming via the existing
+  `buildTailoredResumeDisplayName`, never a hardcoded name), parented at that master. The master
+  itself never gains a version through this path (§28).
+- base `kind = TAILORED`, and no OTHER application currently has any of its versions as their
+  working résumé (`isOwnResumeWorkingForOtherApplication`,
+  `packages/database/src/queries/resume-version-usage.ts`) → appends the next version to that same
+  logical résumé — "Tailor Again" produces v1, v2, v3 of one résumé, never a proliferating set of
+  near-duplicate logical résumés (§29).
+- base `kind = TAILORED` but shared with another application's working résumé → clones into a new,
+  application-specific TAILORED résumé (same naming convention, parented at the same master when
+  known) instead of mutating a résumé another application still depends on (§18).
+
+### The atomic RPC (§20/§49/§50/§52)
+
+`save_reviewed_tailored_resume` (migration 0024) is the one atomic, concurrency-safe write,
+reusing `create_resume_version`'s own row-lock-then-insert pattern rather than inventing a second
+numbering scheme. Row-locks the `applications` row for the transaction's duration and re-checks
+both staleness anchors against the row it just locked — a genuine defense against the real race
+(§50): two saves generated from the same stale base cannot both succeed; the first to acquire the
+lock wins and advances the working pointer, the second sees the now-changed state and is rejected,
+never silently creating a duplicate version. Optionally creates a new TAILORED `resumes` row
+(reusing the existing `enforce_resume_parent_is_master` trigger for lineage validity) before
+computing the next version number and inserting the version; sets
+`applications.working_resume_version_id` to the new version, atomically, in the same transaction.
+Service-role-only (same grant posture as `create_resume_version`/`mark_application_applied`).
+Never touches `submission_packets` — no parameter, no code path reaches it (§27).
+
+### Submission-history and master protection (§27/§28, tested)
+
+Verified end to end in `supabase/tests/database/0029_resume_tailoring_save.test.sql`: saving a
+tailored résumé after `mark_application_applied` has already frozen an earlier version into a
+packet advances only `applications.working_resume_version_id` — the packet's own
+`resume_version_id` is provably unchanged. A MASTER résumé that was tailored from is provably
+unchanged (still exactly its one original version) after the save.
+
+### Client-side review state (§3/§62)
+
+Lives entirely in `ResumeTailoringReviewSession`'s own React state
+(`apps/web/app/(app)/applications/resume-tailoring-review-session.tsx`) — decisions and edits are
+plain `Map`s, reset whenever a fresh proposal arrives. A page refresh discards an unsaved review,
+same as the ephemeral proposal itself; a `beforeunload` listener warns (never silently loses work,
+never autosaves) whenever any decision or edit exists and the save hasn't succeeded yet. Clicking
+"Regenerate" while a review is in progress asks for confirmation first. No `tailoring_sessions`
+table, no autosave infrastructure — never needed.
+
+### UI (§43–§46)
+
+Every operation renders as a card: type-specific before/after (or omit/move/reorder framing),
+grounded-fact and relevant-requirement badges, a Pending/Accepted/Rejected status badge, and
+Accept/Reject/Edit controls (Edit only for `REWRITE_BULLET`/`ADD_BULLET`). Editing shows a textarea
+plus an explicit "Keep as fact-grounded" vs. "Save as manual content" choice — never a hidden
+default. "Accept all remaining"/"Reject all remaining" resolve only currently-`PENDING`
+operations, never touching one already decided. A lightweight All/Pending/Accepted/Rejected filter
+is available when there is more than one operation. The final-preview section shows accepted/
+rejected/edited counts, live-recomputed coverage (with "No accepted change addresses: …" per
+still-unsupported requirement), a `.tex` download of the live-reviewed content, and the Save
+button — disabled while anything is `PENDING`, while any `KEEP_GROUNDED` edit currently fails its
+guard, while there are no net changes, or while a present custom-LaTeX-override reset is
+unacknowledged. A successful save shows the new résumé/version identity and "Open in Resume
+Studio"/"Back to Application" actions.
+
+### DB change
+
+Migration 0024 adds exactly one new function, `save_reviewed_tailored_resume` — no new tables, no
+new columns; live-verified against the linked project
+(`supabase/tests/database/0029_resume_tailoring_save.test.sql`, 16/16 assertions, via the same
+wrap-into-a-temp-table `db query --linked` technique used since Docker isn't available in this
+environment), then confirmed the transaction left zero residue.
+
+### Tests
+
+`packages/shared`: `build-reviewed-tailored-resume.test.ts` (+16 — every decision/edit/provenance
+combination, coverage recomputation, determinism, no input mutation, renderOverride reset),
+`validate-resume-tailoring-save.test.ts` (+13 — unresolved operations, unknown ids, conflicts,
+invalid skill reorders, cross-user/foreign fact ids, real-evidence-only regrounding, MANUAL bypass).
+`packages/database`: `resume-tailoring-save.test.ts` (+6), `resume-version-usage.test.ts` (+3 new).
+`apps/web`: `resume-tailoring-panel.test.tsx` (updated for the new review UI),
+`resume-tailoring-review-session.test.tsx` (+14 — pending defaults, accept/reject/accept-all/
+reject-all, edit with both provenance choices, a blocked ungrounded edit, live coverage
+recomputation, override-ack gating, save success with Studio/Back links, stale-base handling,
+never-calls-save-except-on-click). `supabase/tests/database`: `0029_resume_tailoring_save.test.sql`
+(+16, live-verified). All run alongside the full existing suite (1,356 tests across every
+workspace) with zero regressions.
+
+### Explicitly deferred to a future phase
+
+An `ADD_SKILL` review path (doesn't exist — 7E has no such operation), a persisted
+`tailoring_sessions`/review-audit table (deliberately not built — client-side review state is
+sufficient for v1), requirement-mapping-run-level staleness (only job-snapshot identity is
+checked; a mapping re-run against the same snapshot without a new snapshot is a narrower,
+lower-priority edge case), and any second AI call anywhere in this phase (accept/reject/edit/save
+are all, and will remain, deterministic).

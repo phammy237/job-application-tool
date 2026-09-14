@@ -135,6 +135,7 @@ describe('buildResumeTailoringOperationViews', () => {
       type: 'REORDER_SKILLS',
       before: ['Languages', 'Frameworks'],
       after: ['Frameworks', 'Languages'],
+      orderedSkillGroupIds: ['skill-2', 'skill-1'],
       reason: 'Frameworks first',
     });
   });

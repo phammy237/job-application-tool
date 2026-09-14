@@ -249,6 +249,8 @@ describe('generateResumeTailoringPlan — requirement mapping reuse and safe deg
     expect(result.status).toBe('ok');
     if (result.status === 'ok') {
       expect(result.proposal.coverage.totalRequirementCount).toBe(1);
+      // No real mapping run reused — never fabricated (Phase 7F §15 staleness anchor).
+      expect(result.proposal.requirementMappingRunId).toBeNull();
     }
     expect(mocks.listCurrentOwnRequirementMappings).not.toHaveBeenCalled();
   });
@@ -268,6 +270,7 @@ describe('generateResumeTailoringPlan — requirement mapping reuse and safe deg
     expect(result.status).toBe('ok');
     if (result.status === 'ok') {
       expect(result.proposal.coverage.unsupportedRequirementIds).toEqual([REQUIREMENT_ID]);
+      expect(result.proposal.requirementMappingRunId).toBe('run-1');
     }
   });
 });
@@ -393,6 +396,11 @@ describe('generateResumeTailoringPlan — successful proposal', () => {
     if (result.status !== 'ok') return;
     expect(result.proposal.baseResumeVersionId).toBe(RESUME_VERSION_ID);
     expect(result.proposal.baseResumeVersionNumber).toBe(3);
+    // Phase 7F staleness anchors — server-derived, never trusted from the caller (§15).
+    expect(result.proposal.jobSnapshotId).toBe(SNAPSHOT_ID);
+    // Phase 7F's client-side live preview needs the exact base content operations were computed
+    // against (§12/§46) — the same object the pipeline already fetched, never re-derived.
+    expect(result.proposal.baseResume).toBe(BASE_RESUME);
     expect(result.proposal.customLatexOverridePresent).toBe(false);
     expect(result.proposal.summary.rewrittenBullets).toBe(1);
     expect(result.proposal.proposedResumeLatex).toContain('Rewritten with real evidence');

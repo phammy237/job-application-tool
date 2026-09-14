@@ -87,7 +87,7 @@ false`, `visibleOnPublicProfile = false`. Nothing extracted is usable until step
    application's working résumé selection has since moved on to something else — that divergence
    is expected, normal history, not an error state.
 
-## 3C. Grounded résumé tailoring (Phase 7E)
+## 3C. Grounded résumé tailoring, review, and save (Phase 7E/7F)
 
 1. On an application's detail page, once a working résumé version with real structured content
    (`STRUCTURED_V1`) is selected, an "AI résumé tailoring" panel appears with a "Tailor resume for
@@ -101,12 +101,28 @@ false`, `visibleOnPublicProfile = false`. Nothing extracted is usable until step
    existing text before it's ever shown — an edit that would introduce a number, technology, or
    claim not already present in what it's rewriting or the facts it cites is rejected outright,
    and the whole response is retried once or declined, never silently softened.
-4. The result is a **preview only** — before/after text for each change, which job requirements it
-   addresses, which it honestly can't ("no grounded evidence found for…"), and a `.tex` download of
-   what the tailored résumé would render as. Nothing is saved: no new résumé version is created,
-   the working résumé selection doesn't change, and refreshing the page loses the preview.
-5. To actually keep a change, the user opens the Resume Studio (§3B) and makes it there themselves
-   — tailoring only ever suggests; saving is always a manual, human action.
+4. The result is a proposal, not a fait accompli — every operation starts **Pending review**, never
+   pre-accepted. The user reviews each one individually (Phase 7F,
+   `docs/IMPLEMENTATION_PLAN.md` "Phase 7F"):
+   - **Accept** — the change participates in the reviewed draft.
+   - **Reject** — the change is dropped; its text is never saved or logged anywhere.
+   - **Edit** (rewrite/add only) — the user types their own replacement text, and explicitly
+     chooses "Keep as fact-grounded" (re-checked against the same evidence, and refused if it no
+     longer holds) or "Save as manual content" (always allowed, never claimed as grounded).
+   A live final preview — updated instantly, no network call per click — shows the reviewed
+   résumé's requirement coverage, accepted/rejected/edited counts, and a `.tex` download.
+5. **Save Tailored Resume** is disabled until every change is resolved (accepted or rejected) and
+   at least one net change exists. Saving creates one new immutable résumé version: from the
+   user's master résumé, a new job-specific tailored résumé; from an existing tailored résumé used
+   only by this application, its next version; from one also used by another application, a fresh
+   clone rather than mutating a résumé that application still depends on. The application's
+   working résumé updates to the new version; nothing else does — an already-submitted
+   application's frozen submission record is untouched (§3B). A résumé with a custom Advanced
+   LaTeX override requires an explicit acknowledgement before saving, since the new version's
+   LaTeX is always regenerated from structured content, never the old override.
+6. Nothing is ever saved without this explicit click — a page refresh before saving loses the
+   whole review, same as before Phase 7F. No AI call happens anywhere in this review/save step;
+   the only Claude call in this flow is the one that produced the original proposal in step 2.
 
 ## 4. Job analysis via the extension
 

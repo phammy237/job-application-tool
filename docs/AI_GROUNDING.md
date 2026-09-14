@@ -375,10 +375,46 @@ reorder it, restate it, choose what to show for this role. It may NEVER invent e
   matched.
 - **Fully ephemeral — nothing is ever saved by this pipeline.** No résumé version is created, no
   working-résumé pointer changes, no submission packet is touched — the response is a read-only
-  proposal, and the only durable trace of an attempt is the existing `ai_usage_events` telemetry
-  row (`task_type: 'resume_tailoring'`, migration 0023), recorded best-effort. Keeping any part of
-  a proposal requires the user to make that edit themselves in the Resume Studio.
+  proposal, and the only durable trace of a generation attempt is the existing `ai_usage_events`
+  telemetry row (`task_type: 'resume_tailoring'`, migration 0023), recorded best-effort. Turning
+  any part of a proposal into something durable is Phase 7F's job (§12 below), not this pipeline's.
 - **Rendering never touches the model.** The proposal's LaTeX preview comes from applying the
   validated plan to a copy of the base résumé (a pure function, `apply-resume-tailoring-plan.ts`)
   and rendering that copy with the existing, unmodified Phase 7C deterministic renderer — the model
   never sees or produces LaTeX at any point in this pipeline.
+
+## 12. Reviewed résumé-tailoring save — provenance and re-grounding (Phase 7F)
+
+Phase 7F (`docs/IMPLEMENTATION_PLAN.md` "Phase 7F") is the layer between §11's ephemeral proposal
+and a real, immutable résumé version. It calls no provider at any point — every check below is
+deterministic, and the grounding guarantees this section describes are re-verified, never merely
+re-displayed, before anything is written.
+
+- **Every operation starts unresolved.** The review UI defaults every operation to `PENDING`,
+  never `ACCEPTED` — the same "grounded does not mean the user likes the wording" principle this
+  whole system already applies to Claude's output applies equally to the user's own review: silent
+  bulk-acceptance would defeat the entire point of a review step.
+- **An untouched, accepted operation keeps its original grounding claim.** If the user accepts a
+  `REWRITE_BULLET`/`ADD_BULLET` exactly as proposed, its `CANDIDATE_FACTS` provenance and cited
+  fact ids carry through unchanged — §11's guards already verified it once, at generation time.
+- **An edited operation is honestly reprovenanced, never left overclaiming.** The user picks
+  explicitly: "Keep as fact-grounded" re-runs the exact same numeric/technology guards §11 uses,
+  against the cited facts' real text and the real original bullet text — a failure blocks the save
+  outright, with a specific reason, never a silent fallback to MANUAL. "Save as manual content"
+  always succeeds and is stored as `MANUAL` — legitimate free-form user writing the deterministic
+  guards were never meant to gate, but never mislabeled as fact-checked either.
+- **The client's own claims are never the authority at save time.** A live, purely client-side
+  preview necessarily trusts the data already in the (ephemeral, unpersisted) proposal it's
+  reviewing — that's fine for showing the user what their draft looks like. The actual save request
+  handler independently re-fetches the user's currently-approved facts and re-runs both guards
+  against that real data before persisting anything; a fact that was approved at generation time
+  but has since been unapproved, or a cited id that doesn't actually belong to this user, fails the
+  save the same way an ungrounded number would (`packages/shared/src/lib/
+  validate-resume-tailoring-save.ts`).
+- **Rejected text leaves no durable trace.** A rejected operation's proposed text is never written
+  to `resume_versions`, never logged, and generates no new telemetry beyond §11's own generation-
+  time `ai_usage_events` row.
+- **No aggregate score here either.** The reviewed draft's coverage is recomputed from only the
+  *accepted* operations' own cited requirements — a requirement whose sole citing operation was
+  rejected is honestly reported as no longer addressed, never left showing a stale "covered"
+  verdict from the original (unreviewed) proposal.

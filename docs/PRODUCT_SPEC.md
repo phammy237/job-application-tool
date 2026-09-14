@@ -138,9 +138,14 @@ Advanced mode supports a custom LaTeX override. PDF compilation is not implement
 sandboxed compilation environment exists in this deployment) — see `docs/RESUME_STUDIO.md`. As of
 Phase 7E, the application detail page can also generate a grounded, job-specific tailoring
 *proposal* against the working résumé version — a bounded set of reorder/rewrite/omit/add
-operations, never a model-generated résumé or LaTeX, and never saved automatically; keeping any
-part of it still means editing it manually in the Resume Studio. No company research, no ATS
-score — see `docs/AI_GROUNDING.md` §11, `docs/RESUME_STUDIO.md` §12, and `docs/DATA_MODEL.md`
+operations, never a model-generated résumé or LaTeX. As of Phase 7F, the user reviews that
+proposal operation by operation (accept/reject/edit — every change starts unresolved, never
+pre-accepted) and may explicitly save a reviewed subset as a new immutable résumé version: from
+the master, a new job-specific tailored résumé; from an existing tailored résumé, its next
+version. Saving is fully revalidated server-side against the user's current approved facts —
+never trusting anything the review UI itself claims — and never happens without that explicit
+click. No company research, no ATS score — see `docs/AI_GROUNDING.md` §11,
+`docs/RESUME_STUDIO.md` §12, `docs/IMPLEMENTATION_PLAN.md` "Phase 7F", and `docs/DATA_MODEL.md`
 §"resumes"/§"resume_versions".
 
 ## 7. Application tracker scope

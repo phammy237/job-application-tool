@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { uuidSchema } from './common';
-import { resumeEntryIdSchema } from './resume-content';
+import { resumeEntryIdSchema, structuredResumeV1Schema } from './resume-content';
 
 /**
  * Phase 7E — grounded, job-specific résumé tailoring. The model NEVER returns a résumé, LaTeX,
@@ -167,6 +167,11 @@ export const resumeTailoringOperationViewSchema = z.discriminatedUnion('type', [
     type: z.literal('REORDER_SKILLS'),
     before: z.array(z.string()),
     after: z.array(z.string()),
+    /** The same ids `after`'s labels were resolved from, in the same order — kept alongside the
+     * human-readable labels (not in place of them) so Phase 7F's review/save path has a stable,
+     * unambiguous way to re-apply this operation without guessing an id back from a label that
+     * might not be unique (docs/IMPLEMENTATION_PLAN.md "Phase 7F" §11/§48). */
+    orderedSkillGroupIds: z.array(resumeEntryIdSchema),
     reason: z.string(),
   }),
 ]);
@@ -214,6 +219,23 @@ export const resumeTailoringProposalSchema = z.object({
   baseResumeVersionId: uuidSchema,
   baseResumeDisplayName: z.string(),
   baseResumeVersionNumber: z.number().int().positive(),
+  /** The job snapshot this proposal was generated against — server-derived from the
+   * application's job snapshot at generation time, never client-supplied (Phase 7F §15/§58). A
+   * later save re-derives the application's *current* job snapshot id and rejects with
+   * `stale_job_context` if it no longer matches this value, the same way `baseResumeVersionId`
+   * guards against a working-résumé change mid-review. */
+  jobSnapshotId: uuidSchema,
+  /** The CURRENT requirement-mapping run reused for this proposal, if one existed — purely
+   * informational (never itself re-checked at save time; job-snapshot identity is the save-time
+   * staleness signal, docs/IMPLEMENTATION_PLAN.md "Phase 7F" §15). */
+  requirementMappingRunId: uuidSchema.nullable(),
+  /** The exact base résumé content operations above were computed against (Phase 7F §12/§24) —
+   * the same `StructuredResumeV1` the Studio already renders/edits, not a new representation.
+   * Included so the review UI can build a live, fully client-side preview of the reviewed draft
+   * on every accept/reject/edit (§46) without a server round trip per click; it is never treated
+   * as writable on its own — only `save_reviewed_tailored_resume` can persist anything, and only
+   * after independently re-deriving and re-validating this same content server-side (§13/§48). */
+  baseResume: structuredResumeV1Schema,
   /** True when the base version has an active custom LaTeX override (Phase 7C/7D) — the
    * proposal is still generated from structured content only and never touches that override
    * (§22). Purely informational for the UI's warning banner. */

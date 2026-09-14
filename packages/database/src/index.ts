@@ -15,6 +15,7 @@ export * from './queries/resume-uploads';
 export * from './queries/resumes';
 export * from './queries/resume-versions';
 export * from './queries/resume-version-usage';
+export * from './queries/resume-tailoring-save';
 export * from './queries/jobs';
 export * from './queries/applications';
 export * from './queries/application-events';

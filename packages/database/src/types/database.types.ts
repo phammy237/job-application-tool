@@ -852,6 +852,30 @@ export interface Database {
           created_at: string;
         };
       };
+      // Added in migration 0024 (Phase 7F) — the one atomic save path for a reviewed AI
+      // résumé-tailoring draft. p_target_resume_id XOR (p_new_resume_name/p_new_resume_parent_id)
+      // is exactly one of "append a version to this existing logical résumé" or "create a new
+      // TAILORED résumé first" — see the migration's own doc comment.
+      save_reviewed_tailored_resume: {
+        Args: {
+          p_user_id: string;
+          p_application_id: string;
+          p_expected_working_resume_version_id: string | null;
+          p_expected_job_snapshot_id: string | null;
+          p_target_resume_id: string | null;
+          p_new_resume_name: string | null;
+          p_new_resume_parent_id: string | null;
+          p_version_display_name: string;
+          p_snapshot_payload: Json;
+        };
+        Returns: {
+          resume_id: string;
+          resume_created: boolean;
+          version_id: string;
+          version_number: number;
+          display_name: string;
+        }[];
+      };
     };
     Enums: Record<string, never>;
   };
