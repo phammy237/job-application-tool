@@ -7,12 +7,14 @@ const mocks = vi.hoisted(() => ({
   getOwnSubmissionPacketByApplicationId: vi.fn(),
   getOwnRequirementMappingRunById: vi.fn(),
   countOwnRequirementMappingsForRun: vi.fn(),
+  getOwnResumeVersion: vi.fn(),
 }));
 
 vi.mock('@career-os/database', () => ({
   getOwnSubmissionPacketByApplicationId: mocks.getOwnSubmissionPacketByApplicationId,
   getOwnRequirementMappingRunById: mocks.getOwnRequirementMappingRunById,
   countOwnRequirementMappingsForRun: mocks.countOwnRequirementMappingsForRun,
+  getOwnResumeVersion: mocks.getOwnResumeVersion,
 }));
 
 const { SubmissionPacketSection } = await import('./submission-packet-section');
@@ -28,6 +30,7 @@ const BASE_PACKET = {
   applicationId: APPLICATION_ID,
   jobSnapshotId: null,
   resumeId: null,
+  resumeVersionId: null,
   requirementMappingRunId: null,
   answersSnapshot: [],
   autofillSummary: null,
@@ -99,14 +102,49 @@ describe('SubmissionPacketSection — reviewed answers', () => {
 });
 
 describe('SubmissionPacketSection — résumé honesty', () => {
-  it('states the résumé version is not recorded when resumeId is null', async () => {
+  it('states the résumé is not recorded when neither resumeVersionId nor legacy resumeId is set', async () => {
     mocks.getOwnSubmissionPacketByApplicationId.mockResolvedValue(BASE_PACKET);
     await renderSection();
     expect(
-      screen.getByText(
-        'The submitted résumé version is not recorded for this application.',
-      ),
+      screen.getByText('Resume not recorded for this submission.'),
     ).toBeInTheDocument();
+    expect(mocks.getOwnResumeVersion).not.toHaveBeenCalled();
+  });
+
+  it('shows the exact submitted version when resumeVersionId resolves', async () => {
+    mocks.getOwnSubmissionPacketByApplicationId.mockResolvedValue({
+      ...BASE_PACKET,
+      resumeVersionId: 'version-1',
+    });
+    mocks.getOwnResumeVersion.mockResolvedValue({
+      id: 'version-1',
+      versionNumber: 2,
+      displayName: 'My Resume -- Acme -- Engineer',
+    });
+    await renderSection();
+    expect(
+      screen.getByText(/Version 2 — My Resume -- Acme -- Engineer/),
+    ).toBeInTheDocument();
+  });
+
+  it('states the version is no longer available rather than fabricating a summary', async () => {
+    mocks.getOwnSubmissionPacketByApplicationId.mockResolvedValue({
+      ...BASE_PACKET,
+      resumeVersionId: 'version-deleted',
+    });
+    mocks.getOwnResumeVersion.mockResolvedValue(null);
+    await renderSection();
+    expect(screen.getByText(/no longer available/)).toBeInTheDocument();
+  });
+
+  it('falls back to the legacy resumeId rendering for a pre-migration-0021 packet', async () => {
+    mocks.getOwnSubmissionPacketByApplicationId.mockResolvedValue({
+      ...BASE_PACKET,
+      resumeId: 'legacy-resume-1',
+    });
+    await renderSection();
+    expect(screen.getByText('Résumé legacy-resume-1')).toBeInTheDocument();
+    expect(mocks.getOwnResumeVersion).not.toHaveBeenCalled();
   });
 });
 

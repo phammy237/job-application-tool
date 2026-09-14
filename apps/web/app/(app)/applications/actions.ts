@@ -3,15 +3,23 @@
 import {
   ConsistencyCheckFailedError,
   changeOwnApplicationStatus,
+  clearOwnApplicationWorkingResumeVersion,
   createOwnApplication,
+  createOwnResume,
+  createOwnResumeVersion,
   deleteOwnApplication,
+  getOwnApplication,
+  getOwnProfile,
+  listOwnResumes,
   markOwnApplicationApplied,
   revertApplicationEvent,
+  setOwnApplicationWorkingResumeVersion,
   updateOwnApplication,
 } from '@career-os/database';
 import {
   applicationInputSchema,
   applicationStatusSchema,
+  buildTailoredResumeDisplayName,
   type ConsistencyFinding,
 } from '@career-os/shared';
 import { revalidatePath } from 'next/cache';
@@ -147,4 +155,89 @@ export async function revertEvent(applicationId: string, eventId: string) {
   await revertApplicationEvent(admin, user.id, eventId);
   revalidatePath('/applications');
   revalidatePath(`/applications/${applicationId}`);
+}
+
+/**
+ * "Select resume" / "Change" (docs/IMPLEMENTATION_PLAN.md "Phase 7B" §17) — an ordinary
+ * session-scoped write, not the admin client: cross-user selection is already structurally
+ * impossible via the composite FK (migration 0021), so no elevated privilege is needed here, same
+ * posture as `updateApplicationNotes`.
+ */
+export async function selectWorkingResumeVersion(
+  applicationId: string,
+  formData: FormData,
+) {
+  const user = await requireUser();
+  const supabase = await createClient();
+  const resumeVersionId = formData.get('resumeVersionId') as string;
+  if (!resumeVersionId) return;
+
+  await setOwnApplicationWorkingResumeVersion(
+    supabase,
+    user.id,
+    applicationId,
+    resumeVersionId,
+  );
+  revalidatePath(`/applications/${applicationId}`);
+}
+
+export async function clearWorkingResumeVersion(applicationId: string) {
+  const user = await requireUser();
+  const supabase = await createClient();
+  await clearOwnApplicationWorkingResumeVersion(supabase, user.id, applicationId);
+  revalidatePath(`/applications/${applicationId}`);
+}
+
+export type CreateTailoredResumeResult =
+  { status: 'ok' } | { status: 'error'; message: string };
+
+/**
+ * "Create resume for this application" (docs/IMPLEMENTATION_PLAN.md "Phase 7A" §21/"Phase 7B").
+ * Creates a TAILORED resume named per the naming convention (the owner's real name, never a
+ * hardcoded one — see `buildTailoredResumeDisplayName`'s own doc comment), descended from the
+ * user's MASTER resume when one exists, with one initial METADATA_ONLY version so there is
+ * immediately something real to select as this application's working résumé — never fabricated
+ * content, just a real, dated, named identity. Selecting it as the working résumé happens in the
+ * same action, closing the loop from one click.
+ */
+export async function createTailoredResumeForApplication(
+  applicationId: string,
+): Promise<CreateTailoredResumeResult> {
+  const user = await requireUser();
+  const supabase = await createClient();
+  const admin = createAdminClient();
+
+  const application = await getOwnApplication(supabase, user.id, applicationId);
+  if (!application) {
+    return { status: 'error', message: 'Application not found.' };
+  }
+  const profile = await getOwnProfile(supabase, user.id);
+  const displayName = buildTailoredResumeDisplayName(
+    profile?.fullName ?? null,
+    application.company,
+    application.title,
+  );
+
+  const existingResumes = await listOwnResumes(supabase, user.id);
+  const masterResume = existingResumes.find((r) => r.kind === 'MASTER') ?? null;
+
+  const resume = await createOwnResume(supabase, user.id, {
+    name: displayName,
+    kind: 'TAILORED',
+    parentResumeId: masterResume?.id ?? null,
+  });
+  const version = await createOwnResumeVersion(admin, user.id, {
+    resumeId: resume.id,
+    displayName,
+  });
+  await setOwnApplicationWorkingResumeVersion(
+    supabase,
+    user.id,
+    applicationId,
+    version.id,
+  );
+
+  revalidatePath('/resumes');
+  revalidatePath(`/applications/${applicationId}`);
+  return { status: 'ok' };
 }

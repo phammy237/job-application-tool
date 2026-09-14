@@ -20,6 +20,9 @@ function rowToSubmissionPacket(row: Row): SubmissionPacket {
     applicationId: row.application_id,
     jobSnapshotId: row.job_snapshot_id,
     resumeId: row.resume_id,
+    // Added in migration 0021 (Phase 7B) — same missing-key-on-an-unmigrated-database degrade as
+    // every other Phase 5B+ column this function reads defensively.
+    resumeVersionId: 'resume_version_id' in row ? row.resume_version_id : null,
     requirementMappingRunId: row.requirement_mapping_run_id,
     answersSnapshot: submissionPacketAnswerSchema
       .array()
@@ -92,6 +95,7 @@ export interface MarkApplicationAppliedInput {
   consistencyAcknowledgements: Json;
   jobSnapshotId: string | null;
   resumeId: string | null;
+  resumeVersionId: string | null;
   requirementMappingRunId: string | null;
   contentFingerprint: string;
 }
@@ -132,6 +136,7 @@ export async function markApplicationAppliedAtomic(
       p_resume_id: input.resumeId,
       p_requirement_mapping_run_id: input.requirementMappingRunId,
       p_content_fingerprint: input.contentFingerprint,
+      p_resume_version_id: input.resumeVersionId,
     })
     .single();
   const row = unwrapRow(data, error, 'markApplicationAppliedAtomic');

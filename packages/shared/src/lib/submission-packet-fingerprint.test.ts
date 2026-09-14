@@ -9,6 +9,7 @@ function baseInput(): SubmissionPacketFingerprintInput {
     applicationId: '11111111-1111-4111-8111-111111111111',
     jobSnapshotId: '22222222-2222-4222-8222-222222222222',
     resumeId: null,
+    resumeVersionId: null,
     requirementMappingRunId: null,
     answersSnapshot: [
       {
@@ -89,6 +90,13 @@ describe('computeSubmissionPacketFingerprint', () => {
     const original = await computeSubmissionPacketFingerprint(baseInput());
     const changed = baseInput();
     changed.jobSnapshotId = '99999999-9999-4999-8999-999999999999';
+    expect(await computeSubmissionPacketFingerprint(changed)).not.toBe(original);
+  });
+
+  it('changes when the submitted résumé version changes', async () => {
+    const original = await computeSubmissionPacketFingerprint(baseInput());
+    const changed = baseInput();
+    changed.resumeVersionId = '55555555-5555-4555-8555-555555555555';
     expect(await computeSubmissionPacketFingerprint(changed)).not.toBe(original);
   });
 });

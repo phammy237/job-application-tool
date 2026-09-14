@@ -67,7 +67,7 @@ is not null`).
 | `title`                     | `text not null`                                             | short label, e.g. "Backend Engineer @ Acme"                                                                                                                                        |
 | `normalized_value`          | `text not null`                                             | the reviewed/editable canonical value used by retrieval and generation                                                                                                             |
 | `source_text`               | `text`                                                      | raw excerpt the fact was extracted from                                                                                                                                            |
-| `source_resume_id`          | `uuid references resumes(id) on delete set null`            | nullable — not every fact comes from a résumé                                                                                                                                      |
+| `source_resume_id`          | `uuid references resume_uploads(id) on delete set null`     | nullable — not every fact comes from a résumé (table renamed from `resumes` in migration 0020, Phase 7A — see that table's own entry)                                              |
 | `user_approved`             | `boolean not null default false`                            |                                                                                                                                                                                    |
 | `approved_for_applications` | `boolean not null default false`                            | must also be true, alongside `user_approved`, before `packages/ai` may use this fact                                                                                               |
 | `visible_on_public_profile` | `boolean not null default false`                            |                                                                                                                                                                                    |
@@ -166,7 +166,12 @@ Indexes: `(user_id)`. RLS: standard.
 
 ---
 
-## `resumes`
+## `resume_uploads` (renamed from `resumes` in migration 0020, Phase 7A)
+
+An uploaded résumé *file* awaiting a future Claude extraction pipeline into `candidate_facts`
+(docs/USER_FLOWS.md §1) — has no writer anywhere in this codebase yet; upload UI and extraction
+still land in a later phase. Distinct from `resumes`/`resume_versions` below (Phase 7A's logical
+résumé identity + immutable version history), which is what freed this table's old `resumes` name.
 
 | column              | type                                                        | notes                                                     |
 | ------------------- | ----------------------------------------------------------- | --------------------------------------------------------- |
@@ -180,7 +185,67 @@ Indexes: `(user_id)`. RLS: standard.
 | `extracted_at`      | `timestamptz`                                               |                                                           |
 
 Indexes: `(user_id)`. RLS: standard, and Storage bucket policies mirror the same
-`auth.uid() = user_id` check on the object path prefix.
+`auth.uid() = user_id` check on the object path prefix (when a bucket actually exists — none does
+today; see "Storage" note in Phase 7A's own writeup).
+
+---
+
+## `resumes` (Phase 7A)
+
+Logical résumé *identity* — a name, a kind, and optional lineage back to the user's master résumé.
+Carries no document content of its own; every actual snapshot of a résumé's content lives in
+`resume_versions` below, immutable, one-to-many under this row.
+
+| column             | type                                                        | notes                                                                                                        |
+| ------------------ | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| `id`                | `uuid pk`                                                   |                                                                                                               |
+| `user_id`           | `uuid not null references auth.users(id) on delete cascade` |                                                                                                               |
+| `name`              | `text not null`                                             | user-facing, renameable                                                                                      |
+| `kind`              | `text not null`                                             | `MASTER, TAILORED`                                                                                            |
+| `parent_resume_id`  | `uuid`                                                      | nullable; composite FK to `resumes(user_id, id)`, `on delete set null (parent_resume_id)`; must reference a `MASTER` resume owned by the same user (trigger-enforced) |
+| `created_at`, `updated_at` | `timestamptz`                                        |                                                                                                               |
+
+Unique (partial): `(user_id) where kind = 'MASTER'` — at most one MASTER résumé per user,
+database-enforced. Check: a MASTER résumé cannot itself carry a `parent_resume_id`. Indexes:
+`(user_id)`, `(parent_resume_id)`. RLS: standard four-policy pattern (see "RLS policy pattern"
+below) — an ordinary user-editable identity row, not immutable history.
+
+---
+
+## `resume_versions` (Phase 7A)
+
+Immutable snapshot of one `resumes` row's state — editing a résumé always creates a new version;
+nothing ever updates a version's own row in place (database-enforced, same
+`reject_immutable_row_mutation` trigger job_snapshots/submission_packets use).
+
+| column             | type                                                        | notes                                                                                                 |
+| ------------------ | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| `id`                | `uuid pk`                                                   |                                                                                                        |
+| `user_id`           | `uuid not null references auth.users(id) on delete cascade` |                                                                                                        |
+| `resume_id`         | `uuid not null`                                             | composite FK to `resumes(user_id, id)`, `on delete cascade`                                            |
+| `version_number`    | `int not null`                                              | server-computed only (see `create_resume_version` below), never client-supplied; unique per `resume_id` |
+| `display_name`      | `text not null`                                             | e.g. "My Resume -- Microsoft -- PM Intern" (see résumé naming helper, `packages/shared`)                |
+| `snapshot_format`    | `text not null default 'METADATA_ONLY'`                    | today's only real value — no structured content, LaTeX, or PDF exist yet; widened additively in a later phase as real formats exist |
+| `snapshot_payload`  | `jsonb`                                                     | always null while `snapshot_format = 'METADATA_ONLY'` (database-enforced) — never a fabricated placeholder |
+| `created_at`        | `timestamptz`                                               |                                                                                                        |
+
+Unique: `(resume_id, version_number)`. Indexes: `(user_id)`, `(resume_id)`. RLS: `select`/`delete`
+for `authenticated`, scoped by `user_id` — deliberately **no** ordinary `insert`/`update` policy
+(same deviation as `job_snapshots`/`requirement_mapping_runs`): `version_number` must never be
+client-supplied or racy, so every version is created exclusively through the `create_resume_version`
+RPC below. Deletion *is* ordinary — the real "a submitted version can never be deleted" invariant is
+enforced structurally by `submission_packets.resume_version_id`'s `on delete restrict` FK (Phase
+7B), not by withholding delete.
+
+### `create_resume_version` (Phase 7A)
+
+The one atomic, concurrency-safe path for creating a version — row-locks the parent `resumes` row
+(`select ... for update`, same pattern as `increment_ai_request_usage`/`mark_application_applied`)
+so two concurrent calls for the same résumé serialize instead of racing on
+`max(version_number) + 1`; `unique(resume_id, version_number)` is the second, independent
+guarantee. `security invoker`, granted only to `service_role` — called via the admin client from a
+Next.js server action, with `userId` derived from the verified session, never a client-supplied
+field.
 
 ---
 
@@ -218,7 +283,8 @@ Indexes: `(user_id)`, `(user_id, source_url)`. RLS: standard.
 | `id`                   | `uuid pk`                                                                          |                                                                                                                                                                                                                                                                                                                                                                                      |
 | `user_id`              | `uuid not null references auth.users(id) on delete cascade`                        |                                                                                                                                                                                                                                                                                                                                                                                      |
 | `job_id`               | `uuid references jobs(id) on delete set null`                                      |                                                                                                                                                                                                                                                                                                                                                                                      |
-| `resume_id`            | `uuid references resumes(id) on delete set null`                                   |                                                                                                                                                                                                                                                                                                                                                                                      |
+| `resume_id`            | `uuid references resume_uploads(id) on delete set null`                            | legacy — table renamed from `resumes` in migration 0020; still unused by any code path                                                                                                                                                                                                                                                                                              |
+| `working_resume_version_id` | `uuid`                                                                        | nullable; composite FK to `resume_versions(user_id, id)`, `on delete set null` (Phase 7B) — the currently-selected "planning to submit this" résumé version; ordinarily mutable right up until APPLIED, at which point `mark_application_applied` freezes it into the new packet's `resume_version_id` and this column itself keeps changing freely afterward                    |
 | `company`              | `text not null`                                                                    | denormalized for fast filtering even if `job_id` is later nulled                                                                                                                                                                                                                                                                                                                     |
 | `title`                | `text not null`                                                                    |                                                                                                                                                                                                                                                                                                                                                                                      |
 | `status`               | `text not null default 'SAVED'`                                                    | `SAVED, IN_PROGRESS, APPLIED, APPLICATION_RECEIVED, ASSESSMENT, INTERVIEW, ACTION_REQUIRED, OFFER, REJECTED, WITHDRAWN, UNKNOWN`                                                                                                                                                                                                                                                     |
@@ -455,7 +521,8 @@ job posting, requirement mapping, or AI models change later.
 | `user_id`                      | `uuid not null references auth.users(id) on delete cascade` |                                                                                                                                                                                                                                         |
 | `application_id`               | `uuid not null`                                             | composite FK to `applications(user_id, id)`; `unique (user_id, application_id)` — **at most one packet per application, ever**, enforced structurally                                                                                   |
 | `job_snapshot_id`              | `uuid`                                                      | nullable; composite FK to `job_snapshots(user_id, id)` — null if the application had no linked snapshot at freeze time                                                                                                                  |
-| `resume_id`                    | `uuid`                                                      | nullable; composite FK to `resumes(user_id, id)` — null today for every application, since no code path currently writes `applications.resume_id` (never inferred or defaulted)                                                         |
+| `resume_id`                    | `uuid`                                                      | legacy — composite FK to `resume_uploads(user_id, id)` (renamed from `resumes` in migration 0020); null for every packet, since no code path ever writes `applications.resume_id`. Superseded by `resume_version_id` below for every packet frozen from migration 0021 onward — never rewritten on an existing packet                    |
+| `resume_version_id`            | `uuid`                                                      | composite FK to `resume_versions(user_id, id)`, `on delete restrict` (Phase 7B) — the exact résumé version actually submitted, frozen once at the same moment as everything else. Null when no working version was selected at freeze time, or when this packet predates migration 0021 (see legacy `resume_id` above) — both honest, distinguishable "no version recorded" states, never fabricated. Never changes after creation, even if the working version later changes or the application is reverted and re-applied |
 | `requirement_mapping_run_id`   | `uuid`                                                      | nullable; composite FK to `requirement_mapping_runs(user_id, id)` — a reference into an already-immutable table, never duplicated content; null if no `CURRENT` run existed for the snapshot at freeze time                             |
 | `answers_snapshot`             | `jsonb not null default '[]'`                               | the literal, already-persisted `generated_answers` content for this application at freeze time — see "Truthfulness" below                                                                                                               |
 | `autofill_summary`             | `jsonb`                                                     | copied from `applications.autofill_summary` at freeze time — that column stays ordinarily mutable after `APPLIED` (an extension "Save" overwrites it unconditionally regardless of status), so this is the frozen copy, not a live read |
@@ -501,6 +568,11 @@ Deterministic consistency-firewall gating (Phase 5B.2) happens in TypeScript imm
 this function is called, since the rule engine is explicitly pure/database-free; this function
 trusts its `p_consistency_findings`/`p_consistency_acknowledgements` arguments as already-final,
 validated content to freeze, not something it re-derives itself.
+
+**Phase 7B**: gained one trailing parameter, `p_resume_version_id uuid default null`, frozen into
+`resume_version_id` on a new packet exactly like every other `p_*` content argument — accepted but
+ignored on the idempotent already-`APPLIED` branch, so a repeated call never swaps the frozen
+résumé version even if the application's `working_resume_version_id` has since changed.
 
 ## `application_events`
 
@@ -670,7 +742,8 @@ alum at Microsoft" is valid with nothing else filled in.
 | `updated_at`      | `timestamptz`                                               |                                                                                                                                                                                                                       |
 
 `unique (user_id, id)` lets `contact_tags`/`application_contacts` below use a composite FK back
-to this table, the same pattern `applications`/`resumes` adopted in migration 0013. A partial
+to this table, the same pattern `applications`/`resume_uploads` (named `resumes` at the time)
+adopted in migration 0013. A partial
 index `(user_id, follow_up_at) where follow_up_at is not null` (Phase 6C) backs the "due
 reminders" query — see "Networking follow-up reminders" below.
 

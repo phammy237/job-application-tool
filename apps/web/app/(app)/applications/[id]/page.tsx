@@ -17,6 +17,7 @@ import { InterviewPrepPanel } from '../interview-prep-panel';
 import { MarkAppliedPanel } from '../mark-applied-panel';
 import { PeopleSection } from '../people-section';
 import { RequirementAnalysisPanel } from '../requirement-analysis-panel';
+import { ResumeSection } from '../resume-section';
 import { RevertEventButton } from '../revert-event-button';
 import { SubmissionPacketSection } from '../submission-packet-section';
 
@@ -149,6 +150,15 @@ export default async function ApplicationDetailPage({
           <MarkAppliedPanel applicationId={application.id} />
         ) : null}
       </section>
+
+      <ResumeSection
+        supabase={supabase}
+        userId={user.id}
+        applicationId={application.id}
+        workingResumeVersionId={application.workingResumeVersionId}
+        company={application.company}
+        title={application.title}
+      />
 
       <section className="space-y-2">
         <h2 className="text-muted-foreground text-sm font-medium">Notes</h2>

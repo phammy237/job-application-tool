@@ -18,6 +18,10 @@ export interface SubmissionPacketFingerprintInput {
   applicationId: string;
   jobSnapshotId: string | null;
   resumeId: string | null;
+  /** Added in migration 0021 (Phase 7B) — participates in the fingerprint for the same reason
+   * every other frozen field does: two packets whose only difference is which résumé version was
+   * submitted must not fingerprint identically. */
+  resumeVersionId: string | null;
   requirementMappingRunId: string | null;
   answersSnapshot: SubmissionPacketAnswer[];
   autofillSummary: AutofillSummary | null;
@@ -69,6 +73,7 @@ export async function computeSubmissionPacketFingerprint(
     applicationId: input.applicationId,
     jobSnapshotId: input.jobSnapshotId,
     resumeId: input.resumeId,
+    resumeVersionId: input.resumeVersionId,
     requirementMappingRunId: input.requirementMappingRunId,
     // Answer order is preserved, not sorted — it reflects generation order, itself meaningful
     // provenance, same posture as job_snapshots' qualification arrays.

@@ -25,17 +25,43 @@ also `approvedForApplications`).
 
 ## 3. Résumé upload and fact extraction
 
-1. User uploads a résumé file on `/resumes` (stored in Supabase Storage, private bucket,
-   scoped to `user_id`).
-2. A `resumes` row is created; a server job parses the file and calls Claude to propose
+**Not yet built** — no upload UI, no Storage bucket, no extraction job exists in this codebase
+today (`resume_uploads`, migration 0020's rename of the original `resumes` stub, still has no
+writer anywhere). When built, its upload affordance will most likely live on `/resumes` (§3A
+below) as one action alongside that page's actual current purpose — the résumé library — not as
+`/resumes`'s sole function the way this flow originally assumed.
+
+1. User uploads a résumé file (stored in Supabase Storage, private bucket, scoped to `user_id`).
+2. A `resume_uploads` row is created; a server job parses the file and calls Claude to propose
    structured `candidate_facts` rows referencing `sourceResumeId` and `sourceText`.
 3. Every proposed fact is created with `userApproved = false`, `approvedForApplications =
 false`, `visibleOnPublicProfile = false`. Nothing extracted is usable until step 4.
 4. User reviews proposed facts on `/profile`: edit `normalizedValue`, approve, reject, or
    adjust `tags` and `visibleOnPublicProfile`. Rejected facts are kept (soft) for audit but
    never surfaced to AI or autofill.
-5. User may re-run extraction against a newer résumé version without deleting the profile
-   history.
+5. User may re-run extraction against a newer résumé file without deleting the profile history.
+
+## 3A. Résumé library and application attachment (Phase 7A/7B)
+
+1. User visits `/resumes` — their résumé library: a master résumé (at most one, created here if
+   none exists yet) and any tailored résumés, each with a permanent version history. Editing a
+   résumé never changes an existing version; it creates a new one (§8 below covers what deleting
+   one does and does not remove).
+2. From `/resumes/[id]`, the user renames the résumé or creates a new version (today, a version's
+   content is metadata-only — a name, a number, a timestamp — since no structured résumé content,
+   LaTeX, or PDF pipeline exists yet; see §3 above for what widens this later).
+3. On an application's detail page, the user selects which résumé version they are currently
+   planning to submit ("working résumé") — changeable at any time before applying, and freely
+   afterward too, with no effect on history (step 5). "Create resume for this application" creates
+   a new tailored résumé named `"{Owner}'s Resume -- {Company} -- {Role}"` (never a hardcoded
+   name — every user's own name, from their profile, or a generic "My Resume" fallback), with one
+   initial version, and selects it in the same action.
+4. Marking the application **Applied** (§5's step 8) freezes whatever working résumé version was
+   selected at that instant into the immutable submission packet — or freezes nothing (null) if no
+   version was selected; résumé attachment is optional, never inferred.
+5. The historical submission viewer (§6) always shows the exact submitted version, even after the
+   application's working résumé selection has since moved on to something else — that divergence
+   is expected, normal history, not an error state.
 
 ## 4. Job analysis via the extension
 
@@ -261,9 +287,15 @@ Each of the following is a first-class, discoverable action (not "contact suppor
    removed, but the linked contacts themselves are not (Phase 6A); any `contact_interactions`
    row that referenced this application keeps existing with its `application_id` cleared, not
    deleted (Phase 6B).
-2. **Delete a résumé** — removes the file from Storage and the `resumes` row; facts sourced
-   from it are flagged (not silently deleted) so the user can decide whether to keep them as
-   manually-verified.
+2. **Delete an uploaded résumé file** (once §3 below is actually built) — removes the file from
+   Storage and the `resume_uploads` row; facts sourced from it are flagged (not silently deleted)
+   so the user can decide whether to keep them as manually-verified.
+2A. **Delete a résumé / résumé version** (Phase 7A) — a logical `resumes` row may be deleted along
+   with all of its `resume_versions`, unless any version was ever frozen into a submission packet
+   (§10's immutable submission record) — that delete is structurally refused, not just
+   discouraged, and the UI surfaces the reason plainly. A single non-submitted version may be
+   deleted on its own the same way. Deleting an application does not delete its working résumé
+   version — versions belong to the user's résumé library, not to one application.
 3. **Delete generated content** — removes a `generated_answers` row.
 4. **Disconnect Gmail** — revokes the OAuth token, deletes the `email_connections` row and
    all associated `email_signals`.

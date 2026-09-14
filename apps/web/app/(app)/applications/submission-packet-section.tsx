@@ -1,6 +1,7 @@
 import {
   countOwnRequirementMappingsForRun,
   getOwnRequirementMappingRunById,
+  getOwnResumeVersion,
   getOwnSubmissionPacketByApplicationId,
   type CareerOsSupabaseClient,
 } from '@career-os/database';
@@ -41,6 +42,12 @@ export async function SubmissionPacketSection({
     : null;
   const requirementMappingCount = requirementMappingRun
     ? await countOwnRequirementMappingsForRun(supabase, userId, requirementMappingRun.id)
+    : null;
+  // Phase 7B — the exact submitted résumé version, when this packet has one (every packet frozen
+  // from migration 0021 onward). A legacy packet (pre-0021) never has this, and falls back to its
+  // old resumeId rendering below — never backfilled or fabricated either way.
+  const submittedResumeVersion = packet?.resumeVersionId
+    ? await getOwnResumeVersion(supabase, userId, packet.resumeVersionId)
     : null;
 
   return (
@@ -169,11 +176,23 @@ export async function SubmissionPacketSection({
 
           <div>
             <h3 className="text-xs font-semibold uppercase tracking-wide">Résumé</h3>
-            <p className="text-muted-foreground mt-1 text-xs">
-              {packet.resumeId
-                ? `Résumé ${packet.resumeId}`
-                : 'The submitted résumé version is not recorded for this application.'}
-            </p>
+            {packet.resumeVersionId ? (
+              <p className="text-muted-foreground mt-1 text-xs">
+                {submittedResumeVersion
+                  ? `Version ${submittedResumeVersion.versionNumber} — ${submittedResumeVersion.displayName}`
+                  : 'This application referenced a résumé version that is no longer available.'}{' '}
+                — locked to this submission; the working résumé selected above may have
+                since changed.
+              </p>
+            ) : packet.resumeId ? (
+              <p className="text-muted-foreground mt-1 text-xs">
+                Résumé {packet.resumeId}
+              </p>
+            ) : (
+              <p className="text-muted-foreground mt-1 text-xs">
+                Resume not recorded for this submission.
+              </p>
+            )}
           </div>
         </div>
       )}

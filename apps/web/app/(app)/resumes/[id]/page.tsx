@@ -1,4 +1,9 @@
-import { getOwnResume, listOwnResumeVersionsForResume } from '@career-os/database';
+import {
+  getOwnResume,
+  listOwnApplicationsWithWorkingResumeVersion,
+  listOwnResumeVersionsForResume,
+  listOwnSubmittedApplicationsForResumeVersions,
+} from '@career-os/database';
 import { Button, Input, Label } from '@career-os/ui';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
@@ -26,6 +31,11 @@ export default async function ResumeDetailPage({
     listOwnResumeVersionsForResume(supabase, user.id, id),
     resume.parentResumeId ? getOwnResume(supabase, user.id, resume.parentResumeId) : null,
   ]);
+  const versionIds = versions.map((v) => v.id);
+  const [workingUsage, submittedUsage] = await Promise.all([
+    listOwnApplicationsWithWorkingResumeVersion(supabase, user.id, versionIds),
+    listOwnSubmittedApplicationsForResumeVersions(supabase, user.id, versionIds),
+  ]);
 
   return (
     <div className="max-w-2xl space-y-8">
@@ -49,7 +59,10 @@ export default async function ResumeDetailPage({
 
       <section className="space-y-2">
         <h2 className="text-muted-foreground text-sm font-medium">Rename</h2>
-        <form action={renameResume.bind(null, resume.id)} className="flex items-end gap-3">
+        <form
+          action={renameResume.bind(null, resume.id)}
+          className="flex items-end gap-3"
+        >
           <div className="space-y-1.5">
             <Label htmlFor="rename-name" className="sr-only">
               Name
@@ -71,25 +84,55 @@ export default async function ResumeDetailPage({
           <p className="text-muted-foreground text-sm">No versions yet.</p>
         ) : (
           <ul className="space-y-3">
-            {versions.map((version) => (
-              <li key={version.id} className="border-border rounded-lg border p-4 text-sm">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="font-medium">
-                      Version {version.versionNumber} — {version.displayName}
-                    </p>
-                    <p className="text-muted-foreground mt-0.5 text-xs">
-                      Created {new Date(version.createdAt).toLocaleString()}
-                    </p>
+            {versions.map((version) => {
+              const working = workingUsage.get(version.id) ?? [];
+              const submitted = submittedUsage.get(version.id) ?? [];
+              return (
+                <li
+                  key={version.id}
+                  className="border-border rounded-lg border p-4 text-sm"
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="font-medium">
+                        Version {version.versionNumber} — {version.displayName}
+                      </p>
+                      <p className="text-muted-foreground mt-0.5 text-xs">
+                        Created {new Date(version.createdAt).toLocaleString()}
+                      </p>
+                    </div>
+                    <DeleteVersionButton
+                      resumeId={resume.id}
+                      versionId={version.id}
+                      label={`version ${version.versionNumber}`}
+                    />
                   </div>
-                  <DeleteVersionButton
-                    resumeId={resume.id}
-                    versionId={version.id}
-                    label={`version ${version.versionNumber}`}
-                  />
-                </div>
-              </li>
-            ))}
+
+                  {submitted.length > 0 ? (
+                    <p className="text-muted-foreground mt-2 text-xs">
+                      Submitted for {submitted.length} application
+                      {submitted.length === 1 ? '' : 's'} — locked, cannot be deleted.
+                    </p>
+                  ) : null}
+                  {working.length > 0 ? (
+                    <p className="text-muted-foreground mt-1 text-xs">
+                      Currently the working résumé for:{' '}
+                      {working.map((app, i) => (
+                        <span key={app.id}>
+                          {i > 0 ? ', ' : ''}
+                          <Link
+                            href={`/applications/${app.id}`}
+                            className="hover:underline"
+                          >
+                            {app.company} — {app.title}
+                          </Link>
+                        </span>
+                      ))}
+                    </p>
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
         )}
 
@@ -99,7 +142,12 @@ export default async function ResumeDetailPage({
         >
           <div className="space-y-1.5">
             <Label htmlFor="version-name">New version label</Label>
-            <Input id="version-name" name="displayName" defaultValue={resume.name} required />
+            <Input
+              id="version-name"
+              name="displayName"
+              defaultValue={resume.name}
+              required
+            />
           </div>
           <Button type="submit" size="sm">
             Create new version

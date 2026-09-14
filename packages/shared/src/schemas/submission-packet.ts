@@ -48,10 +48,23 @@ export const submissionPacketSchema = z.object({
   /** Null when the application had no linked job snapshot at freeze time (e.g. a manually
    * dashboard-created application with no job). */
   jobSnapshotId: uuidSchema.nullable(),
-  /** Null whenever `applications.resume_id` was null at freeze time — which is every application
-   * today, since no code path currently writes that column (docs/IMPLEMENTATION_PLAN.md Phase
-   * 5B.0/5B.1E). Never inferred or defaulted to a "current"/"primary" résumé. */
+  /** Legacy — null whenever `applications.resume_id` was null at freeze time, which is every
+   * application (docs/IMPLEMENTATION_PLAN.md Phase 5B.0/5B.1E: that column has no writer
+   * anywhere in this codebase). Never inferred or defaulted. Superseded by `resumeVersionId`
+   * below as of migration 0021 (Phase 7B) for every *new* packet; kept, and never rewritten, on
+   * every packet frozen before that migration — the historical viewer must tell these two states
+   * (`resumeVersionId` set / legacy `resumeId` set / neither) apart, never collapse them. */
   resumeId: uuidSchema.nullable(),
+  /** Added in migration 0021 (Phase 7B). The exact résumé version that was actually submitted —
+   * frozen once, at the same moment as everything else in this packet, from whatever the
+   * application's `workingResumeVersionId` pointed to at that instant. Null when the application
+   * had no working résumé version selected at freeze time (résumé attachment is optional; never
+   * defaulted to a "current"/"primary" résumé), or when this packet predates migration 0021 (see
+   * the legacy `resumeId` doc comment above) — both are honest, distinguishable "no version
+   * recorded" states, never fabricated. Never changes after the packet is created, even if the
+   * application's working résumé version later changes or the application is reverted and
+   * re-applied. */
+  resumeVersionId: uuidSchema.nullable(),
   /** Null when no CURRENT requirement_mapping_run existed for the linked snapshot at freeze
    * time — a reference into an already-immutable table, never duplicated content. */
   requirementMappingRunId: uuidSchema.nullable(),

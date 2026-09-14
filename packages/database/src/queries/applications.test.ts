@@ -37,9 +37,11 @@ vi.mock('./consistency', async (importOriginal) => {
 
 const {
   changeOwnApplicationStatus,
+  clearOwnApplicationWorkingResumeVersion,
   createOwnApplication,
   getOwnApplicationByJobId,
   markOwnApplicationApplied,
+  setOwnApplicationWorkingResumeVersion,
   upsertApplicationFromExtension,
   upsertApplicationWithSnapshot,
 } = await import('./applications');
@@ -53,6 +55,7 @@ const BASE_ROW = {
   user_id: USER_ID,
   job_id: JOB_ID,
   resume_id: null,
+  working_resume_version_id: null,
   company: 'Acme',
   title: 'Backend Engineer',
   status: 'IN_PROGRESS',
@@ -507,6 +510,63 @@ describe('markOwnApplicationApplied', () => {
     expect(from).toHaveBeenCalledTimes(2);
   });
 
+  it("Phase 7B: freezes the application's currently-selected working résumé version into a new packet", async () => {
+    const VERSION_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+    const { supabase } = mockApplicationReads([
+      {
+        ...BASE_ROW,
+        status: 'IN_PROGRESS',
+        applied_at: null,
+        job_snapshot_id: null,
+        working_resume_version_id: VERSION_ID,
+      },
+      { ...BASE_ROW, status: 'APPLIED', applied_at: '2026-06-01T00:00:00.000Z' },
+    ]);
+    mocks.listOwnGeneratedAnswersForApplication.mockResolvedValue([]);
+    mocks.markApplicationAppliedAtomic.mockResolvedValue({
+      applicationId: APPLICATION_ID,
+      status: 'APPLIED',
+      appliedAt: '2026-06-01T00:00:00.000Z',
+      previousStatus: 'IN_PROGRESS',
+      submissionPacketId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+      packetCreated: true,
+    });
+
+    await markOwnApplicationApplied(supabase, USER_ID, APPLICATION_ID);
+
+    expect(mocks.markApplicationAppliedAtomic).toHaveBeenCalledWith(
+      supabase,
+      USER_ID,
+      APPLICATION_ID,
+      expect.objectContaining({ resumeVersionId: VERSION_ID }),
+    );
+  });
+
+  it('Phase 7B: freezes null when no working résumé version is selected — never inferred or defaulted', async () => {
+    const { supabase } = mockApplicationReads([
+      { ...BASE_ROW, status: 'IN_PROGRESS', applied_at: null, job_snapshot_id: null },
+      { ...BASE_ROW, status: 'APPLIED', applied_at: '2026-06-01T00:00:00.000Z' },
+    ]);
+    mocks.listOwnGeneratedAnswersForApplication.mockResolvedValue([]);
+    mocks.markApplicationAppliedAtomic.mockResolvedValue({
+      applicationId: APPLICATION_ID,
+      status: 'APPLIED',
+      appliedAt: '2026-06-01T00:00:00.000Z',
+      previousStatus: 'IN_PROGRESS',
+      submissionPacketId: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+      packetCreated: true,
+    });
+
+    await markOwnApplicationApplied(supabase, USER_ID, APPLICATION_ID);
+
+    expect(mocks.markApplicationAppliedAtomic).toHaveBeenCalledWith(
+      supabase,
+      USER_ID,
+      APPLICATION_ID,
+      expect.objectContaining({ resumeVersionId: null }),
+    );
+  });
+
   it('is idempotent when already APPLIED: never assembles packet content, calls the RPC with an empty payload, and returns current state without a second read', async () => {
     const { supabase, from } = mockApplicationReads([
       { ...BASE_ROW, status: 'APPLIED', applied_at: '2026-01-01T00:00:00.000Z' },
@@ -532,6 +592,7 @@ describe('markOwnApplicationApplied', () => {
         answersSnapshot: [],
         jobSnapshotId: null,
         resumeId: null,
+        resumeVersionId: null,
       }),
     );
     expect(result.appliedAt).toBe('2026-01-01T00:00:00.000Z');
@@ -794,5 +855,65 @@ describe('createOwnApplication', () => {
     expect(from).not.toHaveBeenCalled();
     expect(appChain.insert).not.toHaveBeenCalled();
     expect(eventChain.insert).not.toHaveBeenCalled();
+  });
+});
+
+describe('setOwnApplicationWorkingResumeVersion / clearOwnApplicationWorkingResumeVersion', () => {
+  const VERSION_ID = '12121212-1212-4212-8212-121212121212';
+
+  it('sets working_resume_version_id, scoped by both id and user_id', async () => {
+    const { supabase, appChain } = mockApplicationsAndEvents({
+      currentRow: { ...BASE_ROW, working_resume_version_id: VERSION_ID },
+    });
+
+    const result = await setOwnApplicationWorkingResumeVersion(
+      supabase,
+      USER_ID,
+      APPLICATION_ID,
+      VERSION_ID,
+    );
+
+    expect(appChain.update).toHaveBeenCalledWith({
+      working_resume_version_id: VERSION_ID,
+    });
+    expect(appChain.eq).toHaveBeenCalledWith('id', APPLICATION_ID);
+    expect(appChain.eq).toHaveBeenCalledWith('user_id', USER_ID);
+    expect(result.workingResumeVersionId).toBe(VERSION_ID);
+  });
+
+  it('surfaces a cross-user/non-existent version as a friendly error, not a raw FK message', async () => {
+    const appChain: Record<string, unknown> = {};
+    appChain.update = vi.fn(() => appChain);
+    appChain.eq = vi.fn(() => appChain);
+    appChain.select = vi.fn(() => appChain);
+    appChain.single = vi.fn().mockResolvedValue({
+      data: null,
+      error: { code: '23503', message: 'fk violation' },
+    });
+    const supabase = { from: vi.fn(() => appChain) } as unknown as CareerOsSupabaseClient;
+
+    await expect(
+      setOwnApplicationWorkingResumeVersion(
+        supabase,
+        USER_ID,
+        APPLICATION_ID,
+        VERSION_ID,
+      ),
+    ).rejects.toThrow(/not owned by this user/);
+  });
+
+  it('clears working_resume_version_id back to null', async () => {
+    const { supabase, appChain } = mockApplicationsAndEvents({
+      currentRow: { ...BASE_ROW, working_resume_version_id: null },
+    });
+
+    const result = await clearOwnApplicationWorkingResumeVersion(
+      supabase,
+      USER_ID,
+      APPLICATION_ID,
+    );
+
+    expect(appChain.update).toHaveBeenCalledWith({ working_resume_version_id: null });
+    expect(result.workingResumeVersionId).toBeNull();
   });
 });

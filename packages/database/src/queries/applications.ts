@@ -91,6 +91,10 @@ function rowToApplication(row: Row): Application {
     unresolvedFields: parseUnresolvedFields(row.unresolved_fields),
     jobSnapshotId: 'job_snapshot_id' in row ? row.job_snapshot_id : null,
     submissionPacketId: 'submission_packet_id' in row ? row.submission_packet_id : null,
+    // Added in migration 0021 (Phase 7B) — same missing-key-on-an-unmigrated-database degrade as
+    // jobSnapshotId/submissionPacketId above.
+    workingResumeVersionId:
+      'working_resume_version_id' in row ? row.working_resume_version_id : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });
@@ -210,6 +214,72 @@ export async function updateOwnApplication(
     .select('*')
     .single();
   return rowToApplication(unwrapRow(data, error, 'updateOwnApplication'));
+}
+
+/**
+ * Sets (or changes) an application's currently-selected working résumé version
+ * (docs/IMPLEMENTATION_PLAN.md "Phase 7B" §12/§17/§35) — a dedicated function, not folded into
+ * `updateOwnApplication`, since this is its own explicit action ("Select resume"/"Change"), same
+ * posture as `setOwnContactFollowUp`. Cross-user selection is structurally impossible regardless
+ * of this function's own `userId` scoping: `applications_working_resume_version_id_fkey`
+ * (migration 0021) is a composite `(user_id, working_resume_version_id)` FK against
+ * `resume_versions(user_id, id)`, so a `resumeVersionId` belonging to another user simply cannot
+ * satisfy it — an attempt surfaces as a Postgres foreign-key-violation error, not a silent
+ * cross-user write.
+ */
+export async function setOwnApplicationWorkingResumeVersion(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+  id: string,
+  resumeVersionId: string,
+): Promise<Application> {
+  const { data, error } = await supabase
+    .from('applications')
+    .update({ working_resume_version_id: resumeVersionId })
+    .eq('id', id)
+    .eq('user_id', userId)
+    .select('*')
+    .single();
+  if (error) {
+    if (error.code === '23503') {
+      throw new DatabaseError(
+        'setOwnApplicationWorkingResumeVersion: that resume version does not exist or is not ' +
+          'owned by this user.',
+        error,
+      );
+    }
+    throw new DatabaseError(
+      `setOwnApplicationWorkingResumeVersion: ${error.message}`,
+      error,
+    );
+  }
+  if (!data) {
+    throw new DatabaseError(
+      'setOwnApplicationWorkingResumeVersion: expected a row but got null',
+    );
+  }
+  return rowToApplication(data);
+}
+
+/** "Clear working resume" — sets `workingResumeVersionId` back to null. Never touches
+ * `submission_packets`; an already-submitted application's frozen `resumeVersionId` is completely
+ * unaffected by later clearing or changing the working selection (docs/IMPLEMENTATION_PLAN.md
+ * "Phase 7B" §17/§25). */
+export async function clearOwnApplicationWorkingResumeVersion(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+  id: string,
+): Promise<Application> {
+  const { data, error } = await supabase
+    .from('applications')
+    .update({ working_resume_version_id: null })
+    .eq('id', id)
+    .eq('user_id', userId)
+    .select('*')
+    .single();
+  return rowToApplication(
+    unwrapRow(data, error, 'clearOwnApplicationWorkingResumeVersion'),
+  );
 }
 
 /**
@@ -533,6 +603,7 @@ export async function markOwnApplicationApplied(
       consistencyAcknowledgements: [] as unknown as Json,
       jobSnapshotId: null,
       resumeId: null,
+      resumeVersionId: null,
       requirementMappingRunId: null,
       contentFingerprint: 'v1:unused-already-applied',
     });
@@ -578,6 +649,7 @@ export async function markOwnApplicationApplied(
     applicationId: id,
     jobSnapshotId: current.jobSnapshotId,
     resumeId: current.resumeId,
+    resumeVersionId: current.workingResumeVersionId,
     requirementMappingRunId: requirementMappingRun?.id ?? null,
     answersSnapshot,
     autofillSummary: current.autofillSummary,
@@ -594,6 +666,10 @@ export async function markOwnApplicationApplied(
     consistencyAcknowledgements: consistencyAcknowledgements as unknown as Json,
     jobSnapshotId: current.jobSnapshotId,
     resumeId: current.resumeId,
+    // Whatever the application's working résumé version pointed to at this exact instant — see
+    // mark_application_applied's own doc comment (migration 0021) for why a repeated call never
+    // re-freezes this from a *later* working-version change.
+    resumeVersionId: current.workingResumeVersionId,
     requirementMappingRunId: requirementMappingRun?.id ?? null,
     contentFingerprint,
   });

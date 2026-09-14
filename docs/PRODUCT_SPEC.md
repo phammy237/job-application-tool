@@ -127,6 +127,14 @@ research, projects, skills, languages, certifications, awards, work authorizatio
 preferences, relocation preferences, links, and résumé versions. Full fact schema in
 `docs/DATA_MODEL.md` §"candidate_facts".
 
+A separate résumé library (`/resumes`, Phase 7A) tracks the user's master résumé and any tailored
+résumés as permanent version history — each edit creates a new version rather than changing one in
+place. An application may select a "working" résumé version to plan around, and — the one time an
+application is marked Applied — that version is frozen into the application's own immutable
+submission record (§5), independent of anything selected later. No résumé *content* (structured
+sections, LaTeX, a compiled PDF) exists yet; only identity and version history do — see
+`docs/DATA_MODEL.md` §"resumes"/§"resume_versions".
+
 ## 7. Application tracker scope
 
 Statuses: `SAVED`, `IN_PROGRESS`, `APPLIED`, `APPLICATION_RECEIVED`, `ASSESSMENT`,

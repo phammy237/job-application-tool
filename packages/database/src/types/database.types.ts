@@ -311,6 +311,7 @@ export interface Database {
           unresolved_fields: Json | null;
           job_snapshot_id: string | null;
           submission_packet_id: string | null;
+          working_resume_version_id: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -595,6 +596,7 @@ export interface Database {
           application_id: string;
           job_snapshot_id: string | null;
           resume_id: string | null;
+          resume_version_id: string | null;
           requirement_mapping_run_id: string | null;
           answers_snapshot: Json;
           autofill_summary: Json | null;
@@ -819,6 +821,8 @@ export interface Database {
           p_resume_id: string | null;
           p_requirement_mapping_run_id: string | null;
           p_content_fingerprint: string;
+          // Appended in migration 0021 (Phase 7B) with a SQL-side default of null.
+          p_resume_version_id?: string | null;
         };
         Returns: {
           application_id: string;

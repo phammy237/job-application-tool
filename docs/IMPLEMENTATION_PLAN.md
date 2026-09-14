@@ -65,6 +65,22 @@ phase depends on a later phase's output.
       `/network/[id]`. Zero AI, zero persisted next-action state, no background notifications —
       Gmail-derived reminders and any heuristic networking action still deferred to a later
       Phase 6 slice (6D+).
+- [x] Phase 7A — Master résumé + immutable résumé versioning: logical résumé identity
+      (`resumes`: MASTER/TAILORED, one MASTER per user, MASTER-only lineage), immutable
+      `resume_versions` snapshots (server-computed version numbers via the
+      service-role-only `create_resume_version` RPC, `METADATA_ONLY` content today — no
+      structured résumé content, LaTeX, or PDF exist yet), and `/resumes` +
+      `/resumes/[id]` library UI (migration 0020, pgTAP-verified live against the linked
+      Supabase project — see "Phase 7A" below). Not to be confused with the original
+      roadmap's unrelated "Phase 7 — Multi-user beta hardening" entry below, which remains
+      unstarted.
+- [x] Phase 7B — Application ↔ résumé attachment + submitted-résumé freeze:
+      `applications.working_resume_version_id` (an ordinarily-mutable "which version am I
+      planning to submit" pointer) and `submission_packets.resume_version_id` (frozen once,
+      at the same moment as everything else in a packet, by the extended
+      `mark_application_applied`), plus the application detail page's Resume section and the
+      historical submission viewer's updated résumé rendering (migration 0021,
+      pgTAP-verified live — see "Phase 7B" below).
 - [ ] Phase 7 — Multi-user beta hardening, privacy controls, testing, deployment
 - [ ] Phase 8 — Optional mypham.space integration, public onboarding, future sharing
 
@@ -3528,3 +3544,179 @@ explicitly — yes. Prepare for an interview explicitly — yes. Review immutabl
 — yes (explicit buttons, "AI-generated" labels, no automatic calls anywhere, verified §14). Remain
 in control of every outbound action — yes (no send capability exists anywhere; every AI output is
 copy/edit-only). No materially "no" answer was found; Phase 5C is product-complete for v1.
+
+## Phase 7A — Master résumé + immutable résumé versioning
+
+Not the original roadmap's "Phase 7 — Multi-user beta hardening" entry above (still unstarted,
+unrelated content) — this is a new initiative, following the same "Phase 5A/6A got its own
+top-level as-built section" precedent as everything above.
+
+### Pre-migration inspection
+
+Repo-wide inspection (required before any schema design, per this phase's own instructions) found:
+
+- `public.resumes` (migration 0001) is a table-only stub for a future "upload a résumé file, Claude
+  extracts candidate facts" pipeline (docs/USER_FLOWS.md §1) — `file_path`, `file_name`, `label`,
+  `is_primary`, `extraction_status`. It has **no writer anywhere in this codebase**: no route, no
+  server action, no insert call site outside pgTAP fixtures inside rolled-back transactions.
+- `applications.resume_id` (plain, non-composite FK to `resumes(id)`) and
+  `submission_packets.resume_id` (composite FK to `resumes(user_id, id)`, migration 0013) both
+  point at it and are both always null in practice — confirmed already in the Phase 5B.0/5B.1
+  inspections, re-confirmed here.
+- `candidate_facts.source_resume_id` also points at it (provenance for extracted facts), also
+  unused today.
+
+This is case **C** from the phase brief's A/B/C/D taxonomy — nullable and unused — not case A
+(already an immutable version) or B (a live mutable "current résumé" concept the model could
+repurpose). The uploaded-file/extraction concept is real and worth keeping, but is a *different*
+concept from "logical résumé identity with tailored version history," so it was not repurposed —
+see "The rename decision" below.
+
+### The rename decision
+
+`resumes` needed to become the name for the new logical-identity model (`name`/`kind`/lineage),
+but the existing table already had that name for an unrelated concept. Since it has zero rows in
+any real environment and a rename is a lossless, fully-automatic-FK-preserving operation in
+PostgreSQL, migration 0020 renames it to `resume_uploads` (and every dependent
+constraint/index/trigger/policy name, for clarity) rather than either conflating the two concepts
+or leaving a confusingly-named second table. `applications.resume_id`,
+`candidate_facts.source_resume_id`, and `submission_packets.resume_id` keep their exact historical
+(always-null) meaning, now pointing at `resume_uploads` — no historical value is reinterpreted.
+
+### Schema (migration 0020)
+
+- **`resumes`** — logical identity: `id`, `user_id`, `name`, `kind` (`MASTER`/`TAILORED`),
+  `parent_resume_id` (composite FK to itself, column-scoped `on delete set null`). A partial
+  unique index (`user_id where kind = 'MASTER'`) enforces at most one MASTER per user — a single
+  active MASTER is enough today; nothing in the current profile/candidate-facts model is
+  per-discipline, so multiple simultaneous masters would just be indistinguishable duplicate
+  starting points. A `resumes_master_has_no_parent` check and an
+  `enforce_resume_parent_is_master` trigger keep lineage meaningful: a TAILORED resume's parent,
+  when set, must be a MASTER owned by the same user — never another TAILORED resume, never
+  cross-user.
+- **`resume_versions`** — immutable snapshots (`reject_immutable_row_mutation`, the same trigger
+  function 0010/0013 already defined). What a version snapshots *in this phase*: this repo has no
+  structured résumé content, no LaTeX, and no wired uploaded-file/extraction pipeline yet, so
+  fabricating a content shape just to fill a column would be dishonest. `snapshot_format` is a
+  real, narrow enum with exactly one current member, `METADATA_ONLY` — a version's identity
+  (`version_number`, `display_name`, `created_at`) is real and permanent; its document content
+  does not exist yet. `snapshot_payload` stays null for every `METADATA_ONLY` row (database-
+  enforced). This is still enough for Phase 7B's attachment/freeze semantics, which only need a
+  version's *identity* to answer "which version was submitted" — never its content. A later phase
+  (7C+) widens this same enum additively as real content formats actually exist.
+- **`create_resume_version`** RPC — the one atomic, concurrency-safe version-creation path
+  (`select ... for update` row-locks the parent `resumes` row, same pattern as
+  `increment_ai_request_usage`/`mark_application_applied`; `unique(resume_id, version_number)` is
+  the second, independent guarantee). `version_number` is always server-computed, never
+  client-supplied. `security invoker`, granted only to `service_role` — `resume_versions` has no
+  ordinary `authenticated` INSERT policy at all (same deviation as `job_snapshots`/
+  `requirement_mapping_runs`), so every version is created through this RPC via the admin client
+  from a Next.js server action, with `userId` derived from the verified session.
+- **Deletion**: `resume_versions` *does* get an ordinary `authenticated` DELETE policy (unlike its
+  withheld INSERT) — the actual invariant ("a version that was ever submitted must never be
+  deletable") is enforced structurally by `submission_packets.resume_version_id`'s
+  `on delete restrict` FK (migration 0021), not by withholding the UI entirely. Deleting a
+  `resumes` row cascades to its own versions, which is itself blocked (the whole delete fails) if
+  any of them was ever submitted — a resume with submitted history anywhere cannot be deleted.
+  Deleting a MASTER resume `SET NULL`s its children's `parent_resume_id` (column-scoped, never
+  `user_id`).
+
+### Naming helper — a deliberate deviation from the literal brief
+
+The phase brief's naming convention example was `"My Pham's Resume -- {Company} -- {Role}"` — "My
+Pham" is this deployment's one real user's actual name. Baking a literal person's name into a
+shared naming template would violate CLAUDE.md's multi-tenancy rule ("Never hardcode a user...
+every feature is built as if a hundred strangers already use it"): every other Career OS user's
+tailored résumés would end up literally labeled "My Pham's Resume -- ...". `buildTailoredResumeDisplayName`
+(`packages/shared/src/lib/resume-naming.ts`) instead derives the owner's name from their own
+`profiles.full_name`, falling back to the generic, non-identifying "My Resume" when unset — same
+`"{owner} -- {Company} -- {Role}"` shape, honest for every user. `sanitizeResumeFileNameSegment`/
+`buildResumeFileName` implement the filename sanitizer (strips `\ / : * ? " < > |` and control
+characters only, preserves ordinary punctuation) for future PDF-generation phases to reuse.
+
+### `/resumes` + `/resumes/[id]` UI
+
+Minimal library UI, not a Resume Studio: list logical résumés (MASTER separated from TAILORED,
+version counts via one batched query), create a MASTER if none exists, create a TAILORED résumé
+manually, open a résumé's detail page (rename, version history with per-version "used as working
+résumé by" / "submitted, locked" indicators via two batched queries, create a new version, delete a
+version or the whole résumé with friendly FK-violation error messages). No LaTeX editor, no PDF
+preview, no AI tailoring — all explicitly deferred to 7C+.
+
+### Tests (Phase 7A)
+
+`packages/shared`: +9 (`resume-naming.test.ts`, including an explicit "never bakes in a literal
+hardcoded person name" assertion). `packages/database`: +8 (`resumes.test.ts`), +9
+(`resume-versions.test.ts`). pgTAP: `0024_resumes.test.sql` (12 assertions),
+`0025_resume_versions.test.sql` (10 assertions) — both run live against the linked Supabase
+project, both pass. `0002_resumes.test.sql` renamed to `0002_resume_uploads.test.sql` and
+retargeted at the renamed table (5/5, still passing).
+
+## Phase 7B — Application ↔ résumé attachment + submitted-résumé freeze
+
+### Working vs. submitted: why two direct columns, not a join table
+
+An `application_resumes` join table (purpose `WORKING`/`SUBMITTED`) was considered and rejected: at
+most one WORKING version and one SUBMITTED version can ever be true for a given application at a
+given time, so a join table would only ever hold 0-2 rows per application — duplicating exactly the
+two facts two direct columns already represent, with none of a join table's actual benefit
+(multiple concurrent rows of the same kind). SUBMITTED in particular must never be a second,
+independently-mutable record of history: `submission_packets` already *is* the canonical historical
+submission record (Phase 5B.1); freezing the submitted résumé onto that existing immutable row
+keeps "what did I submit" answerable from exactly one place.
+
+- **`applications.working_resume_version_id`** — ordinarily mutable, exactly one per application,
+  same shape/posture as `job_snapshot_id`/`submission_packet_id` (0010/0013). Composite FK to
+  `resume_versions(user_id, id)`, column-scoped `on delete set null`. Cross-user selection is
+  structurally impossible (the composite FK requires a `resume_versions` row with the *same*
+  `user_id`), not merely checked in `setOwnApplicationWorkingResumeVersion`.
+- **`submission_packets.resume_version_id`** — additive, alongside the pre-existing (always-null)
+  legacy `resume_id`; never backfilled onto any existing packet. Composite FK,
+  `on delete restrict` — the structural "a submitted version can never be deleted" guarantee.
+- **`mark_application_applied`** (migration 0013) gained one new trailing parameter,
+  `p_resume_version_id uuid default null` — `create or replace function` against an *added*
+  parameter does not actually replace the old signature in PostgreSQL (confirmed against the live
+  linked project: `ERROR: function name "public.mark_application_applied" is not unique`,
+  SQLSTATE 42725, since a default value doesn't exempt an added parameter from PostgreSQL's
+  "argument list must be identical" replace rule) — migration 0021 explicitly `drop`s 0013's exact
+  original 11-parameter signature first. Behavior is otherwise byte-for-byte identical: first real
+  transition into APPLIED freezes whatever `working_resume_version_id` pointed to at that instant
+  (null if nothing was selected — never inferred/defaulted); the idempotent already-APPLIED branch
+  accepts but ignores it, so a repeated call never swaps the frozen version even if the working
+  version has since changed; `revertApplicationEvent`'s plain `status` UPDATE (the one accepted
+  exception to "only `mark_application_applied` produces APPLIED") never touches
+  `submission_packets` at all, so revert/restore never alters the frozen résumé version either.
+
+### Application detail UX
+
+A new "Resume" section (`resume-section.tsx`) shows the current working résumé version (or "No
+resume selected"), a `<select>` of every one of the user's résumé versions across every résumé
+(one batched query, grouped by résumé name) to select/change it, a "Clear" action, and "Create
+resume for this application" (creates a TAILORED résumé named per the naming convention, an initial
+`METADATA_ONLY` version, and immediately selects it as the working résumé — one click). The
+existing `SubmissionPacketSection`'s "Résumé" subsection now distinguishes three honest states: an
+exact submitted version (from `resumeVersionId`, showing its frozen version number/display name and
+noting the working résumé may have since diverged — not an error), the legacy `resumeId` rendering
+for a pre-0021 packet, or "Resume not recorded for this submission" when neither is set — never
+collapsed into a single "not recorded" message that can't tell those apart.
+
+### Tests (Phase 7B)
+
+`packages/database`: `applications.test.ts` +5 (freeze on first APPLIED, freeze-null when nothing
+selected, idempotent-path `resumeVersionId: null` assertion, `setOwnApplicationWorkingResumeVersion`/
+`clearOwnApplicationWorkingResumeVersion`). `packages/shared`:
+`submission-packet-fingerprint.test.ts` +1 (`resumeVersionId` participates in the fingerprint).
+`apps/web`: `submission-packet-section.test.tsx` +3 (exact version, version no longer available,
+legacy fallback), `dashboard.test.ts`/`matcher.test.ts` fixtures updated for the new
+`Application.workingResumeVersionId` field. pgTAP: `0026_application_resume_attachment.test.sql`
+(13 assertions, run live against the linked project) covers cross-user selection rejection (tested
+as `service_role`, since `authenticated`'s own RLS would hide the target id and make the attempt a
+false negative), first-freeze, working-version-changes-after-submit, idempotent repeat, direct
+revert/restore, submitted-version deletion protection (both the version directly and transitively
+via its parent resume), and legacy-packet compatibility. All pass.
+
+### Explicitly deferred to 7C+
+
+Structured résumé content, LaTeX generation/compilation, PDF storage (no Supabase Storage bucket
+exists — none was created), AI tailoring, company research, a dashboard "résumé selected" badge.
+None of this phase's schema needs to change to add any of them later.

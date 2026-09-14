@@ -103,6 +103,14 @@ export const applicationSchema = z.object({
    * once set, it never changes — a legacy APPLIED application that predates packet support stays
    * null forever, never fabricated (docs/IMPLEMENTATION_PLAN.md Phase 5B.1G). */
   submissionPacketId: uuidSchema.nullable().default(null),
+  /** Added in migration 0021 (Phase 7B) — same missing-key-on-an-unmigrated-database reasoning
+   * as the fields above. The application's currently-selected "planning to submit this" résumé
+   * version; ordinarily mutable right up until the application is marked APPLIED, at which point
+   * `markOwnApplicationApplied` freezes whatever this points to (if anything) into the new
+   * submission packet's own `resumeVersionId` — this column itself is never frozen or locked, it
+   * keeps changing freely afterward, same as `notes` or `company`. Null means "no résumé
+   * selected," never inferred or defaulted. */
+  workingResumeVersionId: uuidSchema.nullable().default(null),
   createdAt: isoDateTimeSchema,
   updatedAt: isoDateTimeSchema,
 });
