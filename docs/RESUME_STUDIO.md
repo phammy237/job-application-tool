@@ -47,7 +47,8 @@ the options below could be verified end-to-end in this environment):
 ## 2. Structured content is canonical; LaTeX is a rendering layer
 
 `StructuredResumeV1` (`packages/shared/src/schemas/resume-content.ts`) is what a user actually
-edits and what any future AI-tailoring phase will read/diff. `renderStructuredResumeToLatex`
+edits and what Phase 7E's AI tailoring pipeline reads and proposes changes against (§12).
+`renderStructuredResumeToLatex`
 (`packages/shared/src/lib/resume-latex-render.ts`) is a pure function from that structure to
 LaTeX text — the same input always produces the same output, and nothing about it is stored:
 LaTeX is never written to the database as its own row/column. The one thing genuinely stored
@@ -151,3 +152,33 @@ No AI (no tailoring, no bullet rewriting, no ATS optimization, no job matching) 
 user takes in the Studio is manual. No company research, no web scraping. No PDF compilation
 (§1). No résumé-content diffing between versions beyond what a human can already see by opening
 two versions side by side.
+
+Phase 7E later added AI résumé tailoring — see §12. It is a completely separate flow from the
+Studio described in §1–§10 above, and everything in this section still holds true *of the
+Studio*: the Studio itself gained no AI in Phase 7E, and no AI-generated content ever reaches the
+Studio's draft state automatically.
+
+## 12. AI résumé tailoring (Phase 7E) — a separate, read-only, non-persisting flow
+
+Phase 7E (`docs/IMPLEMENTATION_PLAN.md`/`docs/AI_GROUNDING.md` §11) added a job-specific tailoring
+*proposal* on the application detail page — deliberately not a Studio feature, and deliberately
+not a save path:
+
+- **Read-only.** The tailoring pipeline reads a `STRUCTURED_V1` working résumé version exactly as
+  the Studio would, but never opens or drives the Studio, and never writes to
+  `resume_versions`/`applications`/`submission_packets` in any way.
+- **Never a new version.** Unlike everything in §7 above, there is no "Save" action anywhere in
+  this flow. A tailored proposal is held only in the browser tab's React state; refreshing the
+  page loses it, same as this codebase's other ephemeral AI-assistance panels
+  (`InterviewPrepPanel`, `FollowUpDraftPanel`). If the user wants to keep any part of a proposal,
+  they make that edit themselves in the Studio, which remains the one real save path for résumé
+  content — unchanged by this phase.
+- **Structured content only, same as §2.** The model never sees or produces LaTeX; the proposal's
+  preview is rendered by the same pure `renderStructuredResumeToLatex` this document describes,
+  applied to a copy of the structured content after a validated plan is applied to it — never the
+  base version's own custom override (§6), which this flow never touches or reads for rendering
+  purposes. When an override is active, the proposal UI says so explicitly rather than pretending
+  the preview reflects it.
+- **Grounding is the whole point.** See `docs/AI_GROUNDING.md` §11 for the full grounding design
+  (the operation contract, id allowlists, numeric/technology guards, the conflict matrix) — this
+  document only records that the flow exists and how it relates to the Studio described above.

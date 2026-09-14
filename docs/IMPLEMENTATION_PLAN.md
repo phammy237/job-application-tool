@@ -93,6 +93,13 @@ phase depends on a later phase's output.
       already-approved facts, Structured/Advanced mode switching, a live deterministic LaTeX
       preview, and "Save New Version" (always creates a new immutable version, never edits one in
       place) — see "Phase 7D" below. No AI, no company research, no PDF preview (§7C).
+- [x] Phase 7E — Grounded job-specific résumé tailoring: the model returns a bounded, closed-set
+      `ResumeTailoringPlan` of semantic operations (never a résumé, never LaTeX) against the base
+      résumé's own stable ids; a pure server-side validator enforces id allowlists, an operation
+      conflict matrix, and deterministic numeric/technology grounding before a pure applier
+      produces a proposed structured résumé, rendered via the existing Phase 7C renderer. Fully
+      ephemeral — no version is created, no working-résumé pointer changes, nothing is saved
+      without the user separately doing so in the Studio — see "Phase 7E" below.
 - [ ] Phase 7 — Multi-user beta hardening, privacy controls, testing, deployment
 - [ ] Phase 8 — Optional mypham.space integration, public onboarding, future sharing
 
@@ -3898,3 +3905,206 @@ PDF compilation and preview (docs/RESUME_STUDIO.md §1/§9), PDF storage (§10),
 view, AI tailoring, company research. None of this phase's schema needs to change to add any of
 them later — `snapshot_format` and the JSON payload's own `schemaVersion` were designed
 specifically to absorb this without reinterpreting anything already saved.
+
+## Phase 7E — Grounded job-specific résumé tailoring
+
+The hard product rule this whole phase exists to enforce, in code, not just in a prompt: **the AI
+may decide HOW TO EMPHASIZE true experience. It may NEVER invent experience.** Concretely, the
+model never generates a résumé, arbitrary JSON, LaTeX, or a JSON Patch — it returns a small,
+closed set of semantic operations against ids already present in the base résumé; a copy of the
+base résumé is transformed by a pure, deterministic function; nothing is ever saved without the
+user separately doing so.
+
+### Architecture
+
+`generateResumeTailoringPlan` (`packages/ai`, impure — the only function that touches the DB or
+calls Claude) → `validateResumeTailoringPlan` (`packages/shared`, pure) → `applyResumeTailoringPlan`
+(`packages/shared`, pure) → `renderStructuredResumeToLatex` (existing Phase 7C renderer, reused
+unchanged). Every operation references a bullet/entry/skill-group purely by its existing stable
+id — the server (never the model) resolves which section it lives in, its current text, and its
+current position, which removes an entire class of "the model lied about where this is" attack
+surface by construction rather than by a check.
+
+### Base résumé and job context (§3/§4)
+
+The base résumé is always the application's CURRENT `working_resume_version_id`, re-derived from
+the `applications` row on every request — there is no `resumeVersionId` parameter on
+`generateResumeTailoringPlan` at all, so there is nothing for a caller to get wrong or a client to
+spoof. `no_working_resume` (none selected, or the pointed-to row is somehow unreadable) and
+`unsupported_resume_format` (the version is `METADATA_ONLY`, pre-Phase-7C) are both handled before
+any provider call or rate-limit consumption. Job context — the immutable job snapshot and the
+CURRENT requirement-mapping run, if one exists — is read the same way `generate-interview-prep.ts`
+already does: this pipeline never triggers Phase 5A's requirement-mapping generation itself, and
+degrades honestly (`missing_job_snapshot`, or a fallback requirement list, see below) rather than
+silently chaining another AI call.
+
+### Requirement context without a mapping (§5, a deliberate deviation from Phase 5C.3B's precedent)
+
+`generate-interview-prep.ts`'s existing fallback leaves requirement ids null/empty when no mapping
+exists. Phase 7E does not: `build-resume-tailoring-user-prompt.ts` synthesizes per-request
+requirement ids (`required-0`, `preferred-0`, …) directly from the job snapshot's own qualification
+lists when no CURRENT mapping run exists, so the model can still cite real requirements and
+`computeResumeTailoringCoverage` can still report honest coverage — reflecting only what this
+specific plan actually cited, never an invented covered/uncovered verdict Career OS never actually
+analyzed. This is required by §25/§26's coverage model, which needs citable ids to exist even in
+the no-mapping case; it's a deliberate, documented difference from Phase 5C.3B, not an inconsistency.
+
+### Fact retrieval (§6/§7)
+
+Only facts that pass `listOwnApprovedFactsForGeneration`'s existing approval filter are ever
+eligible — this phase widens nothing there. `selectResumeTailoringFacts`
+(`packages/ai/src/retrieval/select-resume-tailoring-facts.ts`) is a separate, purpose-built
+selection strategy (the existing `score-fact.ts` scores one job field against one
+`FieldClassification`, which doesn't fit a whole-résumé edit): it always includes every fact the
+base résumé's own bullets already cite and every fact the CURRENT mapping's `matchedFacts` cite
+(when `validity: 'valid'`), then fills up to `RESUME_TAILORING_MAX_FACTS` (60) with the remaining
+approved facts in their existing order — a deterministic, order-stable bound that never drops a
+fact tiers 1–2 already selected.
+
+### The operation contract (§8–§13)
+
+`resumeTailoringOperationSchema` (`packages/shared/src/schemas/resume-tailoring.ts`) is a
+discriminated union of exactly seven operation types and nothing else: `REWRITE_BULLET`,
+`ADD_BULLET`, `OMIT_BULLET`, `OMIT_ENTRY`, `MOVE_BULLET`, `MOVE_ENTRY`, `REORDER_SKILLS`. No
+raw-patch, replace-section, rewrite-entry-metadata, or LaTeX operation exists. `ADD_BULLET`
+requires at least one `sourceFactIds` entry at the schema level — a Zod-level rejection, not a
+runtime check, for "an added bullet with no citation." The server always resolves a rewrite's
+*original* text itself (never trusting the model's claim about it) and always generates a new
+bullet's id itself (`createResumeEntryId()`, `crypto.randomUUID()` — never a model-supplied UUID).
+`REORDER_SKILLS` is the only skill operation in v1: there is no `ADD_SKILL`, so a job asking for a
+skill with no approved-fact evidence simply cannot appear — no keyword stuffing is structurally
+possible.
+
+### Immutability and grounding guards (§14–§16)
+
+No operation type has a field for an organization, role, school, degree, date, location, or
+project identity — those simply cannot be changed by this pipeline, by construction, not by a
+runtime check. Two deterministic, deliberately conservative guards run against every
+`REWRITE_BULLET`/`ADD_BULLET`'s `proposedText`:
+
+- `resume-tailoring-numeric-guard.ts` — extracts every percentage/currency/count/factor claim and
+  rejects any that doesn't match (same category, same normalized value) something already in the
+  bullet being rewritten or a cited fact's text. Documented, safety-biased false-rejection
+  directions only (e.g. a bare "$50K" without the `$` sign categorizes as COUNT, not CURRENCY —
+  over-rejection, never under).
+- `resume-tailoring-technology-guard.ts` — a capitalized-token heuristic (explicitly not real NLP)
+  that rejects any named technology/tool the proposal introduces without it appearing in the
+  bullet or a cited fact. Deliberately asymmetric: strict extraction of what the *proposal*
+  claims, lenient case-insensitive substring matching against *evidence* — the safer direction to
+  be imprecise in.
+
+### Allowlist and conflict validation (§17–§19)
+
+Every id the model returns — `bulletId`, `entryId`, `skillGroupId`, `sourceFactId`, `requirementId`
+— must be one this *specific request* actually offered (request-local allowlists built fresh every
+call; existing in the DB is never enough on its own). `validateResumeTailoringPlan`
+(`packages/shared/src/lib/validate-resume-tailoring-plan.ts`) runs four passes: (1) id/citation
+resolution against the base résumé and this request's allowlists, (2) a conflict matrix (at most
+one bullet-level op per bullet id across the whole plan; at most one `OMIT_ENTRY`/`MOVE_ENTRY` per
+entry id; `ADD_BULLET`/any bullet op can never target an entry `OMIT_ENTRY` also targets), (3) MOVE
+target-index bounds computed against this same plan's own post-omit length, never the raw length,
+and (4) the numeric/technology guards above. Any single failure rejects the *entire* plan — no
+partial application, matching this codebase's existing all-or-nothing posture for requirement-
+mapping runs. `MAX_RESUME_TAILORING_OPERATIONS` (30) plus per-operation text/reason/citation caps
+bound worst case (§19).
+
+### The pure applier (§20)
+
+`applyResumeTailoringPlan` (`packages/shared/src/lib/apply-resume-tailoring-plan.ts`) takes an
+already-validated plan and a base résumé, `structuredClone`s the base (never mutates its input),
+and applies operations in a fixed, documented order per array: rewrite → omit → reposition
+survivors → append new bullets/entries at the end (adds never participate in explicit
+positioning). No DB access, no model access, no timestamps unless supplied — pure and
+deterministic.
+
+### Nothing is ever saved (§21/§45)
+
+`generateResumeTailoringPlan` never inserts a `resume_versions` row, never changes
+`applications.working_resume_version_id`, never touches a `submission_packets` row, and never
+mutates the base version it read. The one durable side effect of a call, success or failure, is a
+best-effort `ai_usage_events` row (`task_type: 'resume_tailoring'`, migration 0023) — telemetry
+loss never fails the user's actual request. The API route
+(`apps/web/app/api/applications/[id]/resume-tailoring/route.ts`) and panel
+(`resume-tailoring-panel.tsx`) both reflect this: the panel's own copy says "Nothing has been saved
+yet," and there is no "Save this proposal" action anywhere in this phase — keeping a change means
+opening the Resume Studio and making it there.
+
+### Advanced LaTeX override handling (§22)
+
+The proposal's LaTeX preview is rendered via `renderStructuredResumeToLatex(proposedResume)` —
+deliberately *not* `getLatexForResumeVersion`, which would apply the base version's own Advanced
+override and silently discard every proposed edit. When the base version has an active override,
+`customLatexOverridePresent: true` is reported and the panel shows an explicit warning that this
+preview reflects only the structured-content changes, not the override.
+
+### Coverage, summary, and provenance (§25–§29)
+
+`resumeTailoringProposalSchema`'s `summary` (counts per operation type) and `coverage`
+(covered/unsupported/referenced requirement ids, plus human-readable text for every unsupported
+one) are both computed entirely server-side from the validated operation list —
+`computeResumeTailoringSummary`/`computeResumeTailoringCoverage`
+(`packages/shared/src/lib/resume-tailoring-response.ts`) — never trusted from the model, and never
+collapsed into a single "ATS score." `buildResumeTailoringOperationViews` resolves every
+operation's before/after text, entry label, and fact/requirement labels from the actual base
+résumé and this request's own label maps — raw ids never reach the UI directly.
+
+### DB change
+
+Migration 0023 widens `ai_usage_events.task_type` to add `'resume_tailoring'`, preserving every
+existing value — verified against the live linked project both before (confirmed the exact prior
+6-value set) and after (confirmed all 7 values present) applying it, and covered by
+`supabase/tests/database/0028_ai_usage_events_resume_tailoring.test.sql` (3/3 assertions, run via
+the same wrap-into-a-temp-table `db query --linked` technique used since Docker isn't available in
+this environment). No new `rejection_reason` value was needed — every one of this pipeline's own
+rejection reasons maps onto one of the three that already exist (`unknown_source_fact_id` for any
+unknown/unsupplied id, `validation_failed` for shape/structural/conflict/index failures,
+`unsupported_claims_present` for an ungrounded number or technology).
+
+### API and UI
+
+`POST /api/applications/:id/resume-tailoring` — same explicit-user-triggered-only, no-request-body
+posture as `follow-up-draft`/`interview-prep`; no `resumeVersionId` field exists to accept, since
+the pipeline it calls has no such parameter either. `ResumeTailoringPanel`
+(`apps/web/app/(app)/applications/resume-tailoring-panel.tsx`) never fetches on render — the only
+network call is the one POST triggered by "Tailor resume for this job" — and is only rendered by
+the application detail page when the working résumé is `STRUCTURED_V1` (a UX nicety; the route's
+own pipeline independently re-derives and re-checks the same condition). The proposal view shows
+the summary badges, requirement coverage (with "No grounded evidence found for: …" per unsupported
+requirement, never silently added), before/after per operation, the custom-override warning when
+relevant, and a "Download .tex preview" button (Blob + client-side download, same pattern as the
+Studio) — no PDF claim anywhere, since no PDF compiler exists in this deployment.
+
+### Tests
+
+`packages/shared`: `resume-tailoring.test.ts` (+20 — schema-level caps/malformed-type/missing-
+citation rejections), `resume-tailoring-numeric-guard.test.ts` (+25),
+`resume-tailoring-technology-guard.test.ts` (+13), `validate-resume-tailoring-plan.test.ts` (+24 —
+id resolution, the full conflict matrix, post-omit index bounds, both grounding guards),
+`apply-resume-tailoring-plan.test.ts` (+14 — every operation type, input immutability, server-
+generated ids, determinism, no duplicate ids), `resume-tailoring-response.test.ts` (+14 — view/
+summary/coverage builders, both mapping-present and mapping-absent coverage modes). `packages/ai`:
+`generate-resume-tailoring-plan.test.ts` (+22 — the full eligibility gate, rate limiting, mapping
+reuse and fallback, allowlist/numeric/technology rejection with retry, provider-error/malformed-
+JSON handling, telemetry, and an explicit no-state-mutation audit). `apps/web`: `route.test.ts`
+(+10) and `resume-tailoring-panel.test.tsx` (+13 — no fetch on render, exactly one POST per click,
+loading state, summary/coverage/before-after/provenance rendering, the override warning shown only
+when relevant, the .tex download never itself calling fetch, and every non-ok status path). All
+run alongside the full existing suite with zero regressions.
+
+### Self-review findings (this pass)
+
+Audited and confirmed clean: no model-facing field or JSON Schema anywhere in this phase's
+`packages/ai` code contains `latexSource`/`template`/any LaTeX-shaped field (§23/§44); the pipeline
+has exactly one call site (the API route) and is never referenced from a `useEffect`, a server
+component's render, the dashboard, mark-applied, Gmail sync, or the extension (§53, grep-verified);
+the AI pipeline test's own audit section confirms zero calls to any résumé/application/packet
+mutation function on both the success and rejected paths (§54); the real-AI smoke test (§58) was
+skipped honestly — no `ANTHROPIC_API_KEY` is configured in this environment, so a real generation
+was never attempted rather than faked.
+
+### Explicitly deferred to a future phase
+
+PDF compilation/preview of a tailored proposal (still no sandboxed compiler exists — unchanged
+from Phase 7C/7D), "save this proposal as a new version" (a deliberate v1 scope decision — keeping
+a change always means the Studio today), diffing a tailored proposal against a different base
+version, `ADD_SKILL`/skill-group creation, and multi-provider model routing for this pipeline.

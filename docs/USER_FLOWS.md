@@ -87,6 +87,27 @@ false`, `visibleOnPublicProfile = false`. Nothing extracted is usable until step
    application's working résumé selection has since moved on to something else — that divergence
    is expected, normal history, not an error state.
 
+## 3C. Grounded résumé tailoring (Phase 7E)
+
+1. On an application's detail page, once a working résumé version with real structured content
+   (`STRUCTURED_V1`) is selected, an "AI résumé tailoring" panel appears with a "Tailor resume for
+   this job" button — nothing fires automatically; no network call happens until this exact click.
+2. Career OS re-derives the working résumé version, the job posting, any existing requirement
+   analysis, and the user's approved facts entirely server-side (never trusting anything the
+   browser sends) and asks Claude for a bounded set of edits — reword a bullet, add one grounded
+   in a real fact, omit or reorder a bullet/entry, reorder skill groups. The model never sees or
+   produces a whole résumé or any LaTeX.
+3. Every proposed edit is checked against the user's own approved facts and the résumé's own
+   existing text before it's ever shown — an edit that would introduce a number, technology, or
+   claim not already present in what it's rewriting or the facts it cites is rejected outright,
+   and the whole response is retried once or declined, never silently softened.
+4. The result is a **preview only** — before/after text for each change, which job requirements it
+   addresses, which it honestly can't ("no grounded evidence found for…"), and a `.tex` download of
+   what the tailored résumé would render as. Nothing is saved: no new résumé version is created,
+   the working résumé selection doesn't change, and refreshing the page loses the preview.
+5. To actually keep a change, the user opens the Resume Studio (§3B) and makes it there themselves
+   — tailoring only ever suggests; saving is always a manual, human action.
+
 ## 4. Job analysis via the extension
 
 1. User is on a job posting page and clicks the Career OS extension icon, then clicks

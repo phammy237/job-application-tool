@@ -308,3 +308,77 @@ influence, the engine's own decision — grounding here is about preventing inve
   signal only — never a `PENDING`/`DECLINED` one, never a body, which this codebase never stores at
   all). Its output contract has no recipient field. There is no `gmail.send` scope anywhere in this
   product, and this phase did not add one.
+
+## 11. Grounded résumé tailoring (Phase 7E)
+
+A fourth kind of grounding problem, distinct from §2/§8/§9/§10: this pipeline
+(`packages/ai/src/generate-resume-tailoring-plan.ts`) doesn't generate a text answer or check one
+— it edits a whole résumé's *content and emphasis* for a specific job. The blast radius of "the
+model invented something" is much larger here (a fabricated line lives on the résumé the user
+actually sends to an employer), so this pipeline structurally cannot generate the document at all.
+The rule stated plainly: **the AI may decide HOW TO EMPHASIZE the candidate's true experience —
+reorder it, restate it, choose what to show for this role. It may NEVER invent experience.**
+
+- **The model never returns a résumé, LaTeX, or a JSON Patch.** Its entire output is
+  `{operations: [...]}` — a bounded array of one of exactly seven closed operation types
+  (`resumeTailoringOperationSchema`, `packages/shared`), each referencing a bullet/entry/skill-
+  group purely by an id already present in the base résumé. There is no field anywhere in this
+  contract that could carry a whole document, a raw patch, or a LaTeX command — not "validated
+  against," structurally absent.
+- **The server resolves every structural fact the model would otherwise have to state
+  correctly.** Which section a bullet lives in, its current text, its current position — all
+  resolved by the server scanning the actual base résumé by id, never taken on the model's word.
+  This removes "the model lied about where this is" as an attack surface entirely, rather than
+  detecting it after the fact.
+- **Retrieval before generation, same principle as §2, adapted for a whole-résumé edit.** The
+  base résumé is always the application's current working version, re-derived server-side (never
+  a client-supplied id — there is no such parameter). Facts come from the same
+  `listOwnApprovedFactsForGeneration` retrieval as every other pipeline in this document — never
+  an unapproved fact — selected by a purpose-built, bounded strategy
+  (`select-resume-tailoring-facts.ts`) that always includes what the résumé and any current
+  requirement mapping already cite, and fills the rest deterministically up to a cap.
+- **A current requirement mapping is reused, never generated, same as §8/§10's precedent.** When
+  none exists, requirement ids are synthesized directly from the job snapshot's own qualification
+  lists (a deliberate difference from §10's interview-prep fallback, which leaves ids null/empty —
+  see `docs/IMPLEMENTATION_PLAN.md`'s "Phase 7E" section for why this pipeline needs citable ids to
+  exist even without a mapping) — the model is told plainly that grounding quality is reduced in
+  this case.
+- **Every id is a request-local allowlist entry, same defense as every other pipeline, applied to
+  five different id kinds at once.** `bulletId`/`entryId`/`skillGroupId` must exist in the base
+  résumé the server itself indexed; `sourceFactId` must be a fact actually placed in
+  `<candidate_facts>`; `requirementId` must be a requirement actually offered. A hallucinated,
+  prompt-injected, or cross-user id in any of the five rejects the whole plan.
+- **Two deterministic, conservative content guards specific to this pipeline** — a numeric-claim
+  guard and a named-technology guard — reject any `REWRITE_BULLET`/`ADD_BULLET` that introduces a
+  number or a named tool/technology not already present in the bullet being rewritten or a fact
+  actually cited for it. Both are explicitly documented as heuristics, not perfect NLP, and both
+  are tuned to fail toward over-rejection rather than ever silently accepting a fabricated claim
+  (`resume-tailoring-numeric-guard.ts`, `resume-tailoring-technology-guard.ts`).
+- **Immutable-by-construction, not by convention.** No operation type has a field for an
+  organization, role, school, degree, date, location, or project identity — the schema has nothing
+  for the model to change them with. The only way to actually change one of those is the existing,
+  fully human-driven Resume Studio (Phase 7D).
+- **An internally-contradictory plan is rejected outright, all-or-nothing, same posture as §8's
+  run-level validation.** A conflict matrix (`validate-resume-tailoring-plan.ts`) catches e.g. a
+  `REWRITE_BULLET` and an `OMIT_BULLET` targeting the same id, or an `ADD_BULLET`/bullet-level
+  operation targeting an entry another operation in the same plan also omits — there is no
+  "last write wins," the whole plan fails closed.
+- **One retry, same policy as every other pipeline in this document.** Exactly one retry, only on
+  a rejection (malformed JSON, a schema violation, an unallowlisted id, an operation conflict, an
+  out-of-range index, an ungrounded number, an ungrounded technology, or a refusal) — never on a
+  hard `provider_error`, which surfaces immediately.
+- **No aggregate score, ever, same as §8.** The response has `coverage.coveredRequirementIds`/
+  `unsupportedRequirementIds` (a factual partition of the offered requirements, computed entirely
+  server-side from what the *validated* plan actually cited) and a per-operation-type `summary` —
+  never a single "match" or "ATS score" number, and an unsupported requirement is always surfaced
+  explicitly ("no grounded evidence found"), never silently added to make the résumé look more
+  matched.
+- **Fully ephemeral — nothing is ever saved by this pipeline.** No résumé version is created, no
+  working-résumé pointer changes, no submission packet is touched — the response is a read-only
+  proposal, and the only durable trace of an attempt is the existing `ai_usage_events` telemetry
+  row (`task_type: 'resume_tailoring'`, migration 0023), recorded best-effort. Keeping any part of
+  a proposal requires the user to make that edit themselves in the Resume Studio.
+- **Rendering never touches the model.** The proposal's LaTeX preview comes from applying the
+  validated plan to a copy of the base résumé (a pure function, `apply-resume-tailoring-plan.ts`)
+  and rendering that copy with the existing, unmodified Phase 7C deterministic renderer — the model
+  never sees or produces LaTeX at any point in this pipeline.

@@ -1,6 +1,7 @@
 import {
   getOwnApplication,
   getOwnJobSnapshot,
+  getOwnResumeVersion,
   listApplicationEvents,
   listOwnRelevantStatusChangeEventsForApplication,
 } from '@career-os/database';
@@ -18,6 +19,7 @@ import { MarkAppliedPanel } from '../mark-applied-panel';
 import { PeopleSection } from '../people-section';
 import { RequirementAnalysisPanel } from '../requirement-analysis-panel';
 import { ResumeSection } from '../resume-section';
+import { ResumeTailoringPanel } from '../resume-tailoring-panel';
 import { RevertEventButton } from '../revert-event-button';
 import { SubmissionPacketSection } from '../submission-packet-section';
 
@@ -42,12 +44,15 @@ export default async function ApplicationDetailPage({
   // AI-assistance panel at all; the routes those panels call independently re-derive this same
   // decision server-side before ever calling Claude, so hiding/showing a button here is purely a
   // UX nicety, never the actual eligibility gate.
-  const [events, jobSnapshot, relevantStatusChangeEvents] = await Promise.all([
+  const [events, jobSnapshot, relevantStatusChangeEvents, workingResumeVersion] = await Promise.all([
     listApplicationEvents(supabase, user.id, id),
     application.jobSnapshotId
       ? getOwnJobSnapshot(supabase, user.id, application.jobSnapshotId)
       : Promise.resolve(null),
     listOwnRelevantStatusChangeEventsForApplication(supabase, user.id, id),
+    application.workingResumeVersionId
+      ? getOwnResumeVersion(supabase, user.id, application.workingResumeVersionId)
+      : Promise.resolve(null),
   ]);
   const [applicationWithNextAction] = attachNextActions(
     [application],
@@ -159,6 +164,16 @@ export default async function ApplicationDetailPage({
         company={application.company}
         title={application.title}
       />
+
+      {/* Phase 7E — shown only when there is a working résumé with real structured content to
+          tailor; a METADATA_ONLY version (or no working résumé at all) has nothing this pipeline
+          could operate on. This is purely a UX nicety: the API route's own pipeline independently
+          re-derives and re-checks the exact same condition server-side before ever calling Claude
+          (same posture as the deterministic-next-action panels above, see that block's own
+          comment). */}
+      {workingResumeVersion?.snapshotFormat === 'STRUCTURED_V1' ? (
+        <ResumeTailoringPanel applicationId={application.id} />
+      ) : null}
 
       <section className="space-y-2">
         <h2 className="text-muted-foreground text-sm font-medium">Notes</h2>

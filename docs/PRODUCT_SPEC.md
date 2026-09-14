@@ -135,8 +135,13 @@ submission record (§5), independent of anything selected later. As of Phase 7C,
 real structured content (Header, Education, Experience, Projects, Leadership, Skills), edited
 manually in the Resume Studio (`/resumes/[id]/studio`) and deterministically rendered to LaTeX; an
 Advanced mode supports a custom LaTeX override. PDF compilation is not implemented yet (no
-sandboxed compilation environment exists in this deployment) — see `docs/RESUME_STUDIO.md`. No AI
-tailoring, no company research — see `docs/DATA_MODEL.md` §"resumes"/§"resume_versions".
+sandboxed compilation environment exists in this deployment) — see `docs/RESUME_STUDIO.md`. As of
+Phase 7E, the application detail page can also generate a grounded, job-specific tailoring
+*proposal* against the working résumé version — a bounded set of reorder/rewrite/omit/add
+operations, never a model-generated résumé or LaTeX, and never saved automatically; keeping any
+part of it still means editing it manually in the Resume Studio. No company research, no ATS
+score — see `docs/AI_GROUNDING.md` §11, `docs/RESUME_STUDIO.md` §12, and `docs/DATA_MODEL.md`
+§"resumes"/§"resume_versions".
 
 ## 7. Application tracker scope
 
