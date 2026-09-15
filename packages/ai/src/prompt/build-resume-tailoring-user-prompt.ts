@@ -1,11 +1,14 @@
 import type { ApprovedFactForGeneration } from '@career-os/database';
-import type {
-  JobSnapshot,
-  RequirementEvidenceMappingWithValidity,
-  StructuredResumeV1,
+import {
+  selectResumeTailoringResearchFindings,
+  type CompanyResearchSnapshot,
+  type JobSnapshot,
+  type RequirementEvidenceMappingWithValidity,
+  type StructuredResumeV1,
 } from '@career-os/shared';
 import {
   FACT_TEXT_CHAR_CAP,
+  RESEARCH_TAILORING_MAX_FINDINGS,
   RESUME_BULLET_CHAR_CAP,
   SNAPSHOT_DESCRIPTION_CHAR_CAP,
 } from '../config';
@@ -18,8 +21,21 @@ export interface BuildResumeTailoringUserPromptParams {
   currentMapping: RequirementEvidenceMappingWithValidity[] | null;
   baseResume: StructuredResumeV1;
   facts: ApprovedFactForGeneration[];
+  /** Phase 7H — the one exact, already-resolved, already-compatibility-checked snapshot to fold
+   * into this request, or null for `JOB_ONLY` (docs/IMPLEMENTATION_PLAN.md "Phase 7H" §3/§25).
+   * This function never re-resolves or re-validates ownership/compatibility itself — that already
+   * happened in `resolveResumeTailoringResearchSnapshot` before this is called. */
+  researchSnapshot: CompanyResearchSnapshot | null;
   /** Set on the retry attempt — see generate-resume-tailoring-plan.ts's retry-once step. */
   retryReason?: string;
+}
+
+/** One company-research finding's bounded, minimized context (§10) — never the finding's source
+ * excerpts/URLs, never the whole snapshot. */
+export interface ResumeTailoringResearchFindingContext {
+  claim: string;
+  roleRelevance: string | null;
+  category: string;
 }
 
 /** One requirement offered to the model this request, regardless of whether it came from a real
@@ -43,6 +59,17 @@ export interface BuildResumeTailoringUserPromptResult {
    * never actually analyzed (docs/IMPLEMENTATION_PLAN.md "Phase 7E" §5/§25/§26).
    */
   mappingIsMissing: ReadonlyMap<string, boolean> | null;
+  /** Phase 7H — every research-finding id actually placed in this request's prompt, scoped to the
+   * one resolved snapshot. Empty for `JOB_ONLY` or when the snapshot contributed zero selected
+   * findings. */
+  allowedResearchFindingIds: Set<string>;
+  /** Bounded, resolved finding context for the ids above — passed straight through to
+   * `buildResumeTailoringOperationViews` for display resolution (§32), never re-fetched from the
+   * snapshot later. */
+  researchFindingsById: Map<string, ResumeTailoringResearchFindingContext>;
+  /** How many findings were actually selected into the prompt (§22/§34) — always 0 when
+   * `researchSnapshot` was null. */
+  selectedResearchFindingCount: number;
 }
 
 function truncate(text: string, cap: number): string {
@@ -109,10 +136,39 @@ function serializeBaseResume(baseResume: StructuredResumeV1) {
   };
 }
 
+/**
+ * Serializes the bounded, selected subset of a company-research snapshot's findings (§10/§22) —
+ * deliberately never the full snapshot: no source excerpts, no URLs, no unselected findings, no
+ * other historical snapshot. `sourceTypes` is a light, aggregated provenance-quality signal (§10)
+ * — e.g. `["OFFICIAL_NEWSROOM", "REPUTABLE_NEWS"]` — never the sources themselves.
+ */
+function buildCompanyResearchSection(
+  snapshot: CompanyResearchSnapshot,
+  selectedFindings: CompanyResearchSnapshot['findings'],
+): string {
+  const findingsJson = JSON.stringify(
+    selectedFindings.map((finding) => ({
+      id: finding.id,
+      category: finding.category,
+      claim: finding.claim,
+      roleRelevance: finding.roleRelevance,
+      requirementIds: finding.requirementIds,
+      sourceTypes: [...new Set(finding.sources.map((source) => source.sourceType))],
+    })),
+  );
+  return (
+    `<company_research_snapshot id="${snapshot.id}">\n` +
+    `This describes the COMPANY, researched ${snapshot.researchedAt} — never the candidate. Use ` +
+    `it only to help decide what to emphasize among the candidate's REAL, already-cited ` +
+    `experience; never as evidence of anything the candidate did.\n` +
+    `${findingsJson}\n</company_research_snapshot>`
+  );
+}
+
 export function buildResumeTailoringUserPrompt(
   params: BuildResumeTailoringUserPromptParams,
 ): BuildResumeTailoringUserPromptResult {
-  const { snapshot, currentMapping, baseResume, facts, retryReason } = params;
+  const { snapshot, currentMapping, baseResume, facts, researchSnapshot, retryReason } = params;
 
   const factsJson = JSON.stringify(
     facts.map((fact) => ({
@@ -176,13 +232,39 @@ export function buildResumeTailoringUserPrompt(
   parts.push(`<base_resume>\n${JSON.stringify(serializeBaseResume(baseResume))}\n</base_resume>`);
   parts.push(`<candidate_facts>\n${factsJson}\n</candidate_facts>`);
 
+  // Phase 7H (§3/§22/§25) — folded in only when a snapshot was actually resolved for this
+  // request; ranked/bounded selection, never the snapshot's full finding list.
+  const allowedResearchFindingIds = new Set<string>();
+  const researchFindingsById = new Map<string, ResumeTailoringResearchFindingContext>();
+  let selectedResearchFindingCount = 0;
+  if (researchSnapshot) {
+    const selectedFindings = selectResumeTailoringResearchFindings(
+      researchSnapshot.findings,
+      allowedRequirementIds,
+      RESEARCH_TAILORING_MAX_FINDINGS,
+    );
+    selectedResearchFindingCount = selectedFindings.length;
+    for (const finding of selectedFindings) {
+      allowedResearchFindingIds.add(finding.id);
+      researchFindingsById.set(finding.id, {
+        claim: finding.claim,
+        roleRelevance: finding.roleRelevance,
+        category: finding.category,
+      });
+    }
+    if (selectedFindings.length > 0) {
+      parts.push(buildCompanyResearchSection(researchSnapshot, selectedFindings));
+    }
+  }
+
   if (retryReason) {
     parts.push(
       `Your previous attempt was rejected: ${retryReason}. Every bulletId/entryId/` +
         `skillGroupId must come from <base_resume>, every sourceFactIds entry must come from ` +
-        `<candidate_facts>, and every requirementIds entry must come from <requirement_mappings> ` +
-        `— no others, and no invented numbers or technologies beyond what the cited bullet/facts ` +
-        `already say. Try again.`,
+        `<candidate_facts>, every requirementIds entry must come from <requirement_mappings>, ` +
+        `and every researchFindingIds entry (if any) must come from ` +
+        `<company_research_snapshot> — no others, and no invented numbers or technologies beyond ` +
+        `what the cited bullet/facts already say. Try again.`,
     );
   }
 
@@ -193,5 +275,8 @@ export function buildResumeTailoringUserPrompt(
     requirementContext,
     allowedRequirementIds,
     mappingIsMissing,
+    allowedResearchFindingIds,
+    researchFindingsById,
+    selectedResearchFindingCount,
   };
 }

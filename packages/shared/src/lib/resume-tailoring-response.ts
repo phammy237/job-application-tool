@@ -1,11 +1,21 @@
 import type { StructuredResumeV1 } from '../schemas/resume-content';
 import type {
   ResumeSectionName,
+  ResumeTailoringCompanyRelevanceItem,
   ResumeTailoringCoverage,
   ResumeTailoringOperation,
   ResumeTailoringOperationView,
   ResumeTailoringSummary,
 } from '../schemas/resume-tailoring';
+
+/** Phase 7H — the bounded, request-local research-finding context a tailoring request actually
+ * offered the model, keyed by finding id. Built by the AI package's snapshot-selection step and
+ * passed straight through here for resolving `researchFindingIds` into `companyRelevance` (§32) —
+ * never re-fetched from a snapshot at display time. */
+export type ResumeTailoringResearchFindingContext = Omit<
+  ResumeTailoringCompanyRelevanceItem,
+  'id'
+>;
 
 const SECTIONS: ResumeSectionName[] = ['education', 'experience', 'projects', 'leadership'];
 
@@ -75,6 +85,12 @@ export function buildResumeTailoringOperationViews(
   baseResume: StructuredResumeV1,
   factLabelById: ReadonlyMap<string, string>,
   requirementTextById: ReadonlyMap<string, string>,
+  /** Phase 7H — the bounded, request-local research-finding context actually offered this
+   * request, keyed by finding id. Empty/omitted for `JOB_ONLY` requests, in which case every
+   * operation's `companyRelevance` resolves to `[]` regardless of what `researchFindingIds` says
+   * (there is nothing to resolve it against — the validator already rejects any citation here
+   * when this map is empty, so in practice `researchFindingIds` is always empty too). */
+  researchFindingsById: ReadonlyMap<string, ResumeTailoringResearchFindingContext> = new Map(),
 ): ResumeTailoringOperationView[] {
   const index = indexForDisplay(baseResume);
 
@@ -83,6 +99,18 @@ export function buildResumeTailoringOperationViews(
   }
   function relevantRequirements(ids: string[]) {
     return ids.map((id) => ({ id, text: requirementTextById.get(id) ?? id }));
+  }
+  /** Resolves cited research-finding ids into display context (§32) — an id with no match in
+   * `researchFindingsById` (should not happen for a validated plan) is silently dropped rather
+   * than shown as a bare id, since a company-relevance note with no resolvable content has
+   * nothing honest left to say. */
+  function companyRelevance(ids: string[]): ResumeTailoringCompanyRelevanceItem[] {
+    return ids
+      .map((id) => {
+        const finding = researchFindingsById.get(id);
+        return finding ? { id, ...finding } : null;
+      })
+      .filter((item): item is ResumeTailoringCompanyRelevanceItem => item !== null);
   }
 
   return operations.map((op): ResumeTailoringOperationView => {
@@ -96,6 +124,7 @@ export function buildResumeTailoringOperationViews(
           after: op.proposedText,
           groundedFacts: groundedFacts(op.sourceFactIds),
           relevantRequirements: relevantRequirements(op.requirementIds),
+          companyRelevance: companyRelevance(op.researchFindingIds),
           reason: op.reason,
         };
       case 'ADD_BULLET':
@@ -106,6 +135,7 @@ export function buildResumeTailoringOperationViews(
           after: op.proposedText,
           groundedFacts: groundedFacts(op.sourceFactIds),
           relevantRequirements: relevantRequirements(op.requirementIds),
+          companyRelevance: companyRelevance(op.researchFindingIds),
           reason: op.reason,
         };
       case 'OMIT_BULLET':
@@ -114,6 +144,7 @@ export function buildResumeTailoringOperationViews(
           bulletId: op.bulletId,
           entryLabel: index.bulletEntryLabel.get(op.bulletId) ?? '',
           omittedText: index.bulletText.get(op.bulletId) ?? '',
+          companyRelevance: companyRelevance(op.researchFindingIds),
           reason: op.reason,
         };
       case 'OMIT_ENTRY':
@@ -121,6 +152,7 @@ export function buildResumeTailoringOperationViews(
           type: 'OMIT_ENTRY',
           entryId: op.entryId,
           entryLabel: index.entryLabel.get(op.entryId) ?? '',
+          companyRelevance: companyRelevance(op.researchFindingIds),
           reason: op.reason,
         };
       case 'MOVE_BULLET': {
@@ -132,6 +164,7 @@ export function buildResumeTailoringOperationViews(
           movedText: index.bulletText.get(op.bulletId) ?? '',
           fromIndex: loc?.index ?? -1,
           toIndex: op.targetIndex,
+          companyRelevance: companyRelevance(op.researchFindingIds),
           reason: op.reason,
         };
       }
@@ -143,6 +176,7 @@ export function buildResumeTailoringOperationViews(
           entryLabel: index.entryLabel.get(op.entryId) ?? '',
           fromIndex: loc?.index ?? -1,
           toIndex: op.targetIndex,
+          companyRelevance: companyRelevance(op.researchFindingIds),
           reason: op.reason,
         };
       }
@@ -155,6 +189,7 @@ export function buildResumeTailoringOperationViews(
           before,
           after,
           orderedSkillGroupIds: op.orderedSkillGroupIds,
+          companyRelevance: companyRelevance(op.researchFindingIds),
           reason: op.reason,
         };
       }
@@ -175,10 +210,18 @@ export function computeResumeTailoringSummary(
     movedEntries: 0,
     skillsReordered: false,
     requirementsReferenced: 0,
+    researchFindingsReferenced: 0,
+    operationsInfluencedByResearch: 0,
   };
   const referenced = new Set<string>();
+  const researchFindingsReferenced = new Set<string>();
+  let operationsInfluencedByResearch = 0;
 
   for (const op of operations) {
+    if (op.researchFindingIds.length > 0) {
+      operationsInfluencedByResearch += 1;
+      op.researchFindingIds.forEach((id) => researchFindingsReferenced.add(id));
+    }
     switch (op.type) {
       case 'REWRITE_BULLET':
         summary.rewrittenBullets += 1;
@@ -207,6 +250,8 @@ export function computeResumeTailoringSummary(
   }
 
   summary.requirementsReferenced = referenced.size;
+  summary.researchFindingsReferenced = researchFindingsReferenced.size;
+  summary.operationsInfluencedByResearch = operationsInfluencedByResearch;
   return summary;
 }
 

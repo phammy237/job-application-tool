@@ -148,14 +148,24 @@ click. No ATS score anywhere — see `docs/AI_GROUNDING.md` §11, `docs/RESUME_S
 `docs/IMPLEMENTATION_PLAN.md` "Phase 7F", and `docs/DATA_MODEL.md` §"resumes"/§"resume_versions".
 
 As of Phase 7G, an application detail page also offers an explicit, separate **Research company**
-action — RESEARCH ONLY, never automatic, and not yet connected to résumé tailoring or interview
-prep. Clicking it discovers public sources about the company (its own site, newsroom, investor
-relations, engineering/product blog, careers page, and independent reporting — never the job
-posting's own ATS/job-board hosting page), then synthesizes a bounded, source-cited list of
-findings relevant to the specific role, saved as one immutable, timestamped snapshot; refreshing
-creates a new snapshot rather than editing the old one. No `companies` table, no candidate facts
-or résumé content ever sent to the research provider or the model, no ATS-style score — see
-`docs/COMPANY_RESEARCH.md` and `docs/IMPLEMENTATION_PLAN.md` "Phase 7G" for the full design.
+action — RESEARCH ONLY, never automatic. Clicking it discovers public sources about the company
+(its own site, newsroom, investor relations, engineering/product blog, careers page, and
+independent reporting — never the job posting's own ATS/job-board hosting page), then synthesizes
+a bounded, source-cited list of findings relevant to the specific role, saved as one immutable,
+timestamped snapshot; refreshing creates a new snapshot rather than editing the old one. No
+`companies` table, no candidate facts or résumé content ever sent to the research provider or the
+model, no ATS-style score — see `docs/COMPANY_RESEARCH.md` and `docs/IMPLEMENTATION_PLAN.md`
+"Phase 7G" for the full design.
+
+As of Phase 7H, the tailoring proposal above can OPTIONALLY be made research-aware: the user
+chooses "use latest research" or "job posting only" (never mandatory just because a snapshot
+exists), and — for the chosen mode — the server resolves one exact, immutable research snapshot
+and lets the model justify *emphasis* (reordering, omission, which real bullet to lead with) with
+a strictly separate "company relevance" citation, never a factual one. Company research can never
+add a technology, metric, or claim that isn't already supported by the candidate's own approved
+facts or résumé bullet — "the company uses Snowflake" is never grounds for "I used Snowflake." No
+automatic refresh, no automatic tailoring, and zero additional AI/search calls beyond the one
+tailoring call 7E already makes — see `docs/IMPLEMENTATION_PLAN.md` "Phase 7H" for the full design.
 
 ## 7. Application tracker scope
 

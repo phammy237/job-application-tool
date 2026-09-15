@@ -145,3 +145,17 @@ export const COMPANY_RESEARCH_SOURCE_TEXT_CHAR_CAP = 1500;
 export const COMPANY_RESEARCH_MAX_SEARCH_QUERIES = 6;
 export const COMPANY_RESEARCH_MAX_SOURCES = 12;
 export const COMPANY_RESEARCH_MAX_PER_DOMAIN = 3;
+
+/**
+ * Phase 7H — research-aware résumé tailoring (packages/ai/src/generate-resume-tailoring-plan.ts).
+ * Adds zero new AI/search calls of its own (docs/IMPLEMENTATION_PLAN.md "Phase 7H" §27/§28/§65):
+ * it only ever reads an already-persisted Phase 7G snapshot, selects a bounded subset of its
+ * findings, and folds them into the exact same single résumé-tailoring call Phase 7E already
+ * makes. `RESEARCH_TAILORING_MAX_FINDINGS` sits within the task's own suggested 8–12 range (§22).
+ */
+export const RESEARCH_TAILORING_MAX_FINDINGS = 10;
+/** §6 — when no explicit snapshot id is requested, at most this many of the application's most
+ * recent snapshots are checked for company/role/job-snapshot compatibility (§7) before honestly
+ * degrading to JOB_ONLY (§4). Bounded rather than "check every snapshot ever researched for this
+ * application" so this resolution step stays a small, fixed number of reads. */
+export const RESEARCH_TAILORING_AUTO_RESOLVE_CANDIDATE_LIMIT = 3;

@@ -20,6 +20,7 @@ import {
   validateResumeTailoringPlan,
   type ResumeTailoringProposal,
   type ResumeTailoringRejectionReason,
+  type ResumeTailoringResearchMode,
 } from '@career-os/shared';
 import { callClaudeForResumeTailoring } from './claude/call-claude';
 import { MODEL_ID, RESUME_TAILORING_PROMPT_VERSION } from './config';
@@ -27,9 +28,18 @@ import { validateResumeTailoringContract } from './contract/validate-resume-tail
 import { buildResumeTailoringSystemPrompt } from './prompt/build-resume-tailoring-system-prompt';
 import { buildResumeTailoringUserPrompt } from './prompt/build-resume-tailoring-user-prompt';
 import { selectResumeTailoringFacts } from './retrieval/select-resume-tailoring-facts';
+import { resolveResumeTailoringResearchSnapshot } from './retrieval/resolve-resume-tailoring-research-snapshot';
 
 export interface GenerateResumeTailoringPlanParams {
   applicationId: string;
+  /** Phase 7H (docs/IMPLEMENTATION_PLAN.md "Phase 7H" §4/§36/§37) — defaults to `JOB_ONLY` when
+   * omitted, so every pre-7H call site (and every 7E/7F test) keeps its exact existing behavior
+   * unchanged. Company research is never assumed just because a snapshot exists. */
+  researchMode?: ResumeTailoringResearchMode;
+  /** An explicit snapshot the caller wants used — ignored entirely when `researchMode` is
+   * `JOB_ONLY` (§37). Never trusted blindly: re-resolved and ownership/compatibility-checked
+   * server-side in `resolveResumeTailoringResearchSnapshot` before anything else happens (§6). */
+  companyResearchSnapshotId?: string | null;
 }
 
 export type GenerateResumeTailoringPlanResult =
@@ -44,6 +54,14 @@ export type GenerateResumeTailoringPlanResult =
   /** No job snapshot exists for this application — there is nothing role-specific to tailor
    * toward (§4). */
   | { status: 'missing_job_snapshot' }
+  /** Phase 7H — an explicit `companyResearchSnapshotId` was given but doesn't resolve to a
+   * snapshot owned by this user (§6). Never returned for the no-explicit-id "use latest
+   * research" path, which degrades to `JOB_ONLY` instead (§4). */
+  | { status: 'research_snapshot_not_found' }
+  /** Phase 7H — an explicit `companyResearchSnapshotId` resolved to a real snapshot, but its
+   * frozen company/role/job-snapshot identity no longer matches this application's current
+   * context (§7) — never silently used. */
+  | { status: 'stale_company_research' }
   | { status: 'rate_limited'; usage: AiUsageCheck }
   | { status: 'provider_error'; message: string }
   | { status: 'validation_failed' }
@@ -69,6 +87,7 @@ function mapRejectionReason(
     case 'unknown_skill_group_id':
     case 'unknown_fact_id':
     case 'unknown_requirement_id':
+    case 'unknown_research_finding_id':
       return 'unknown_source_fact_id';
     case 'validation_failed':
     case 'invalid_skill_reorder':
@@ -101,6 +120,14 @@ function mapRejectionReason(
  * touches `applications`/`submission_packets` in any way (§21/§45) — its only durable side effect
  * is the best-effort `ai_usage_events` telemetry row below, and even that never fails the user's
  * actual request if the insert itself fails.
+ *
+ * Phase 7H (docs/IMPLEMENTATION_PLAN.md "Phase 7H") extends this same pipeline — never a parallel
+ * one — with an OPTIONAL, explicit company-research snapshot: `resolveResumeTailoringResearchSnapshot`
+ * (a free read, run before the rate-limit check) resolves at most one exact immutable Phase 7G
+ * snapshot, folds a bounded, ranked subset of its findings into this same single Claude call, and
+ * lets the model justify emphasis (never facts) with `researchFindingIds`. Zero additional
+ * Tavily/Claude calls are ever made here (§5/§27/§28/§65) — this pipeline only ever reads research
+ * that was already generated and persisted by the separate, explicit Phase 7G flow.
  */
 export async function generateResumeTailoringPlan(
   supabase: CareerOsSupabaseClient,
@@ -137,6 +164,32 @@ export async function generateResumeTailoringPlan(
     return { status: 'missing_job_snapshot' };
   }
 
+  // Step 1b — Phase 7H company-research snapshot resolution, still before any billed call: this
+  // is also a free read, and an explicit-but-invalid request is a real rejection that must not
+  // cost the user's quota (§6/§7).
+  const requestedResearchMode = params.researchMode ?? 'JOB_ONLY';
+  const researchResolution = await resolveResumeTailoringResearchSnapshot(supabase, userId, {
+    applicationId: application.id,
+    company: application.company,
+    title: application.title,
+    jobSnapshotId: application.jobSnapshotId,
+    researchMode: requestedResearchMode,
+    requestedSnapshotId: params.companyResearchSnapshotId ?? null,
+  });
+  if (researchResolution.status === 'not_found') {
+    return { status: 'research_snapshot_not_found' };
+  }
+  if (researchResolution.status === 'context_mismatch') {
+    return { status: 'stale_company_research' };
+  }
+  // `none` (JOB_ONLY, or JOB_PLUS_COMPANY_RESEARCH with nothing compatible found) degrades
+  // honestly rather than erroring (§4) — the proposal's own `researchMode` always reflects what
+  // ACTUALLY happened, never what was requested.
+  const researchSnapshot = researchResolution.status === 'ok' ? researchResolution.snapshot : null;
+  const effectiveResearchMode: ResumeTailoringResearchMode = researchSnapshot
+    ? 'JOB_PLUS_COMPANY_RESEARCH'
+    : 'JOB_ONLY';
+
   // Step 2 — rate limit, before any provider call (docs/AI_GROUNDING.md §7).
   const usage = await incrementOwnAiRequestUsage(supabase, userId);
   if (!usage.allowed) {
@@ -166,14 +219,30 @@ export async function generateResumeTailoringPlan(
     currentMapping,
     baseResume,
     facts,
+    researchSnapshot,
   });
-  const { allowedFactIds, factTextById, requirementContext, allowedRequirementIds, mappingIsMissing } =
-    promptBuild;
+  const {
+    allowedFactIds,
+    factTextById,
+    requirementContext,
+    allowedRequirementIds,
+    mappingIsMissing,
+    allowedResearchFindingIds,
+    researchFindingsById,
+    selectedResearchFindingCount,
+  } = promptBuild;
   const requirementTextById = new Map(requirementContext.map((r) => [r.id, r.text]));
 
   const runAttempt = async (retryReason?: string) => {
     const { userText } = retryReason
-      ? buildResumeTailoringUserPrompt({ snapshot, currentMapping, baseResume, facts, retryReason })
+      ? buildResumeTailoringUserPrompt({
+          snapshot,
+          currentMapping,
+          baseResume,
+          facts,
+          researchSnapshot,
+          retryReason,
+        })
       : promptBuild;
 
     const started = Date.now();
@@ -196,6 +265,7 @@ export async function generateResumeTailoringPlan(
       factIds: allowedFactIds,
       factTextById,
       requirementIds: allowedRequirementIds,
+      researchFindingIds: allowedResearchFindingIds,
     });
     if (deepResult.status !== 'ok') {
       return { kind: 'rejected' as const, reason: deepResult.reason, latencyMs };
@@ -283,11 +353,16 @@ export async function generateResumeTailoringPlan(
     requirementMappingRunId: currentRun?.id ?? null,
     baseResume,
     customLatexOverridePresent: baseResume.renderOverride !== null,
+    researchMode: effectiveResearchMode,
+    companyResearchSnapshotId: researchSnapshot?.id ?? null,
+    companyResearchResearchedAt: researchSnapshot?.researchedAt ?? null,
+    selectedResearchFindingCount,
     operations: buildResumeTailoringOperationViews(
       outcome.operations,
       baseResume,
       factTextById,
       requirementTextById,
+      researchFindingsById,
     ),
     summary: computeResumeTailoringSummary(outcome.operations),
     coverage: computeResumeTailoringCoverage(outcome.operations, requirementContext, mappingIsMissing),

@@ -24,9 +24,12 @@ const USER_ID = '22222222-2222-4222-8222-222222222222';
 const APPLICATION_ID = '44444444-4444-4444-8444-444444444444';
 const PARAMS = { params: Promise.resolve({ id: APPLICATION_ID }) };
 
-function postRequest(): Request {
+function postRequest(body?: unknown): Request {
   return new Request(`http://localhost/api/applications/${APPLICATION_ID}/resume-tailoring`, {
     method: 'POST',
+    ...(body !== undefined
+      ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+      : {}),
   });
 }
 
@@ -70,14 +73,61 @@ describe('POST /api/applications/[id]/resume-tailoring', () => {
     expect(mocks.generateResumeTailoringPlan).not.toHaveBeenCalled();
   });
 
-  it('never accepts a client-supplied resumeVersionId or any other body field — the only input is the URL id', async () => {
+  it('never accepts a client-supplied resumeVersionId — with no body, defaults to JOB_ONLY and no snapshot id', async () => {
     mocks.generateResumeTailoringPlan.mockResolvedValue({ status: 'ok', proposal: EMPTY_PROPOSAL });
     await POST(postRequest(), PARAMS);
-    expect(mocks.generateResumeTailoringPlan).toHaveBeenCalledWith(
-      expect.anything(),
-      USER_ID,
-      { applicationId: APPLICATION_ID },
+    expect(mocks.generateResumeTailoringPlan).toHaveBeenCalledWith(expect.anything(), USER_ID, {
+      applicationId: APPLICATION_ID,
+      researchMode: 'JOB_ONLY',
+      companyResearchSnapshotId: null,
+    });
+  });
+
+  it('rejects a malformed JSON body as invalid_request', async () => {
+    const response = await POST(
+      new Request(`http://localhost/api/applications/${APPLICATION_ID}/resume-tailoring`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: 'not json',
+      }),
+      PARAMS,
     );
+    expect(response.status).toBe(400);
+    expect(mocks.generateResumeTailoringPlan).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unrecognized researchMode value as invalid_request', async () => {
+    const response = await POST(postRequest({ researchMode: 'SOMETHING_ELSE' }), PARAMS);
+    expect(response.status).toBe(400);
+    expect(mocks.generateResumeTailoringPlan).not.toHaveBeenCalled();
+  });
+
+  it('forwards an explicit JOB_PLUS_COMPANY_RESEARCH request with a companyResearchSnapshotId', async () => {
+    const SNAPSHOT_ID = '99999999-9999-4999-8999-999999999999';
+    mocks.generateResumeTailoringPlan.mockResolvedValue({ status: 'ok', proposal: EMPTY_PROPOSAL });
+    await POST(
+      postRequest({ researchMode: 'JOB_PLUS_COMPANY_RESEARCH', companyResearchSnapshotId: SNAPSHOT_ID }),
+      PARAMS,
+    );
+    expect(mocks.generateResumeTailoringPlan).toHaveBeenCalledWith(expect.anything(), USER_ID, {
+      applicationId: APPLICATION_ID,
+      researchMode: 'JOB_PLUS_COMPANY_RESEARCH',
+      companyResearchSnapshotId: SNAPSHOT_ID,
+    });
+  });
+
+  it('returns 200 with research_snapshot_not_found for an explicit id that cannot be resolved', async () => {
+    mocks.generateResumeTailoringPlan.mockResolvedValue({ status: 'research_snapshot_not_found' });
+    const response = await POST(postRequest({ researchMode: 'JOB_PLUS_COMPANY_RESEARCH' }), PARAMS);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ status: 'research_snapshot_not_found' });
+  });
+
+  it('returns 200 with stale_company_research when the snapshot no longer matches this application', async () => {
+    mocks.generateResumeTailoringPlan.mockResolvedValue({ status: 'stale_company_research' });
+    const response = await POST(postRequest({ researchMode: 'JOB_PLUS_COMPANY_RESEARCH' }), PARAMS);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ status: 'stale_company_research' });
   });
 
   it('returns 404 when the application does not exist or is not owned by the caller', async () => {

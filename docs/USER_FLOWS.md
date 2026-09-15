@@ -147,8 +147,33 @@ false`, `visibleOnPublicProfile = false`. Nothing extracted is usable until step
    and numbered source citations you can open, and the full source list with publisher and
    publication date when known. Previous research snapshots remain available and unchanged —
    refreshing always creates a new snapshot rather than editing the old one.
-5. Company research does not yet affect résumé tailoring (§3C) or interview prep — that
-   intersection is planned for a later phase (see `docs/COMPANY_RESEARCH.md`).
+5. Company research does not affect interview prep yet — that intersection is planned for a later
+   phase. It CAN optionally inform résumé tailoring, as of Phase 7H (§3E below).
+
+## 3E. Research-aware résumé tailoring (Phase 7H)
+
+1. Extends §3C — never a separate flow. If a company-research snapshot exists for this
+   application, the tailoring panel shows two radio options above the "Tailor resume for this job"
+   button: "Use latest research — <date>" (selected by default when research exists) and "Tailor
+   using job posting only." If no snapshot exists yet, the panel simply notes that and links to
+   "Research company first" — with zero friction to tailor immediately without it.
+2. Clicking "Tailor resume for this job" makes ONE Claude call, exactly as in §3C — never a second
+   research call. If research mode is selected, the server resolves the exact snapshot (the one
+   just shown, or the application's latest compatible one), never re-searches, and folds a bounded,
+   ranked subset of its findings into that same call.
+3. The proposal now shows a small "Tailoring context" note: which job posting, and — when used —
+   the company research date and how many findings were considered, with a link back to the full
+   research page. When research wasn't used, it says so plainly rather than implying it was.
+4. Individual operations may show a "Company relevance" note (e.g. "Company relevance: Directly
+   relevant to this engineering role · View research") explaining why a reorder/omission/rewrite
+   matters for this specific company — this is never presented as something the candidate did, and
+   it never appears as a reason a bullet's text itself changed unless that text is also grounded in
+   the candidate's own approved facts. Accept/reject/edit works exactly as in §3C.
+5. Saving (§3C step 5) is unchanged except that the new résumé version silently carries the exact
+   research snapshot id, if any, that informed it — purely for later audit ("which research
+   informed this version"), never surfaced as a blocking requirement. If the company's research is
+   refreshed afterward, the saved version keeps its original reference; nothing is retroactively
+   repointed, and no new tailoring or version is ever created automatically by a refresh.
 
 ## 4. Job analysis via the extension
 

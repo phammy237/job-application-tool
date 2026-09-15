@@ -102,6 +102,7 @@ const REWRITE_B1: ResumeTailoringOperationView = {
   after: 'Led the referral workflow rebuild',
   groundedFacts: [{ id: FACT_1, label: 'Led a team of 5 engineers' }],
   relevantRequirements: [{ id: 'req-1', text: '5+ years of engineering experience' }],
+  companyRelevance: [],
   reason: 'Emphasizes leadership',
 };
 
@@ -112,6 +113,7 @@ const ADD_TO_EXP1: ResumeTailoringOperationView = {
   after: 'Shipped the referral feature end to end',
   groundedFacts: [{ id: FACT_1, label: 'Led a team of 5 engineers' }],
   relevantRequirements: [{ id: 'req-2', text: 'Ownership of a feature end to end' }],
+  companyRelevance: [],
   reason: 'Adds grounded coverage',
 };
 
@@ -120,6 +122,7 @@ const OMIT_B2: ResumeTailoringOperationView = {
   bulletId: 'b2',
   entryLabel: 'Engineer at Acme',
   omittedText: 'Improved onboarding flow',
+  companyRelevance: [],
   reason: 'Not relevant',
 };
 
@@ -127,6 +130,7 @@ const OMIT_EXP2: ResumeTailoringOperationView = {
   type: 'OMIT_ENTRY',
   entryId: 'exp-2',
   entryLabel: 'Intern at Beta Corp',
+  companyRelevance: [],
   reason: 'Not relevant',
 };
 
@@ -137,6 +141,7 @@ const MOVE_B3: ResumeTailoringOperationView = {
   movedText: 'Wrote documentation',
   fromIndex: 2,
   toIndex: 0,
+  companyRelevance: [],
   reason: 'Lead with this',
 };
 
@@ -146,6 +151,7 @@ const MOVE_EXP2: ResumeTailoringOperationView = {
   entryLabel: 'Intern at Beta Corp',
   fromIndex: 1,
   toIndex: 0,
+  companyRelevance: [],
   reason: 'Lead with this',
 };
 
@@ -154,6 +160,7 @@ const REORDER: ResumeTailoringOperationView = {
   before: ['Languages', 'Frameworks'],
   after: ['Frameworks', 'Languages'],
   orderedSkillGroupIds: ['skill-2', 'skill-1'],
+  companyRelevance: [],
   reason: 'Frameworks first',
 };
 

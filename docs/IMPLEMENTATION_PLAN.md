@@ -122,6 +122,22 @@ phase depends on a later phase's output.
       (`create_company_research_snapshot`, migration 0025) persists an immutable snapshot. Never
       sends candidate facts/résumé content anywhere; never touches résumé tailoring or interview
       prep. Full design record: `docs/COMPANY_RESEARCH.md`.
+- [x] Phase 7H — Research-aware résumé tailoring: extends the SAME Phase 7E pipeline (never a
+      parallel one) with an OPTIONAL, explicit company-research snapshot. "COMPANY RESEARCH MAY
+      CHANGE RELEVANCE. COMPANY RESEARCH MAY NOT CREATE CANDIDATE FACTS." A user chooses
+      `JOB_ONLY` (unchanged 7E behavior) or `JOB_PLUS_COMPANY_RESEARCH`; the server resolves at
+      most one exact, immutable, ownership- and context-checked Phase 7G snapshot (never the
+      client's own claim), selects a bounded, ranked subset of its findings, and folds them into
+      the same single Claude call as a THIRD, strictly separate citation bucket
+      (`researchFindingIds`) — never merged with `sourceFactIds` (factual grounding) or
+      `requirementIds` (role grounding). The existing numeric/technology guards are structurally
+      untouched: their evidence text is still built only from cited approved facts and the
+      original bullet, so a company-research claim can never itself satisfy them. Zero additional
+      Tavily/Claude calls (this pipeline only reads an already-persisted 7G snapshot). A saved
+      tailored résumé version optionally carries the exact snapshot id that informed it
+      (`resume_versions.company_research_snapshot_id`, migration 0028) — immutable, snapshot
+      IDENTITY not latestness, and never repointed by a later research refresh. Full design
+      record: this section below.
 - [ ] Phase 7 — Multi-user beta hardening, privacy controls, testing, deployment
 - [ ] Phase 8 — Optional mypham.space integration, public onboarding, future sharing
 
@@ -4369,7 +4385,168 @@ existing suite (1,491 tests across every workspace) with zero regressions.
 
 ### Explicitly deferred to Phase 7H+
 
-Research-aware résumé tailoring (7E/7F reading a `companyResearchSnapshotId`), research-aware
-interview prep, a `companies` table (no architectural need surfaced), snapshot diffing, automatic/
-scheduled refresh, a numeric source-quality score, and any second AI call in this phase's own
-pipeline (synthesis is the only one, with its existing one-retry policy).
+Research-aware interview prep, a `companies` table (no architectural need surfaced), snapshot
+diffing, automatic/scheduled refresh, a numeric source-quality score, and any second AI call in
+this phase's own pipeline (synthesis is the only one, with its existing one-retry policy).
+Research-aware résumé tailoring itself shipped in Phase 7H, below.
+
+## Phase 7H — Research-aware résumé tailoring
+
+Extends the SAME Phase 7E/7F pipeline (never a redesign, never a parallel one) so an exact,
+immutable Phase 7G company-research snapshot may influence which candidate evidence is emphasized
+during résumé tailoring, without ever creating a candidate fact from company research. The two
+hard rules that shaped every design decision here: "COMPANY RESEARCH MAY CHANGE RELEVANCE" and
+"COMPANY RESEARCH MAY NOT CREATE CANDIDATE FACTS."
+
+### The reasoning model
+
+`JOB REQUIREMENTS ∩ COMPANY PRIORITIES ∩ APPROVED CANDIDATE EVIDENCE → grounded tailoring
+operations`. Concretely: research may justify reordering, omitting, or re-emphasizing *already-
+grounded* content ("this project is more relevant to a company investing in AI right now"); it may
+never add a technology, metric, or claim whose only support is the research itself ("the company
+uses Snowflake" is never grounds for "I used Snowflake").
+
+### Three separate, never-merged provenance buckets
+
+Every tailoring operation can now carry up to three independent citation fields, and the deep
+validator (`validateResumeTailoringPlan`) checks each against its own request-local allowlist:
+
+- `sourceFactIds` — FACTUAL GROUNDING. The only source of truth for "is this claim true."
+- `requirementIds` — ROLE GROUNDING. Which job requirement(s) this addresses.
+- `researchFindingIds` (new, OPTIONAL on every operation type) — COMPANY RELEVANCE. Explains WHY
+  emphasizing this already-true content is strategically relevant *for this company right now* —
+  never evidence that it's true. `ADD_BULLET` still requires `sourceFactIds.length >= 1`;
+  `researchFindingIds` can never substitute for it, and a plan that tries is rejected exactly like
+  any other missing-citation `ADD_BULLET`.
+
+The numeric/technology guards (`resume-tailoring-numeric-guard.ts` /
+`resume-tailoring-technology-guard.ts`) are structurally untouched: their `evidenceTexts` are still
+built ONLY from cited approved-fact text and (for a rewrite) the original bullet text. Company-
+research finding text is never added to that array anywhere in the pipeline — this is what
+guarantees, by construction rather than by a runtime check alone, that "Company uses Snowflake"
+can never itself ground "Built analytics pipelines with Snowflake," even when the operation cites
+that exact finding via `researchFindingIds`. Verified with dedicated adversarial tests (a $10B-
+company-metric rewrite, a Snowflake-via-research-citation rewrite, a Kubernetes-not-in-candidate-
+evidence rewrite) in both `validate-resume-tailoring-plan.test.ts` and
+`generate-resume-tailoring-plan.test.ts`.
+
+### Snapshot resolution — explicit, optional, never automatic
+
+`resolveResumeTailoringResearchSnapshot` (`packages/ai/src/retrieval/`) is the one gate a snapshot
+passes through before it can influence anything:
+
+- **Explicit id requested** (`companyResearchSnapshotId` in the request): resolved via the same
+  RLS-scoped, ownership-checked read Phase 7G's own research page uses
+  (`getOwnCompanyResearchSnapshot`); a miss is `research_snapshot_not_found` (a real, surfaced
+  rejection — the caller asked for something specific).
+- **No explicit id, `JOB_PLUS_COMPANY_RESEARCH` requested** ("use latest research"): the
+  application's most recent snapshots (bounded, `RESEARCH_TAILORING_AUTO_RESOLVE_CANDIDATE_LIMIT`)
+  are checked in turn; the first COMPATIBLE one wins. None compatible/none exist → silently
+  degrades to `JOB_ONLY` (never an error — nothing specific was ever promised, and 7E's existing
+  behavior is exactly preserved for every application with no research).
+- **Compatibility** (`isCompanyResearchSnapshotCompatible`, `packages/shared`): the snapshot's own
+  frozen `companyName` must match the application's current `company`; if the snapshot recorded a
+  `jobSnapshotId`, that alone decides the rest (the strongest identity signal available); otherwise
+  `roleTitle` is the fallback proxy. A mismatch (company renamed, job reposted) is
+  `stale_company_research` for an explicit request, or a silent `JOB_ONLY` degrade for the
+  "latest" path.
+- **Never triggers Phase 7G itself.** "Tailor resume for this job" makes zero Tavily calls and zero
+  extra Claude calls — it only ever reads a snapshot Phase 7G already persisted.
+
+### Bounded, minimized research context
+
+`selectResumeTailoringResearchFindings` (`packages/shared`, pure and unit-tested) ranks a
+snapshot's findings by (1) overlap with this request's own job-requirement ids, (2) whether the
+model recorded a `roleRelevance` at research time, (3) a SOFT category boost (PRODUCT/STRATEGY/
+TECHNOLOGY/HIRING/RECENT_DEVELOPMENT) that never excludes a BUSINESS/CULTURE finding outright —
+ties break by original order for determinism. At most `RESEARCH_TAILORING_MAX_FINDINGS` (10,
+`packages/ai/src/config.ts`) are folded into a new `<company_research_snapshot id="...">` prompt
+section, each reduced to `{id, category, claim, roleRelevance, requirementIds, sourceTypes}` — no
+source excerpts, no URLs, no unselected findings, no other historical snapshot.
+
+### What's new
+
+Migration 0028: `resume_versions.company_research_snapshot_id` (nullable, composite FK to
+`company_research_snapshots(user_id, id)`, deliberately `ON DELETE RESTRICT` rather than `SET
+NULL` — see "Deletion semantics" below); `save_reviewed_tailored_resume` gains an optional
+`p_company_research_snapshot_id` parameter (dropped and recreated, per migration 0021's own
+precedent for adding a parameter to an existing RPC). `create_resume_version` is deliberately
+UNCHANGED — its non-tailoring callers (Resume Studio's manual save) simply insert null for the new
+column, since it's nullable with no default reference.
+
+`packages/shared`: `resumeTailoringOperationSchema` gains optional `researchFindingIds` on every
+variant; `resumeTailoringOperationViewSchema` gains resolved `companyRelevance` on every variant;
+`resumeTailoringSummarySchema` gains server-computed `researchFindingsReferenced`/
+`operationsInfluencedByResearch`; `resumeTailoringProposalSchema` gains `researchMode`,
+`companyResearchSnapshotId`, `companyResearchResearchedAt`, `selectedResearchFindingCount`;
+`resumeVersionSchema` gains `companyResearchSnapshotId`; new pure modules
+`select-resume-tailoring-research-findings.ts` and `is-company-research-snapshot-compatible.ts`;
+`validateResumeTailoringPlan` gains a `researchFindingIds` allowlist and
+`unknown_research_finding_id` rejection; `resume-tailoring-response.ts` resolves `companyRelevance`
+and computes the two new summary counts; `saveReviewedTailoredResumeInputSchema` gains an optional
+`companyResearchSnapshotId`.
+
+`packages/ai`: `resolveResumeTailoringResearchSnapshot` (new); `buildResumeTailoringUserPrompt`
+gains `researchSnapshot` and returns `allowedResearchFindingIds`/`researchFindingsById`/
+`selectedResearchFindingCount`; the system prompt gains explicit company-vs-candidate boundary
+language; the JSON schema in `callClaudeForResumeTailoring` gains `researchFindingIds`;
+`generateResumeTailoringPlan` gains `researchMode`/`companyResearchSnapshotId` params, two new
+result statuses (`research_snapshot_not_found`, `stale_company_research`), and threads the
+resolved snapshot through prompt build → validator allowlist → response builder → proposal fields
+— still exactly one attempt + one retry, task_type still `resume_tailoring`.
+
+`packages/database`: `rowToResumeVersion` maps the new column; `saveReviewedTailoredResume` accepts
+and forwards an optional `companyResearchSnapshotId`; a new `SaveReviewedTailoredResumeRejection`
+value `company_research_snapshot_not_found`.
+
+`apps/web`: `POST .../resume-tailoring` accepts an optional `{researchMode,
+companyResearchSnapshotId}` body (empty/absent body still behaves exactly as before);
+`POST .../resume-tailoring/save` re-verifies ownership of any `companyResearchSnapshotId` (defense
+in depth — degrades to `null` rather than blocking the save if it no longer resolves, since losing
+only the audit link is more honest than refusing a save over it); `ResumeTailoringPanel` gets a
+mode selector (radios, shown only when a snapshot exists, never mandatory); the application detail
+page fetches the latest snapshot summary; `ResumeTailoringReviewSession` shows a "Tailoring
+context" header and per-operation "Company relevance" notes (human-readable, no UUIDs, linking to
+the canonical research page) without changing accept/reject/edit/save semantics at all.
+
+### Deletion semantics — a deliberate narrowing of Phase 7G
+
+Once a résumé version has been saved referencing a snapshot, `ON DELETE RESTRICT` blocks deleting
+that snapshot (a real, documented narrowing of 7G's original "owner can always delete their own
+research" behavior) rather than `SET NULL`, for two reasons: (1) once a résumé version explicitly
+references a research artifact, silently losing that identity to a later delete is dishonest audit-
+wise; (2) `resume_versions` already carries the same blanket-immutability-trigger-vs-FK-SET-NULL
+conflict this codebase hit for real in Phase 7G (migration 0027) — reusing `SET NULL` here would
+require a second bespoke immutability-exception trigger rather than reusing that fix, for a
+marginal benefit RESTRICT already delivers more honestly. An UNREFERENCED snapshot remains exactly
+as deletable as before. Documented in `docs/COMPANY_RESEARCH.md`.
+
+### Tests
+
+`packages/shared`: new `select-resume-tailoring-research-findings.test.ts` and
+`is-company-research-snapshot-compatible.test.ts`; extended `resume-tailoring.test.ts` (schema),
+`resume-tailoring-response.test.ts`, `validate-resume-tailoring-plan.test.ts` (a dedicated Phase 7H
+describe block covering acceptance, unknown-id rejection, empty-allowlist rejection, and the two
+CRITICAL adversarial guards), `resume-version.test.ts`. `packages/ai`: extended
+`generate-resume-tailoring-plan.test.ts` with a full Phase 7H describe block (default-JOB_ONLY
+regression, explicit-JOB_ONLY-ignores-id, honest-degrade, not_found, stale_company_research, R1-
+stays-valid-after-R2-exists, auto-resolve, companyRelevance resolution, unknown-finding-id
+rejection, the two CRITICAL grounding-bypass adversarial tests, and a call-count audit proving zero
+extra Claude/search calls). `packages/database`: extended `resume-versions.test.ts` and
+`resume-tailoring-save.test.ts`. `apps/web`: extended `route.test.ts` (generate) and
+`save/route.test.ts` with Phase 7H describe blocks, extended `resume-tailoring-panel.test.tsx` and
+`resume-tailoring-review-session.test.tsx` with mode-selector and company-relevance-display
+coverage. `supabase/tests/database`: new `0031_resume_version_company_research_provenance.test.sql`
+(11 assertions, live-verified against the linked project) covering backward compatibility (omitted
+param → null), cross-user rejection, the happy path, snapshot-identity-not-latestness (R1 stays
+valid after R2 exists), immutability, the FK RESTRICT guarantee (and that an unreferenced snapshot
+stays deletable), and cross-user RLS isolation. All run alongside the full existing suite with zero
+regressions.
+
+### Explicitly deferred beyond Phase 7H
+
+Research-aware interview prep (still Phase 7I+), any UI affordance implying the candidate is
+affiliated with a company initiative, a merged "fit score" of any kind (still explicitly
+prohibited), automatic/scheduled research refresh, and retroactively backfilling
+`company_research_snapshot_id` onto résumé versions saved before this phase (they simply keep
+`null` — real, honest history, not reinterpreted).

@@ -16,6 +16,7 @@ export type ResumeTailoringRejectionReason =
   | 'invalid_skill_reorder'
   | 'unknown_fact_id'
   | 'unknown_requirement_id'
+  | 'unknown_research_finding_id'
   | 'invalid_target_index'
   | 'operation_conflict'
   | 'ungrounded_number'
@@ -35,6 +36,13 @@ export interface ResumeTailoringAllowlists {
    * over the job snapshot's own qualification lists (mapping absent, §5). Request-local either
    * way. */
   requirementIds: ReadonlySet<string>;
+  /** Phase 7H (§14) — every company-research finding id actually placed in this request's
+   * prompt, scoped to the ONE snapshot resolved for this request. Empty when `researchMode` is
+   * `JOB_ONLY` or no snapshot was resolved — a `researchFindingIds` citation is then always
+   * rejected, exactly like citing a fact id that was never offered. A finding from a different
+   * snapshot (even the user's own) or a different user is never in this set (docs/
+   * IMPLEMENTATION_PLAN.md "Phase 7H" §14). */
+  researchFindingIds: ReadonlySet<string>;
 }
 
 interface BulletLocation {
@@ -163,6 +171,19 @@ export function validateResumeTailoringPlan(
         }
       }
     }
+    // Phase 7H §14 — same request-local-allowlist discipline as sourceFactIds/requirementIds
+    // above: a finding from another snapshot, another user, or simply not offered this request is
+    // always rejected, never resolved against "any finding that exists in the database."
+    if ('researchFindingIds' in op) {
+      for (const findingId of op.researchFindingIds) {
+        if (!allowlists.researchFindingIds.has(findingId)) {
+          return rejected(
+            'unknown_research_finding_id',
+            `researchFindingId "${findingId}" was not offered in this request`,
+          );
+        }
+      }
+    }
   }
 
   // ---- Pass 2: conflict matrix (docs/IMPLEMENTATION_PLAN.md "Phase 7E" §18) — at most one
@@ -259,7 +280,12 @@ export function validateResumeTailoringPlan(
   }
 
   // ---- Pass 4: deterministic numeric/technology grounding for every newly-proposed text
-  // (docs/IMPLEMENTATION_PLAN.md "Phase 7E" §15/§16). ----
+  // (docs/IMPLEMENTATION_PLAN.md "Phase 7E" §15/§16). Phase 7H §15/§16/§17: `evidenceTexts` is
+  // built ONLY from cited approved-fact text and (for a rewrite) the original bullet text — it
+  // must NEVER include any company-research finding text (claim/roleRelevance), no matter how
+  // many findings an operation cites. This is the structural guarantee that a company-research
+  // fact (e.g. "Company uses Snowflake") can never itself satisfy the numeric/technology guard for
+  // a candidate claim — company relevance can justify WHY an edit matters, never WHAT is true. ----
   for (const op of operations) {
     if (op.type !== 'REWRITE_BULLET' && op.type !== 'ADD_BULLET') continue;
 

@@ -86,6 +86,7 @@ const REWRITE_B1: ResumeTailoringOperationView = {
   after: 'Led the referral workflow rebuild for 5 engineers',
   groundedFacts: [{ id: FACT_1, label: 'Led a team of 5 engineers' }],
   relevantRequirements: [],
+  companyRelevance: [],
   reason: 'x',
 };
 
@@ -134,6 +135,7 @@ describe('validateResumeTailoringSaveSubmission', () => {
       after: 'New bullet',
       groundedFacts: [{ id: FACT_1, label: 'Led a team of 5 engineers' }],
       relevantRequirements: [],
+      companyRelevance: [],
       reason: 'x',
     };
     const result = validate({ operations: [op('op-0', addOp)] });
@@ -146,6 +148,7 @@ describe('validateResumeTailoringSaveSubmission', () => {
       before: ['Languages', 'Frameworks'],
       after: ['Frameworks', 'Made Up'],
       orderedSkillGroupIds: ['skill-2', 'not-real'],
+      companyRelevance: [],
       reason: 'x',
     };
     const result = validate({
@@ -163,6 +166,7 @@ describe('validateResumeTailoringSaveSubmission', () => {
       movedText: 'Built the referral workflow',
       fromIndex: 0,
       toIndex: 1,
+      companyRelevance: [],
       reason: 'x',
     };
     const result = validate({
@@ -180,6 +184,7 @@ describe('validateResumeTailoringSaveSubmission', () => {
       type: 'OMIT_ENTRY',
       entryId: 'exp-1',
       entryLabel: 'Engineer at Acme',
+      companyRelevance: [],
       reason: 'x',
     };
     const result = validate({

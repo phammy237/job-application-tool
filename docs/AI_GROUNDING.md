@@ -455,3 +455,47 @@ captured — the grounding posture is correspondingly stricter.
 - **The executive summary is derived, not generated.** `buildCompanyResearchSummary` builds the
   user-facing summary purely from already-validated findings' own `claim` text — there is no
   separate model-authored summary field that could introduce a claim no finding supports.
+
+## 14. Research-aware résumé tailoring (Phase 7H) — a third provenance bucket that never grounds a claim
+
+Extends §11/§12's résumé tailoring, not a new pipeline. The hard rule: **COMPANY RESEARCH MAY
+CHANGE RELEVANCE. COMPANY RESEARCH MAY NOT CREATE CANDIDATE FACTS.**
+
+- **Three provenance buckets, never merged.** Every operation may independently cite
+  `sourceFactIds` (factual grounding — the only source of truth for "is this true"),
+  `requirementIds` (role grounding — "does this address a job requirement"), and now
+  `researchFindingIds` (company relevance — "why does emphasizing this matter for this company
+  right now"). `validateResumeTailoringPlan` validates each against its own request-local
+  allowlist independently; citing a research finding never satisfies the fact-id or requirement-id
+  checks, and vice versa.
+- **The numeric/technology guards never see research text — this is structural, not a runtime
+  check alone.** `evidenceTexts` (the text the guards compare a proposed claim against) is built
+  ONLY from cited approved-fact text and, for a rewrite, the original bullet text — company-
+  research finding text (`claim`/`roleRelevance`) is never appended to it anywhere in the code, no
+  matter how many findings an operation cites via `researchFindingIds`. Concretely: a finding
+  stating "Company uses Snowflake" can justify *reordering or keeping visible* a genuinely
+  Snowflake-related bullet the candidate already has real evidence for, but citing that same
+  finding can never make "Built analytics pipelines with Snowflake" pass the technology guard if
+  no approved fact or existing bullet already says so — the guard would reject it exactly as if no
+  finding had been cited at all. Verified with dedicated adversarial tests in both
+  `validate-resume-tailoring-plan.test.ts` and `generate-resume-tailoring-plan.test.ts` (a
+  Snowflake-via-citation rewrite and a $10B-company-metric rewrite, both rejected).
+- **`ADD_BULLET` still requires real evidence.** `sourceFactIds.length >= 1` is unchanged;
+  `researchFindingIds` can never substitute for it — an add citing only research findings is
+  rejected at the schema layer before the deep validator even runs.
+- **Research findings are bounded, ranked, and minimized before they ever reach the model.**
+  `selectResumeTailoringResearchFindings` (pure, `packages/shared`) selects at most
+  `RESEARCH_TAILORING_MAX_FINDINGS` findings, reduced to `{id, category, claim, roleRelevance,
+  requirementIds, sourceTypes}` — never full source excerpts, URLs, or the snapshot's other
+  findings — same data-minimization posture as §6.
+- **The snapshot itself is never trusted from the client.** `resolveResumeTailoringResearchSnapshot`
+  re-resolves and ownership/compatibility-checks any requested `companyResearchSnapshotId`
+  server-side before it can influence anything (docs/IMPLEMENTATION_PLAN.md "Phase 7H" §6/§7) — a
+  stale or foreign snapshot is a real, surfaced rejection, never silently used.
+- **Zero additional provider calls.** This pipeline reads an already-persisted Phase 7G snapshot;
+  it never calls Tavily and never makes a second Claude call. Résumé tailoring remains exactly one
+  attempt plus one retry, `task_type` still `resume_tailoring` — no new telemetry category, no
+  double-counted `company_research` event.
+- **UI language describes the company, never the candidate (§67 of the phase brief).** "Company
+  research suggests this experience is particularly relevant" is correct; "you worked on a company
+  priority" is not — the review UI is worded accordingly, and no UUID is ever shown to the user.

@@ -44,6 +44,62 @@ type SaveState =
   | { kind: 'validation_failed'; reason?: string }
   | { kind: 'error'; message: string };
 
+/**
+ * Phase 7H (§34) — a small, informational header stating exactly what this proposal was tailored
+ * against: never implies research is mandatory, and always reflects the ACTUAL mode used
+ * (`proposal.researchMode`), never what the user may have requested — e.g. a `JOB_PLUS_COMPANY_
+ * RESEARCH` request silently degrades to `JOB_ONLY` server-side when no compatible snapshot
+ * exists (docs/IMPLEMENTATION_PLAN.md "Phase 7H" §4), and this header shows that outcome plainly.
+ */
+function TailoringContextHeader({
+  applicationId,
+  proposal,
+}: {
+  applicationId: string;
+  proposal: ResumeTailoringProposal;
+}) {
+  return (
+    <div className="border-border space-y-1 rounded-lg border p-3 text-xs">
+      <p className="text-muted-foreground font-medium uppercase tracking-wide">
+        Tailoring context
+      </p>
+      <p>Job posting: current snapshot</p>
+      {proposal.researchMode === 'JOB_PLUS_COMPANY_RESEARCH' &&
+      proposal.companyResearchResearchedAt ? (
+        <p>
+          Company research: {formatShortDate(proposal.companyResearchResearchedAt)} —{' '}
+          {proposal.selectedResearchFindingCount} selected finding
+          {proposal.selectedResearchFindingCount === 1 ? '' : 's'} ·{' '}
+          <Link
+            href={`/applications/${applicationId}/company-research`}
+            className="text-primary hover:underline"
+          >
+            View company research
+          </Link>
+        </p>
+      ) : (
+        <p>
+          Company research: Not used ·{' '}
+          <Link
+            href={`/applications/${applicationId}/company-research`}
+            className="text-primary hover:underline"
+          >
+            Research company
+          </Link>
+        </p>
+      )}
+    </div>
+  );
+}
+
+function formatShortDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
+}
+
 function labelForDecision(decision: Decision): string {
   switch (decision) {
     case 'ACCEPTED':
@@ -213,6 +269,10 @@ export function ResumeTailoringReviewSession({
             baseResumeVersionId: proposal.baseResumeVersionId,
             jobSnapshotId: proposal.jobSnapshotId,
             acknowledgeCustomLatexOverrideReset: acknowledgeOverrideReset,
+            // Phase 7H (§9/§41) — the exact snapshot this proposal was generated against, echoed
+            // back verbatim so the saved version can carry immutable research provenance. Never
+            // re-resolved to "whatever is latest now" — identity, not latestness (§9).
+            companyResearchSnapshotId: proposal.companyResearchSnapshotId,
             operations: operations.map(({ operationId, operation }) => ({
               operationId,
               operation,
@@ -255,6 +315,8 @@ export function ResumeTailoringReviewSession({
 
   return (
     <div className="space-y-4">
+      <TailoringContextHeader applicationId={applicationId} proposal={proposal} />
+
       {proposal.customLatexOverridePresent ? (
         <div className="border-destructive/50 bg-destructive/5 space-y-2 rounded-lg border p-3">
           <p className="text-destructive text-sm">
@@ -314,6 +376,7 @@ export function ResumeTailoringReviewSession({
           {visibleOperations.map(({ operationId, operation }) => (
             <OperationCard
               key={operationId}
+              applicationId={applicationId}
               operationId={operationId}
               operation={operation}
               decision={decisionFor(operationId)}
@@ -412,6 +475,7 @@ export function ResumeTailoringReviewSession({
 }
 
 function OperationCard({
+  applicationId,
   operationId,
   operation,
   decision,
@@ -425,6 +489,7 @@ function OperationCard({
   onSaveEdit,
   onClearEdit,
 }: {
+  applicationId: string;
   operationId: string;
   operation: ResumeTailoringOperationView;
   decision: Decision;
@@ -482,6 +547,8 @@ function OperationCard({
           ))}
         </div>
       ) : null}
+
+      <CompanyRelevanceNote applicationId={applicationId} companyRelevance={operation.companyRelevance} />
 
       <p className="text-muted-foreground text-xs">{operation.reason}</p>
 
@@ -566,6 +633,39 @@ function OperationCard({
         </div>
       )}
     </li>
+  );
+}
+
+/**
+ * Phase 7H (§32/§33/§67) — resolves `researchFindingIds` into human-readable context. Never a raw
+ * UUID, never a full source list (the research page is the canonical place for full citations —
+ * this is just enough context to see WHY the operation is relevant, with a link out). Wording is
+ * deliberately about the COMPANY, never the candidate (§67): "Company relevance: <claim>", never
+ * "You worked on..." or "Your company work".
+ */
+function CompanyRelevanceNote({
+  applicationId,
+  companyRelevance,
+}: {
+  applicationId: string;
+  companyRelevance: ResumeTailoringOperationView['companyRelevance'];
+}) {
+  if (companyRelevance.length === 0) return null;
+  return (
+    <div className="border-border/60 space-y-1 border-l-2 pl-2 text-xs">
+      <p className="text-muted-foreground font-medium">Company relevance:</p>
+      {companyRelevance.map((item) => (
+        <p key={item.id} className="text-muted-foreground">
+          • {item.roleRelevance ?? item.claim}
+        </p>
+      ))}
+      <Link
+        href={`/applications/${applicationId}/company-research`}
+        className="text-primary hover:underline"
+      >
+        View research
+      </Link>
+    </div>
   );
 }
 

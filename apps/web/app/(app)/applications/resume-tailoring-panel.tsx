@@ -1,7 +1,8 @@
 'use client';
 
-import type { ResumeTailoringProposal } from '@career-os/shared';
+import type { ResumeTailoringProposal, ResumeTailoringResearchMode } from '@career-os/shared';
 import { Button } from '@career-os/ui';
+import Link from 'next/link';
 import { useCallback, useState } from 'react';
 import { ResumeTailoringReviewSession } from './resume-tailoring-review-session';
 
@@ -13,7 +14,14 @@ type GenerationState =
   | { status: 'unsupported_resume_format' }
   | { status: 'missing_job_snapshot' }
   | { status: 'rate_limited' }
+  | { status: 'research_snapshot_not_found' }
+  | { status: 'stale_company_research' }
   | { status: 'error'; message: string };
+
+export interface LatestCompanyResearchSummary {
+  id: string;
+  researchedAt: string;
+}
 
 /**
  * Phase 7E generates the proposal (docs/IMPLEMENTATION_PLAN.md "Phase 7E") — an explicit,
@@ -23,9 +31,24 @@ type GenerationState =
  * FollowUpDraftPanel: the only network call this top-level component makes on its own is the one
  * POST triggered by clicking "Tailor resume for this job" (or "Regenerate") — the review session
  * below makes its own single POST only when the user explicitly clicks Save.
+ *
+ * Phase 7H (docs/IMPLEMENTATION_PLAN.md "Phase 7H" §35/§36/§37) — when `latestCompanyResearch` is
+ * given (a snapshot exists for this application), a mode selector lets the user choose whether to
+ * fold it into this generation. Company research is NEVER mandatory just because a snapshot
+ * exists: with no snapshot, the button behaves exactly as it always has, and even with one, the
+ * user can still choose "Tailor using job posting only" with zero friction.
  */
-export function ResumeTailoringPanel({ applicationId }: { applicationId: string }) {
+export function ResumeTailoringPanel({
+  applicationId,
+  latestCompanyResearch,
+}: {
+  applicationId: string;
+  latestCompanyResearch: LatestCompanyResearchSummary | null;
+}) {
   const [generation, setGeneration] = useState<GenerationState>({ status: 'idle' });
+  const [researchMode, setResearchMode] = useState<ResumeTailoringResearchMode>(
+    latestCompanyResearch ? 'JOB_PLUS_COMPANY_RESEARCH' : 'JOB_ONLY',
+  );
 
   const generate = useCallback(async () => {
     if (
@@ -43,6 +66,13 @@ export function ResumeTailoringPanel({ applicationId }: { applicationId: string 
         `/api/applications/${applicationId}/resume-tailoring`,
         {
           method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            researchMode,
+            ...(researchMode === 'JOB_PLUS_COMPANY_RESEARCH' && latestCompanyResearch
+              ? { companyResearchSnapshotId: latestCompanyResearch.id }
+              : {}),
+          }),
         },
       );
       const body = (await response.json()) as {
@@ -67,6 +97,14 @@ export function ResumeTailoringPanel({ applicationId }: { applicationId: string 
         setGeneration({ status: 'missing_job_snapshot' });
         return;
       }
+      if (body.status === 'research_snapshot_not_found') {
+        setGeneration({ status: 'research_snapshot_not_found' });
+        return;
+      }
+      if (body.status === 'stale_company_research') {
+        setGeneration({ status: 'stale_company_research' });
+        return;
+      }
       if (!response.ok || body.status === 'validation_failed' || !body.proposal) {
         setGeneration({
           status: 'error',
@@ -79,7 +117,7 @@ export function ResumeTailoringPanel({ applicationId }: { applicationId: string 
     } catch {
       setGeneration({ status: 'error', message: 'Tailoring failed. Try again.' });
     }
-  }, [applicationId, generation.status]);
+  }, [applicationId, generation.status, researchMode, latestCompanyResearch]);
 
   const isGenerating = generation.status === 'generating';
   const isReady = generation.status === 'ready';
@@ -88,20 +126,51 @@ export function ResumeTailoringPanel({ applicationId }: { applicationId: string 
     <section className="space-y-3">
       <div className="flex items-center justify-between">
         <h2 className="text-muted-foreground text-sm font-medium">AI résumé tailoring</h2>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={isGenerating}
-          aria-busy={isGenerating}
-          onClick={() => void generate()}
-        >
-          {isGenerating
-            ? 'Tailoring…'
-            : isReady
-              ? 'Regenerate'
-              : 'Tailor resume for this job'}
-        </Button>
       </div>
+
+      {latestCompanyResearch ? (
+        <div className="flex flex-col gap-1 text-sm">
+          <label className="flex items-center gap-2">
+            <input
+              type="radio"
+              name={`research-mode-${applicationId}`}
+              checked={researchMode === 'JOB_PLUS_COMPANY_RESEARCH'}
+              onChange={() => setResearchMode('JOB_PLUS_COMPANY_RESEARCH')}
+            />
+            Use latest research — {formatDate(latestCompanyResearch.researchedAt)}
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="radio"
+              name={`research-mode-${applicationId}`}
+              checked={researchMode === 'JOB_ONLY'}
+              onChange={() => setResearchMode('JOB_ONLY')}
+            />
+            Tailor using job posting only
+          </label>
+        </div>
+      ) : (
+        <p className="text-muted-foreground text-sm">
+          Tailor using job posting only —{' '}
+          <Link
+            href={`/applications/${applicationId}/company-research`}
+            className="text-primary hover:underline"
+          >
+            Research company first
+          </Link>{' '}
+          to also weigh current company priorities.
+        </p>
+      )}
+
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={isGenerating}
+        aria-busy={isGenerating}
+        onClick={() => void generate()}
+      >
+        {isGenerating ? 'Tailoring…' : isReady ? 'Regenerate' : 'Tailor resume for this job'}
+      </Button>
 
       {generation.status === 'no_working_resume' ? (
         <p className="text-muted-foreground text-sm">
@@ -125,6 +194,25 @@ export function ResumeTailoringPanel({ applicationId }: { applicationId: string 
           You&apos;ve reached your AI request limit for this period.
         </p>
       ) : null}
+      {generation.status === 'research_snapshot_not_found' ? (
+        <p className="text-destructive text-sm">
+          That company research snapshot is no longer available. Refresh the page and try
+          again.
+        </p>
+      ) : null}
+      {generation.status === 'stale_company_research' ? (
+        <p className="text-destructive text-sm">
+          The company research on file no longer matches this application&apos;s current
+          company or job posting.{' '}
+          <Link
+            href={`/applications/${applicationId}/company-research`}
+            className="text-primary hover:underline"
+          >
+            Research company again
+          </Link>
+          , or tailor using the job posting only.
+        </p>
+      ) : null}
       {generation.status === 'error' ? (
         <p className="text-destructive text-sm">{generation.message}</p>
       ) : null}
@@ -137,4 +225,12 @@ export function ResumeTailoringPanel({ applicationId }: { applicationId: string 
       ) : null}
     </section>
   );
+}
+
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
 }

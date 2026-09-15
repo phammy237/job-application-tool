@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { uuidSchema } from './common';
+import { isoDateTimeSchema, uuidSchema } from './common';
 import { resumeEntryIdSchema, structuredResumeV1Schema } from './resume-content';
 
 /**
@@ -21,12 +21,58 @@ export const MAX_RESUME_TAILORING_OPERATIONS = 30;
 const OPERATION_TEXT_MAX = 600; // matches resumeBulletSchema's own bullet-text cap
 const REASON_MAX = 300;
 const MAX_CITATIONS_PER_OPERATION = 12;
+/** Phase 7H (docs/IMPLEMENTATION_PLAN.md "Phase 7H" §12) — deliberately smaller than
+ * MAX_CITATIONS_PER_OPERATION: a research finding never grounds a claim, it only explains why
+ * emphasizing existing, already-grounded content is strategically relevant for this company, so a
+ * handful is always enough. */
+const MAX_RESEARCH_FINDINGS_PER_OPERATION = 4;
 
 const reasonSchema = z.string().trim().min(1).max(REASON_MAX);
 /** Request-local requirement ids (§17) are never assumed to be UUIDs — a mapping-absent
  * fallback synthesizes plain string ids (`resume-tailoring-context.ts`), so this is deliberately
  * as permissive in shape as `resumeEntryIdSchema`. */
 const requirementIdSchema = z.string().min(1).max(100);
+/** Request-local company-research finding ids offered for THIS tailoring request — always a real
+ * `company_research_findings.id` (uuid), scoped to the one snapshot resolved for this request
+ * (docs/IMPLEMENTATION_PLAN.md "Phase 7H" §6/§14). */
+const researchFindingIdSchema = uuidSchema;
+/** OPTIONAL on every operation type (§12/§20/§21) — never required, and never a substitute for
+ * `sourceFactIds`/`requirementIds`: it explains COMPANY RELEVANCE, a third, separate provenance
+ * bucket from factual grounding and role grounding (§13), never merged with either. */
+const researchFindingIdsSchema = z
+  .array(researchFindingIdSchema)
+  .max(MAX_RESEARCH_FINDINGS_PER_OPERATION)
+  .default([]);
+
+/**
+ * Phase 7H — explicit, user-chosen tailoring mode (docs/IMPLEMENTATION_PLAN.md "Phase 7H" §4/
+ * §36/§37). `JOB_ONLY` is exactly Phase 7E/7F's existing behavior, unchanged. Company research is
+ * never required and never silently assumed just because a snapshot exists for this application.
+ */
+export const resumeTailoringResearchModeSchema = z.enum([
+  'JOB_ONLY',
+  'JOB_PLUS_COMPANY_RESEARCH',
+]);
+export type ResumeTailoringResearchMode = z.infer<
+  typeof resumeTailoringResearchModeSchema
+>;
+
+/**
+ * POST /api/applications/:id/resume-tailoring request body (Phase 7H §37) — deliberately the
+ * ONLY two fields this route accepts; every other input (which application, which working
+ * résumé, which job snapshot) is still always re-derived server-side, never client-supplied
+ * (§3/§40, unchanged from 7E). An empty/absent body parses to `{researchMode: 'JOB_ONLY'}` —
+ * exactly Phase 7E/7F's original, unchanged behavior — so no existing call site breaks.
+ */
+export const generateResumeTailoringRequestSchema = z.object({
+  researchMode: resumeTailoringResearchModeSchema.default('JOB_ONLY'),
+  /** Ignored entirely when researchMode is JOB_ONLY (§37) — never trusted blindly either way; the
+   * pipeline re-resolves ownership/compatibility server-side before ever using it (§6/§7). */
+  companyResearchSnapshotId: uuidSchema.nullable().optional(),
+});
+export type GenerateResumeTailoringRequest = z.infer<
+  typeof generateResumeTailoringRequestSchema
+>;
 
 export const resumeTailoringOperationSchema = z.discriminatedUnion('type', [
   z.object({
@@ -35,6 +81,9 @@ export const resumeTailoringOperationSchema = z.discriminatedUnion('type', [
     proposedText: z.string().trim().min(1).max(OPERATION_TEXT_MAX),
     sourceFactIds: z.array(uuidSchema).max(MAX_CITATIONS_PER_OPERATION).default([]),
     requirementIds: z.array(requirementIdSchema).max(MAX_CITATIONS_PER_OPERATION).default([]),
+    /** Phase 7H (§12/§19) — company research may explain why this rewrite's *emphasis* is
+     * strategically relevant; it never grounds the rewrite's factual content. */
+    researchFindingIds: researchFindingIdsSchema,
     reason: reasonSchema,
   }),
   z.object({
@@ -45,19 +94,25 @@ export const resumeTailoringOperationSchema = z.discriminatedUnion('type', [
     entryId: resumeEntryIdSchema,
     proposedText: z.string().trim().min(1).max(OPERATION_TEXT_MAX),
     /** Required non-empty — an added bullet with no cited evidence is rejected outright, never
-     * "added anyway" (§10: "No fact IDs: reject"). */
+     * "added anyway" (§10: "No fact IDs: reject"). Phase 7H §18: `researchFindingIds` can never
+     * substitute for this — a research finding alone is never enough to add a bullet. */
     sourceFactIds: z.array(uuidSchema).min(1).max(MAX_CITATIONS_PER_OPERATION),
     requirementIds: z.array(requirementIdSchema).max(MAX_CITATIONS_PER_OPERATION).default([]),
+    researchFindingIds: researchFindingIdsSchema,
     reason: reasonSchema,
   }),
   z.object({
     type: z.literal('OMIT_BULLET'),
     bulletId: resumeEntryIdSchema,
+    /** Phase 7H §20 — omission is one of the operations research is *particularly* appropriate
+     * for: it changes emphasis without creating any new claim. */
+    researchFindingIds: researchFindingIdsSchema,
     reason: reasonSchema,
   }),
   z.object({
     type: z.literal('OMIT_ENTRY'),
     entryId: resumeEntryIdSchema,
+    researchFindingIds: researchFindingIdsSchema,
     reason: reasonSchema,
   }),
   z.object({
@@ -69,6 +124,7 @@ export const resumeTailoringOperationSchema = z.discriminatedUnion('type', [
      * cannot see the array length ahead of time so an out-of-range value is expected and simply
      * rejected, never clamped. */
     targetIndex: z.number().int().min(0),
+    researchFindingIds: researchFindingIdsSchema,
     reason: reasonSchema,
   }),
   z.object({
@@ -77,6 +133,7 @@ export const resumeTailoringOperationSchema = z.discriminatedUnion('type', [
     /** 0-based position within the entry's own existing section array (education/experience/
      * projects/leadership) — entries never move across sections. */
     targetIndex: z.number().int().min(0),
+    researchFindingIds: researchFindingIdsSchema,
     reason: reasonSchema,
   }),
   z.object({
@@ -84,6 +141,7 @@ export const resumeTailoringOperationSchema = z.discriminatedUnion('type', [
     /** Every existing skill-group id, in the new order — §13: no ADD_SKILL exists at all, this
      * only ever reorders groups that already exist in the base résumé. */
     orderedSkillGroupIds: z.array(resumeEntryIdSchema).min(1),
+    researchFindingIds: researchFindingIdsSchema,
     reason: reasonSchema,
   }),
 ]);
@@ -107,11 +165,28 @@ export const resumeSectionNameSchema = z.enum([
 ]);
 export type ResumeSectionName = z.infer<typeof resumeSectionNameSchema>;
 
+/** One company-research finding resolved for display (§32) — human-readable, never a raw uuid
+ * exposed to the UI on its own. `category` is kept as a plain string (not the finding-category
+ * enum) so this file doesn't need a dependency on `company-research.ts` for what is, here, purely
+ * a display label. */
+export const resumeTailoringCompanyRelevanceItemSchema = z.object({
+  id: researchFindingIdSchema,
+  claim: z.string(),
+  roleRelevance: z.string().nullable(),
+  category: z.string(),
+});
+export type ResumeTailoringCompanyRelevanceItem = z.infer<
+  typeof resumeTailoringCompanyRelevanceItemSchema
+>;
+const companyRelevanceSchema = z.array(resumeTailoringCompanyRelevanceItemSchema).default([]);
+
 /**
  * One validated operation, enriched with server-resolved human-readable context for the UI
  * (§28/§29) — raw ids are kept out of normal display; before/after/labels are always resolved
  * from the actual base résumé and the actual request-local allowlists, never echoed from the
- * model's own claims about them.
+ * model's own claims about them. `companyRelevance` (Phase 7H §32) is a strictly separate, third
+ * provenance bucket from `groundedFacts`/`relevantRequirements` — it explains why this change
+ * matters for *this company*, never why it's *true* of the candidate.
  */
 export const resumeTailoringOperationViewSchema = z.discriminatedUnion('type', [
   z.object({
@@ -122,6 +197,7 @@ export const resumeTailoringOperationViewSchema = z.discriminatedUnion('type', [
     after: z.string(),
     groundedFacts: z.array(z.object({ id: uuidSchema, label: z.string() })),
     relevantRequirements: z.array(z.object({ id: requirementIdSchema, text: z.string() })),
+    companyRelevance: companyRelevanceSchema,
     reason: z.string(),
   }),
   z.object({
@@ -131,6 +207,7 @@ export const resumeTailoringOperationViewSchema = z.discriminatedUnion('type', [
     after: z.string(),
     groundedFacts: z.array(z.object({ id: uuidSchema, label: z.string() })),
     relevantRequirements: z.array(z.object({ id: requirementIdSchema, text: z.string() })),
+    companyRelevance: companyRelevanceSchema,
     reason: z.string(),
   }),
   z.object({
@@ -138,12 +215,14 @@ export const resumeTailoringOperationViewSchema = z.discriminatedUnion('type', [
     bulletId: resumeEntryIdSchema,
     entryLabel: z.string(),
     omittedText: z.string(),
+    companyRelevance: companyRelevanceSchema,
     reason: z.string(),
   }),
   z.object({
     type: z.literal('OMIT_ENTRY'),
     entryId: resumeEntryIdSchema,
     entryLabel: z.string(),
+    companyRelevance: companyRelevanceSchema,
     reason: z.string(),
   }),
   z.object({
@@ -153,6 +232,7 @@ export const resumeTailoringOperationViewSchema = z.discriminatedUnion('type', [
     movedText: z.string(),
     fromIndex: z.number().int(),
     toIndex: z.number().int(),
+    companyRelevance: companyRelevanceSchema,
     reason: z.string(),
   }),
   z.object({
@@ -161,6 +241,7 @@ export const resumeTailoringOperationViewSchema = z.discriminatedUnion('type', [
     entryLabel: z.string(),
     fromIndex: z.number().int(),
     toIndex: z.number().int(),
+    companyRelevance: companyRelevanceSchema,
     reason: z.string(),
   }),
   z.object({
@@ -172,6 +253,7 @@ export const resumeTailoringOperationViewSchema = z.discriminatedUnion('type', [
      * unambiguous way to re-apply this operation without guessing an id back from a label that
      * might not be unique (docs/IMPLEMENTATION_PLAN.md "Phase 7F" §11/§48). */
     orderedSkillGroupIds: z.array(resumeEntryIdSchema),
+    companyRelevance: companyRelevanceSchema,
     reason: z.string(),
   }),
 ]);
@@ -188,6 +270,13 @@ export const resumeTailoringSummarySchema = z.object({
   movedEntries: z.number().int().min(0),
   skillsReordered: z.boolean(),
   requirementsReferenced: z.number().int().min(0),
+  /** Phase 7H §31 — distinct company-research finding ids cited by any operation in this plan.
+   * Always 0 when `researchMode` is `JOB_ONLY` (there is nothing to cite). Server-computed, never
+   * trusted from the model, same posture as every other summary field here. */
+  researchFindingsReferenced: z.number().int().min(0),
+  /** Count of operations whose `researchFindingIds` is non-empty — a separate, coarser signal
+   * from `researchFindingsReferenced` (one operation may cite several findings). */
+  operationsInfluencedByResearch: z.number().int().min(0),
 });
 export type ResumeTailoringSummary = z.infer<typeof resumeTailoringSummarySchema>;
 
@@ -240,6 +329,24 @@ export const resumeTailoringProposalSchema = z.object({
    * proposal is still generated from structured content only and never touches that override
    * (§22). Purely informational for the UI's warning banner. */
   customLatexOverridePresent: z.boolean(),
+  /** Phase 7H (§3/§4/§34/§38) — the ACTUAL mode this proposal was generated with, which may
+   * differ from what the caller requested: requesting `JOB_PLUS_COMPANY_RESEARCH` with no
+   * eligible snapshot for this application degrades honestly to `JOB_ONLY` rather than erroring
+   * (§4), and the response always reflects what actually happened, never what was asked for. */
+  researchMode: resumeTailoringResearchModeSchema,
+  /** The exact immutable snapshot actually used, or null when `researchMode` is `JOB_ONLY` (§3) —
+   * never the "latest" snapshot re-resolved implicitly; a later save persists this exact id
+   * alongside the résumé version it produces (Phase 7H §41), so this is the one durable identity
+   * this proposal's UI/save flow needs, never the whole snapshot. */
+  companyResearchSnapshotId: uuidSchema.nullable(),
+  /** The snapshot's own frozen `researchedAt` (§34: "Company research: Sep 15, 2026") — purely
+   * informational, resolved once here so the UI never has to re-fetch the snapshot just to show
+   * its date. Null exactly when `companyResearchSnapshotId` is null. */
+  companyResearchResearchedAt: isoDateTimeSchema.nullable(),
+  /** How many of the snapshot's findings were actually selected into this request's prompt
+   * (§22/§34) — bounded by RESEARCH_TAILORING_MAX_FINDINGS (packages/ai/src/config.ts), never the
+   * snapshot's full finding count. 0 when `researchMode` is `JOB_ONLY`. */
+  selectedResearchFindingCount: z.number().int().min(0),
   operations: z.array(resumeTailoringOperationViewSchema),
   summary: resumeTailoringSummarySchema,
   coverage: resumeTailoringCoverageSchema,

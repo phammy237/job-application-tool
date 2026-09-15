@@ -57,6 +57,10 @@ function proposal(
     requirementMappingRunId: null,
     baseResume: BASE_RESUME as ResumeTailoringProposal['baseResume'],
     customLatexOverridePresent: false,
+    researchMode: 'JOB_ONLY',
+    companyResearchSnapshotId: null,
+    companyResearchResearchedAt: null,
+    selectedResearchFindingCount: 0,
     operations: [
       {
         type: 'REWRITE_BULLET',
@@ -68,6 +72,7 @@ function proposal(
         relevantRequirements: [
           { id: 'req-1', text: '5+ years of engineering experience' },
         ],
+        companyRelevance: [],
         reason: 'Emphasizes leadership experience relevant to the role',
       },
       {
@@ -75,6 +80,7 @@ function proposal(
         bulletId: 'b2',
         entryLabel: 'Engineer at Acme',
         omittedText: 'Improved onboarding flow',
+        companyRelevance: [],
         reason: 'Not relevant to this role',
       },
     ],
@@ -87,6 +93,8 @@ function proposal(
       movedEntries: 0,
       skillsReordered: false,
       requirementsReferenced: 1,
+      researchFindingsReferenced: 0,
+      operationsInfluencedByResearch: 0,
     },
     coverage: {
       totalRequirementCount: 2,
@@ -367,5 +375,99 @@ describe('ResumeTailoringReviewSession', () => {
     });
     fireEvent.click(within(card).getByRole('button', { name: 'Use this text' }));
     expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('ResumeTailoringReviewSession — Phase 7H company relevance', () => {
+  it('with researchMode JOB_ONLY, shows "Company research: Not used" and no company-relevance notes', () => {
+    render(
+      <ResumeTailoringReviewSession applicationId={APPLICATION_ID} proposal={proposal()} />,
+    );
+    expect(screen.getByText(/Company research: Not used/)).toBeInTheDocument();
+    expect(screen.queryByText('Company relevance:')).not.toBeInTheDocument();
+  });
+
+  it('with research used, shows the researched date and selected finding count, and never implies affiliation', () => {
+    render(
+      <ResumeTailoringReviewSession
+        applicationId={APPLICATION_ID}
+        proposal={proposal({
+          researchMode: 'JOB_PLUS_COMPANY_RESEARCH',
+          companyResearchSnapshotId: 'snapshot-1',
+          companyResearchResearchedAt: '2026-09-15T12:00:00.000Z',
+          selectedResearchFindingCount: 3,
+        })}
+      />,
+    );
+    expect(screen.getByText(/Company research: Sep 15, 2026/)).toBeInTheDocument();
+    expect(screen.getByText(/3 selected findings/)).toBeInTheDocument();
+    // Never implies the candidate worked on the company's own initiative (§67).
+    expect(screen.queryByText(/you worked on/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/your company work/i)).not.toBeInTheDocument();
+  });
+
+  it('resolves a companyRelevance citation into a readable note with a link to research, and no raw UUID', () => {
+    render(
+      <ResumeTailoringReviewSession
+        applicationId={APPLICATION_ID}
+        proposal={proposal({
+          researchMode: 'JOB_PLUS_COMPANY_RESEARCH',
+          companyResearchSnapshotId: 'snapshot-1',
+          companyResearchResearchedAt: '2026-09-15T00:00:00.000Z',
+          selectedResearchFindingCount: 1,
+          operations: [
+            {
+              type: 'REWRITE_BULLET',
+              bulletId: 'b1',
+              entryLabel: 'Engineer at Acme',
+              before: 'Built the referral workflow',
+              after: 'Led the referral workflow rebuild for 5 engineers',
+              groundedFacts: [{ id: 'fact-1', label: 'Led a team of 5 engineers' }],
+              relevantRequirements: [],
+              companyRelevance: [
+                {
+                  id: '11111111-1111-4111-8111-111111111111',
+                  claim: 'Acme recently expanded its platform team',
+                  roleRelevance: 'Directly relevant to this engineering role',
+                  category: 'HIRING',
+                },
+              ],
+              reason: 'x',
+            },
+          ],
+        })}
+      />,
+    );
+    expect(screen.getByText('Company relevance:')).toBeInTheDocument();
+    expect(
+      screen.getByText(/Directly relevant to this engineering role/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/11111111-1111-4111-8111-111111111111/)).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'View research' })).toHaveAttribute(
+      'href',
+      `/applications/${APPLICATION_ID}/company-research`,
+    );
+  });
+
+  it('forwards the proposal\'s companyResearchSnapshotId when saving', async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockReturnValue(
+      jsonResponse({ status: 'ok', applicationId: APPLICATION_ID, resumeId: 'r', resumeCreated: true, versionId: 'v', versionNumber: 1, displayName: 'x' }),
+    );
+    render(
+      <ResumeTailoringReviewSession
+        applicationId={APPLICATION_ID}
+        proposal={proposal({
+          researchMode: 'JOB_PLUS_COMPANY_RESEARCH',
+          companyResearchSnapshotId: 'snapshot-1',
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Accept all remaining' }));
+    fireEvent.click(saveButton());
+
+    await waitFor(() => expect(fetch).toHaveBeenCalled());
+    const [, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    const sentBody = JSON.parse((init as RequestInit).body as string);
+    expect(sentBody.companyResearchSnapshotId).toBe('snapshot-1');
   });
 });

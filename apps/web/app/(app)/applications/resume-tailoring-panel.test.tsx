@@ -46,6 +46,10 @@ const FULL_PROPOSAL = {
   requirementMappingRunId: null,
   baseResume: BASE_RESUME,
   customLatexOverridePresent: false,
+  researchMode: 'JOB_ONLY',
+  companyResearchSnapshotId: null,
+  companyResearchResearchedAt: null,
+  selectedResearchFindingCount: 0,
   operations: [
     {
       type: 'REWRITE_BULLET',
@@ -55,6 +59,7 @@ const FULL_PROPOSAL = {
       after: 'Led the referral workflow rebuild',
       groundedFacts: [{ id: 'fact-1', label: 'Led a team of 5 engineers' }],
       relevantRequirements: [{ id: 'req-1', text: '5+ years of engineering experience' }],
+      companyRelevance: [],
       reason: 'Emphasizes leadership experience relevant to the role',
     },
   ],
@@ -67,6 +72,8 @@ const FULL_PROPOSAL = {
     movedEntries: 0,
     skillsReordered: false,
     requirementsReferenced: 1,
+    researchFindingsReferenced: 0,
+    operationsInfluencedByResearch: 0,
   },
   coverage: {
     totalRequirementCount: 2,
@@ -98,7 +105,7 @@ afterEach(() => {
 
 describe('ResumeTailoringPanel', () => {
   it('never calls fetch on render', () => {
-    render(<ResumeTailoringPanel applicationId={APPLICATION_ID} />);
+    render(<ResumeTailoringPanel applicationId={APPLICATION_ID} latestCompanyResearch={null} />);
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -106,21 +113,22 @@ describe('ResumeTailoringPanel', () => {
     (fetch as ReturnType<typeof vi.fn>).mockReturnValue(
       jsonResponse({ status: 'ok', proposal: FULL_PROPOSAL }),
     );
-    render(<ResumeTailoringPanel applicationId={APPLICATION_ID} />);
+    render(<ResumeTailoringPanel applicationId={APPLICATION_ID} latestCompanyResearch={null} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Tailor resume for this job' }));
 
     expect(fetch).toHaveBeenCalledTimes(1);
-    expect(fetch).toHaveBeenCalledWith(
-      `/api/applications/${APPLICATION_ID}/resume-tailoring`,
-      { method: 'POST' },
-    );
+    expect(fetch).toHaveBeenCalledWith(`/api/applications/${APPLICATION_ID}/resume-tailoring`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ researchMode: 'JOB_ONLY' }),
+    });
     await waitFor(() => expect(screen.getByText('Regenerate')).toBeInTheDocument());
   });
 
   it('shows a loading state while generating', () => {
     (fetch as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
-    render(<ResumeTailoringPanel applicationId={APPLICATION_ID} />);
+    render(<ResumeTailoringPanel applicationId={APPLICATION_ID} latestCompanyResearch={null} />);
     fireEvent.click(screen.getByRole('button', { name: 'Tailor resume for this job' }));
     expect(screen.getByRole('button', { name: 'Tailoring…' })).toBeDisabled();
   });
@@ -129,7 +137,7 @@ describe('ResumeTailoringPanel', () => {
     (fetch as ReturnType<typeof vi.fn>).mockReturnValue(
       jsonResponse({ status: 'ok', proposal: FULL_PROPOSAL }),
     );
-    render(<ResumeTailoringPanel applicationId={APPLICATION_ID} />);
+    render(<ResumeTailoringPanel applicationId={APPLICATION_ID} latestCompanyResearch={null} />);
     fireEvent.click(screen.getByRole('button', { name: 'Tailor resume for this job' }));
 
     await waitFor(() =>
@@ -155,7 +163,7 @@ describe('ResumeTailoringPanel', () => {
         proposal: { ...FULL_PROPOSAL, customLatexOverridePresent: true },
       }),
     );
-    render(<ResumeTailoringPanel applicationId={APPLICATION_ID} />);
+    render(<ResumeTailoringPanel applicationId={APPLICATION_ID} latestCompanyResearch={null} />);
     fireEvent.click(screen.getByRole('button', { name: 'Tailor resume for this job' }));
     await waitFor(() =>
       expect(screen.getByText(/custom Advanced LaTeX override/)).toBeInTheDocument(),
@@ -166,7 +174,7 @@ describe('ResumeTailoringPanel', () => {
     (fetch as ReturnType<typeof vi.fn>).mockReturnValue(
       jsonResponse({ status: 'ok', proposal: FULL_PROPOSAL }),
     );
-    render(<ResumeTailoringPanel applicationId={APPLICATION_ID} />);
+    render(<ResumeTailoringPanel applicationId={APPLICATION_ID} latestCompanyResearch={null} />);
     fireEvent.click(screen.getByRole('button', { name: 'Tailor resume for this job' }));
     await waitFor(() =>
       expect(screen.getByText('Built the referral workflow')).toBeInTheDocument(),
@@ -185,7 +193,7 @@ describe('ResumeTailoringPanel', () => {
         },
       }),
     );
-    render(<ResumeTailoringPanel applicationId={APPLICATION_ID} />);
+    render(<ResumeTailoringPanel applicationId={APPLICATION_ID} latestCompanyResearch={null} />);
     fireEvent.click(screen.getByRole('button', { name: 'Tailor resume for this job' }));
     await waitFor(() =>
       expect(
@@ -198,7 +206,7 @@ describe('ResumeTailoringPanel', () => {
     (fetch as ReturnType<typeof vi.fn>).mockReturnValue(
       jsonResponse({ status: 'ok', proposal: FULL_PROPOSAL }),
     );
-    render(<ResumeTailoringPanel applicationId={APPLICATION_ID} />);
+    render(<ResumeTailoringPanel applicationId={APPLICATION_ID} latestCompanyResearch={null} />);
     fireEvent.click(screen.getByRole('button', { name: 'Tailor resume for this job' }));
     await waitFor(() =>
       expect(
@@ -216,7 +224,7 @@ describe('ResumeTailoringPanel', () => {
     (fetch as ReturnType<typeof vi.fn>).mockReturnValue(
       jsonResponse({ status: 'ok', proposal: FULL_PROPOSAL }),
     );
-    render(<ResumeTailoringPanel applicationId={APPLICATION_ID} />);
+    render(<ResumeTailoringPanel applicationId={APPLICATION_ID} latestCompanyResearch={null} />);
     fireEvent.click(screen.getByRole('button', { name: 'Tailor resume for this job' }));
     await waitFor(() => expect(screen.getByText('Regenerate')).toBeInTheDocument());
 
@@ -228,7 +236,7 @@ describe('ResumeTailoringPanel', () => {
     (fetch as ReturnType<typeof vi.fn>).mockReturnValue(
       jsonResponse({ status: 'no_working_resume' }),
     );
-    render(<ResumeTailoringPanel applicationId={APPLICATION_ID} />);
+    render(<ResumeTailoringPanel applicationId={APPLICATION_ID} latestCompanyResearch={null} />);
     fireEvent.click(screen.getByRole('button', { name: 'Tailor resume for this job' }));
     await waitFor(() =>
       expect(screen.getByText(/Select a working résumé/)).toBeInTheDocument(),
@@ -239,7 +247,7 @@ describe('ResumeTailoringPanel', () => {
     (fetch as ReturnType<typeof vi.fn>).mockReturnValue(
       jsonResponse({ status: 'unsupported_resume_format' }),
     );
-    render(<ResumeTailoringPanel applicationId={APPLICATION_ID} />);
+    render(<ResumeTailoringPanel applicationId={APPLICATION_ID} latestCompanyResearch={null} />);
     fireEvent.click(screen.getByRole('button', { name: 'Tailor resume for this job' }));
     await waitFor(() =>
       expect(screen.getByText(/doesn't have structured content yet/)).toBeInTheDocument(),
@@ -250,7 +258,7 @@ describe('ResumeTailoringPanel', () => {
     (fetch as ReturnType<typeof vi.fn>).mockReturnValue(
       jsonResponse({ status: 'missing_job_snapshot' }),
     );
-    render(<ResumeTailoringPanel applicationId={APPLICATION_ID} />);
+    render(<ResumeTailoringPanel applicationId={APPLICATION_ID} latestCompanyResearch={null} />);
     fireEvent.click(screen.getByRole('button', { name: 'Tailor resume for this job' }));
     await waitFor(() =>
       expect(screen.getByText(/no saved job posting/)).toBeInTheDocument(),
@@ -261,7 +269,7 @@ describe('ResumeTailoringPanel', () => {
     (fetch as ReturnType<typeof vi.fn>).mockReturnValue(
       jsonResponse({ error: 'limit' }, 429),
     );
-    render(<ResumeTailoringPanel applicationId={APPLICATION_ID} />);
+    render(<ResumeTailoringPanel applicationId={APPLICATION_ID} latestCompanyResearch={null} />);
     fireEvent.click(screen.getByRole('button', { name: 'Tailor resume for this job' }));
     await waitFor(() => expect(screen.getByText(/AI request limit/)).toBeInTheDocument());
   });
@@ -270,10 +278,103 @@ describe('ResumeTailoringPanel', () => {
     (fetch as ReturnType<typeof vi.fn>).mockReturnValue(
       jsonResponse({ error: 'AI provider error' }, 502),
     );
-    render(<ResumeTailoringPanel applicationId={APPLICATION_ID} />);
+    render(<ResumeTailoringPanel applicationId={APPLICATION_ID} latestCompanyResearch={null} />);
     fireEvent.click(screen.getByRole('button', { name: 'Tailor resume for this job' }));
     await waitFor(() =>
       expect(screen.getByText('AI provider error')).toBeInTheDocument(),
+    );
+  });
+});
+
+describe('ResumeTailoringPanel — Phase 7H research mode selector', () => {
+  const LATEST_RESEARCH = { id: 'snapshot-1', researchedAt: '2026-09-15T00:00:00.000Z' };
+
+  it('with no research, shows only a "job posting only" note and a link to research first — no mode radios', () => {
+    render(<ResumeTailoringPanel applicationId={APPLICATION_ID} latestCompanyResearch={null} />);
+    expect(screen.getByText(/Tailor using job posting only/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Research company first' })).toHaveAttribute(
+      'href',
+      `/applications/${APPLICATION_ID}/company-research`,
+    );
+    expect(screen.queryByRole('radio')).not.toBeInTheDocument();
+  });
+
+  it('with research available, defaults to "use latest research" selected, and lets the user switch to job-only', async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockReturnValue(
+      jsonResponse({ status: 'ok', proposal: FULL_PROPOSAL }),
+    );
+    render(
+      <ResumeTailoringPanel
+        applicationId={APPLICATION_ID}
+        latestCompanyResearch={LATEST_RESEARCH}
+      />,
+    );
+    const useResearch = screen.getByRole('radio', { name: /Use latest research/ });
+    const jobOnly = screen.getByRole('radio', { name: 'Tailor using job posting only' });
+    expect(useResearch).toBeChecked();
+    expect(jobOnly).not.toBeChecked();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Tailor resume for this job' }));
+    expect(fetch).toHaveBeenCalledWith(
+      `/api/applications/${APPLICATION_ID}/resume-tailoring`,
+      expect.objectContaining({
+        body: JSON.stringify({
+          researchMode: 'JOB_PLUS_COMPANY_RESEARCH',
+          companyResearchSnapshotId: LATEST_RESEARCH.id,
+        }),
+      }),
+    );
+  });
+
+  it('user can switch to job-only even when research exists — never forced', async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockReturnValue(
+      jsonResponse({ status: 'ok', proposal: FULL_PROPOSAL }),
+    );
+    render(
+      <ResumeTailoringPanel
+        applicationId={APPLICATION_ID}
+        latestCompanyResearch={LATEST_RESEARCH}
+      />,
+    );
+    fireEvent.click(screen.getByRole('radio', { name: 'Tailor using job posting only' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Tailor resume for this job' }));
+    expect(fetch).toHaveBeenCalledWith(
+      `/api/applications/${APPLICATION_ID}/resume-tailoring`,
+      expect.objectContaining({
+        body: JSON.stringify({ researchMode: 'JOB_ONLY' }),
+      }),
+    );
+  });
+
+  it('shows a stale_company_research message with a link to research again', async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockReturnValue(
+      jsonResponse({ status: 'stale_company_research' }),
+    );
+    render(
+      <ResumeTailoringPanel
+        applicationId={APPLICATION_ID}
+        latestCompanyResearch={LATEST_RESEARCH}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Tailor resume for this job' }));
+    await waitFor(() =>
+      expect(screen.getByText(/no longer matches this application/)).toBeInTheDocument(),
+    );
+  });
+
+  it('shows a research_snapshot_not_found message', async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockReturnValue(
+      jsonResponse({ status: 'research_snapshot_not_found' }),
+    );
+    render(
+      <ResumeTailoringPanel
+        applicationId={APPLICATION_ID}
+        latestCompanyResearch={LATEST_RESEARCH}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Tailor resume for this job' }));
+    await waitFor(() =>
+      expect(screen.getByText(/no longer available/)).toBeInTheDocument(),
     );
   });
 });

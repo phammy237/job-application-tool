@@ -53,6 +53,7 @@ describe('buildResumeTailoringOperationViews', () => {
           proposedText: 'Led the referral workflow rebuild',
           sourceFactIds: [FACT_1],
           requirementIds: ['req-1'],
+          researchFindingIds: [],
           reason: 'Emphasizes leadership experience relevant to the role',
         },
       ],
@@ -69,6 +70,7 @@ describe('buildResumeTailoringOperationViews', () => {
         after: 'Led the referral workflow rebuild',
         groundedFacts: [{ id: FACT_1, label: 'Led a team of 5 engineers' }],
         relevantRequirements: [{ id: 'req-1', text: '5+ years of engineering experience' }],
+        companyRelevance: [],
         reason: 'Emphasizes leadership experience relevant to the role',
       },
     ]);
@@ -83,6 +85,7 @@ describe('buildResumeTailoringOperationViews', () => {
           proposedText: 'Shipped the referral feature end to end',
           sourceFactIds: [FACT_2],
           requirementIds: [],
+          researchFindingIds: [],
           reason: 'Adds grounded coverage',
         },
       ],
@@ -100,7 +103,7 @@ describe('buildResumeTailoringOperationViews', () => {
 
   it('resolves omittedText for OMIT_BULLET from the base résumé', () => {
     const views = buildResumeTailoringOperationViews(
-      [{ type: 'OMIT_BULLET', bulletId: 'b2', reason: 'Not relevant to this role' }],
+      [{ type: 'OMIT_BULLET', bulletId: 'b2', researchFindingIds: [], reason: 'Not relevant to this role' }],
       baseResume(),
       FACT_LABELS,
       REQUIREMENT_TEXT,
@@ -110,13 +113,22 @@ describe('buildResumeTailoringOperationViews', () => {
       bulletId: 'b2',
       entryLabel: 'Engineer at Acme',
       omittedText: 'Improved onboarding flow',
+      companyRelevance: [],
       reason: 'Not relevant to this role',
     });
   });
 
   it('resolves fromIndex/toIndex for MOVE_BULLET', () => {
     const views = buildResumeTailoringOperationViews(
-      [{ type: 'MOVE_BULLET', bulletId: 'b2', targetIndex: 0, reason: 'Lead with this bullet' }],
+      [
+        {
+          type: 'MOVE_BULLET',
+          bulletId: 'b2',
+          targetIndex: 0,
+          researchFindingIds: [],
+          reason: 'Lead with this bullet',
+        },
+      ],
       baseResume(),
       FACT_LABELS,
       REQUIREMENT_TEXT,
@@ -126,7 +138,14 @@ describe('buildResumeTailoringOperationViews', () => {
 
   it('resolves before/after skill labels for REORDER_SKILLS', () => {
     const views = buildResumeTailoringOperationViews(
-      [{ type: 'REORDER_SKILLS', orderedSkillGroupIds: ['skill-2', 'skill-1'], reason: 'Frameworks first' }],
+      [
+        {
+          type: 'REORDER_SKILLS',
+          orderedSkillGroupIds: ['skill-2', 'skill-1'],
+          researchFindingIds: [],
+          reason: 'Frameworks first',
+        },
+      ],
       baseResume(),
       FACT_LABELS,
       REQUIREMENT_TEXT,
@@ -136,6 +155,7 @@ describe('buildResumeTailoringOperationViews', () => {
       before: ['Languages', 'Frameworks'],
       after: ['Frameworks', 'Languages'],
       orderedSkillGroupIds: ['skill-2', 'skill-1'],
+      companyRelevance: [],
       reason: 'Frameworks first',
     });
   });
@@ -149,6 +169,7 @@ describe('buildResumeTailoringOperationViews', () => {
           proposedText: 'New text',
           sourceFactIds: [FACT_1],
           requirementIds: ['req-unknown'],
+          researchFindingIds: [],
           reason: 'x',
         },
       ],
@@ -161,19 +182,50 @@ describe('buildResumeTailoringOperationViews', () => {
       relevantRequirements: [{ id: 'req-unknown', text: 'req-unknown' }],
     });
   });
+
+  it('resolves a researchFindingIds citation into companyRelevance, and silently drops an id with no resolvable context', () => {
+    const researchFindingsById = new Map([
+      ['finding-1', { claim: 'Company is expanding its platform team', roleRelevance: 'Directly relevant', category: 'HIRING' }],
+    ]);
+    const views = buildResumeTailoringOperationViews(
+      [
+        {
+          type: 'MOVE_BULLET',
+          bulletId: 'b2',
+          targetIndex: 0,
+          researchFindingIds: ['finding-1', 'finding-unresolvable'],
+          reason: 'Company research suggests this is more relevant now',
+        },
+      ],
+      baseResume(),
+      FACT_LABELS,
+      REQUIREMENT_TEXT,
+      researchFindingsById,
+    );
+    expect(views[0]).toMatchObject({
+      companyRelevance: [
+        {
+          id: 'finding-1',
+          claim: 'Company is expanding its platform team',
+          roleRelevance: 'Directly relevant',
+          category: 'HIRING',
+        },
+      ],
+    });
+  });
 });
 
 describe('computeResumeTailoringSummary', () => {
   it('counts each operation type from the validated operations, never from the model', () => {
     const ops: ResumeTailoringOperation[] = [
-      { type: 'REWRITE_BULLET', bulletId: 'b1', proposedText: 'x', sourceFactIds: [], requirementIds: ['req-1'], reason: 'x' },
-      { type: 'REWRITE_BULLET', bulletId: 'b2', proposedText: 'y', sourceFactIds: [], requirementIds: [], reason: 'x' },
-      { type: 'ADD_BULLET', entryId: 'exp-1', proposedText: 'z', sourceFactIds: [FACT_1], requirementIds: ['req-2'], reason: 'x' },
-      { type: 'OMIT_BULLET', bulletId: 'b3', reason: 'x' },
-      { type: 'OMIT_ENTRY', entryId: 'exp-2', reason: 'x' },
-      { type: 'MOVE_BULLET', bulletId: 'b4', targetIndex: 0, reason: 'x' },
-      { type: 'MOVE_ENTRY', entryId: 'exp-3', targetIndex: 0, reason: 'x' },
-      { type: 'REORDER_SKILLS', orderedSkillGroupIds: ['skill-1'], reason: 'x' },
+      { type: 'REWRITE_BULLET', bulletId: 'b1', proposedText: 'x', sourceFactIds: [], requirementIds: ['req-1'], researchFindingIds: [], reason: 'x' },
+      { type: 'REWRITE_BULLET', bulletId: 'b2', proposedText: 'y', sourceFactIds: [], requirementIds: [], researchFindingIds: [], reason: 'x' },
+      { type: 'ADD_BULLET', entryId: 'exp-1', proposedText: 'z', sourceFactIds: [FACT_1], requirementIds: ['req-2'], researchFindingIds: [], reason: 'x' },
+      { type: 'OMIT_BULLET', bulletId: 'b3', researchFindingIds: [], reason: 'x' },
+      { type: 'OMIT_ENTRY', entryId: 'exp-2', researchFindingIds: [], reason: 'x' },
+      { type: 'MOVE_BULLET', bulletId: 'b4', targetIndex: 0, researchFindingIds: [], reason: 'x' },
+      { type: 'MOVE_ENTRY', entryId: 'exp-3', targetIndex: 0, researchFindingIds: [], reason: 'x' },
+      { type: 'REORDER_SKILLS', orderedSkillGroupIds: ['skill-1'], researchFindingIds: [], reason: 'x' },
     ];
     expect(computeResumeTailoringSummary(ops)).toEqual({
       rewrittenBullets: 2,
@@ -184,13 +236,15 @@ describe('computeResumeTailoringSummary', () => {
       movedEntries: 1,
       skillsReordered: true,
       requirementsReferenced: 2,
+      researchFindingsReferenced: 0,
+      operationsInfluencedByResearch: 0,
     });
   });
 
   it('deduplicates requirement ids referenced by multiple operations', () => {
     const ops: ResumeTailoringOperation[] = [
-      { type: 'REWRITE_BULLET', bulletId: 'b1', proposedText: 'x', sourceFactIds: [], requirementIds: ['req-1'], reason: 'x' },
-      { type: 'ADD_BULLET', entryId: 'exp-1', proposedText: 'z', sourceFactIds: [FACT_1], requirementIds: ['req-1'], reason: 'x' },
+      { type: 'REWRITE_BULLET', bulletId: 'b1', proposedText: 'x', sourceFactIds: [], requirementIds: ['req-1'], researchFindingIds: [], reason: 'x' },
+      { type: 'ADD_BULLET', entryId: 'exp-1', proposedText: 'z', sourceFactIds: [FACT_1], requirementIds: ['req-1'], researchFindingIds: [], reason: 'x' },
     ];
     expect(computeResumeTailoringSummary(ops).requirementsReferenced).toBe(1);
   });
@@ -205,7 +259,20 @@ describe('computeResumeTailoringSummary', () => {
       movedEntries: 0,
       skillsReordered: false,
       requirementsReferenced: 0,
+      researchFindingsReferenced: 0,
+      operationsInfluencedByResearch: 0,
     });
+  });
+
+  it('counts distinct researchFindingsReferenced and operationsInfluencedByResearch across operation types', () => {
+    const ops: ResumeTailoringOperation[] = [
+      { type: 'REWRITE_BULLET', bulletId: 'b1', proposedText: 'x', sourceFactIds: [], requirementIds: [], researchFindingIds: ['f-1', 'f-2'], reason: 'x' },
+      { type: 'OMIT_BULLET', bulletId: 'b2', researchFindingIds: ['f-2'], reason: 'x' },
+      { type: 'MOVE_ENTRY', entryId: 'exp-1', targetIndex: 0, researchFindingIds: [], reason: 'x' },
+    ];
+    const summary = computeResumeTailoringSummary(ops);
+    expect(summary.researchFindingsReferenced).toBe(2);
+    expect(summary.operationsInfluencedByResearch).toBe(2);
   });
 });
 
@@ -232,7 +299,7 @@ describe('computeResumeTailoringCoverage', () => {
 
   it('with no mapping (fallback), coverage reflects only what validated operations actually cited', () => {
     const ops: ResumeTailoringOperation[] = [
-      { type: 'REWRITE_BULLET', bulletId: 'b1', proposedText: 'x', sourceFactIds: [], requirementIds: ['req-1'], reason: 'x' },
+      { type: 'REWRITE_BULLET', bulletId: 'b1', proposedText: 'x', sourceFactIds: [], requirementIds: ['req-1'], researchFindingIds: [], reason: 'x' },
     ];
     const coverage = computeResumeTailoringCoverage(ops, REQUIREMENTS, null);
     expect(coverage.coveredRequirementIds).toEqual(['req-1']);

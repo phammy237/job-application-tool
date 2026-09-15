@@ -3,6 +3,7 @@ import {
   getOwnJobSnapshot,
   getOwnResumeVersion,
   listApplicationEvents,
+  listOwnCompanyResearchSnapshotsForApplication,
   listOwnRelevantStatusChangeEventsForApplication,
 } from '@career-os/database';
 import { CREATABLE_APPLICATION_STATUSES, formatNextAction } from '@career-os/shared';
@@ -45,7 +46,13 @@ export default async function ApplicationDetailPage({
   // AI-assistance panel at all; the routes those panels call independently re-derive this same
   // decision server-side before ever calling Claude, so hiding/showing a button here is purely a
   // UX nicety, never the actual eligibility gate.
-  const [events, jobSnapshot, relevantStatusChangeEvents, workingResumeVersion] = await Promise.all([
+  const [
+    events,
+    jobSnapshot,
+    relevantStatusChangeEvents,
+    workingResumeVersion,
+    companyResearchSnapshots,
+  ] = await Promise.all([
     listApplicationEvents(supabase, user.id, id),
     application.jobSnapshotId
       ? getOwnJobSnapshot(supabase, user.id, application.jobSnapshotId)
@@ -54,7 +61,14 @@ export default async function ApplicationDetailPage({
     application.workingResumeVersionId
       ? getOwnResumeVersion(supabase, user.id, application.workingResumeVersionId)
       : Promise.resolve(null),
+    listOwnCompanyResearchSnapshotsForApplication(supabase, user.id, id),
   ]);
+  // Phase 7H — purely informational for the tailoring panel's mode selector (§35): the panel's
+  // own API route independently re-resolves and re-validates any snapshot id server-side before
+  // ever using it (§6/§7), so this is never treated as authoritative on its own.
+  const latestCompanyResearch = companyResearchSnapshots[0]
+    ? { id: companyResearchSnapshots[0].id, researchedAt: companyResearchSnapshots[0].researchedAt }
+    : null;
   const [applicationWithNextAction] = attachNextActions(
     [application],
     relevantStatusChangeEvents,
@@ -173,7 +187,10 @@ export default async function ApplicationDetailPage({
           (same posture as the deterministic-next-action panels above, see that block's own
           comment). */}
       {workingResumeVersion?.snapshotFormat === 'STRUCTURED_V1' ? (
-        <ResumeTailoringPanel applicationId={application.id} />
+        <ResumeTailoringPanel
+          applicationId={application.id}
+          latestCompanyResearch={latestCompanyResearch}
+        />
       ) : null}
 
       {/* Phase 7G — company research is a separate, RESEARCH ONLY flow (docs/

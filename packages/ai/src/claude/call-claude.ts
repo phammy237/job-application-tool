@@ -492,6 +492,10 @@ const RESUME_TAILORING_JSON_SCHEMA = {
           proposedText: { type: 'string' },
           sourceFactIds: { type: 'array', items: { type: 'string' } },
           requirementIds: { type: 'array', items: { type: 'string' } },
+          /** Phase 7H — OPTIONAL company-relevance citations (docs/IMPLEMENTATION_PLAN.md
+           * "Phase 7H" §12); present on every operation type, exactly like requirementIds, and
+           * never treated as a substitute for sourceFactIds by the deep validator. */
+          researchFindingIds: { type: 'array', items: { type: 'string' } },
           targetIndex: { type: 'integer' },
           orderedSkillGroupIds: { type: 'array', items: { type: 'string' } },
           reason: { type: 'string' },
