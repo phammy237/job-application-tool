@@ -124,6 +124,32 @@ false`, `visibleOnPublicProfile = false`. Nothing extracted is usable until step
    whole review, same as before Phase 7F. No AI call happens anywhere in this review/save step;
    the only Claude call in this flow is the one that produced the original proposal in step 2.
 
+## 3D. Company research (Phase 7G, RESEARCH ONLY)
+
+1. On an application's detail page, a "Company Research" section always appears with an explicit
+   **Research company** button — nothing fires automatically; no network call happens until this
+   exact click. If research already exists, the button reads **Refresh research** instead and the
+   section shows when it was last researched plus finding/source counts, with a **View research**
+   link.
+2. Career OS builds a small, bounded set of deterministic search queries from the application's
+   company, role title, and (when available) its top job requirements, discovers public sources —
+   the company's own site, newsroom, investor relations, engineering/product blog, careers page,
+   and independent reporting, never the job posting's own ATS/job-board hosting page — ranks and
+   caps them, and extracts bounded text from a shortlist.
+3. Claude synthesizes a bounded list of findings, each a factual claim about the company plus
+   (optionally) why it's relevant to this specific role — every finding must cite at least one of
+   the sources Career OS actually discovered; an invented or unoffered citation is rejected and
+   retried once, then honestly reported as failed. The candidate's résumé, approved facts, and
+   profile are never sent to the search provider or the model — this is research about the
+   company and the role, never about the candidate.
+4. The dedicated research page shows an executive summary (built only from the findings actually
+   returned, never a separate free-text claim), each finding with its category, role relevance,
+   and numbered source citations you can open, and the full source list with publisher and
+   publication date when known. Previous research snapshots remain available and unchanged —
+   refreshing always creates a new snapshot rather than editing the old one.
+5. Company research does not yet affect résumé tailoring (§3C) or interview prep — that
+   intersection is planned for a later phase (see `docs/COMPANY_RESEARCH.md`).
+
 ## 4. Job analysis via the extension
 
 1. User is on a job posting page and clicks the Career OS extension icon, then clicks

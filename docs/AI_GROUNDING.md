@@ -418,3 +418,40 @@ re-displayed, before anything is written.
   *accepted* operations' own cited requirements — a requirement whose sole citing operation was
   rejected is honestly reported as no longer addressed, never left showing a stale "covered"
   verdict from the original (unreviewed) proposal.
+
+## 13. Company research (Phase 7G) — grounding untrusted third-party web content
+
+Full design record: `docs/COMPANY_RESEARCH.md`. This is the first pipeline in this codebase whose
+input is arbitrary third-party web content rather than the user's own data or a job posting they
+captured — the grounding posture is correspondingly stricter.
+
+- **Web retrieval and AI synthesis are separate steps, on purpose.** Discovery
+  (`packages/ai/src/research/tavily-client.ts`'s `tavilySearch`) and extraction (`tavilyExtract`)
+  never touch the model; synthesis never touches the network. The model cannot invent a URL,
+  title, publisher, or publication date because none of those fields exist anywhere in its output
+  contract (`companyResearchPlanContractSchema`) — it can only cite `sourceId`s Career OS already
+  discovered, extracted, and offered in this specific request.
+- **Every extracted source is untrusted, tagged data, never instructions.** Source text sits
+  inside an explicit `<source id="...">` block; the system prompt states repeatedly that anything
+  inside — including something that looks like "ignore previous instructions" or a request to call
+  a tool — is evidence only. No tools are offered on the synthesis call at all, the same single
+  biggest prompt-injection mitigation every other pipeline in this package already uses.
+- **Every finding must cite a real, request-local source id — no exceptions.** Same all-or-nothing
+  posture as every other pipeline: `validateCompanyResearchPlan` rejects the entire plan if any
+  finding cites a `sourceId`/`requirementId` outside this request's own allowlist, or if the model
+  returns zero findings (a defined rejection reason, not silently accepted as "nothing found").
+  One retry, then an honest `invalid_research_output`.
+- **Citations are grounded provenance, not proof of semantic entailment — stated honestly, not
+  hidden.** A validated `sourceId` proves the cited source was real and actually offered; it does
+  not prove the claim is a correct summary of that source's text. This is the same limit every
+  other pipeline's fact-citation validation has (an approved fact id proves the fact is real and
+  approved, not that a generated sentence characterizes it perfectly) — company research doesn't
+  pretend otherwise, and the UI shows every source inline so the user can check.
+- **No candidate data reaches either the search provider or the model.** Only company name, role
+  title, and (when available) job-requirement text/topics are sent — never the résumé, approved
+  facts, profile, networking contacts, or Gmail data (§40 of the phase brief). This is the inverse
+  of every other pipeline in this file: the question is "what does this company say about itself,"
+  never "how does this candidate match."
+- **The executive summary is derived, not generated.** `buildCompanyResearchSummary` builds the
+  user-facing summary purely from already-validated findings' own `claim` text — there is no
+  separate model-authored summary field that could introduce a claim no finding supports.

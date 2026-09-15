@@ -40,6 +40,8 @@ Managed through the hosting provider's environment variable store (not committed
 - `SUPABASE_URL`, `SUPABASE_ANON_KEY` (safe for client use)
 - `SUPABASE_SERVICE_ROLE_KEY` (server-only)
 - `ANTHROPIC_API_KEY` (server-only, `packages/ai`)
+- `TAVILY_API_KEY` (server-only, `packages/ai` — Phase 7G company research; optional, degrades to
+  `research_provider_unavailable` when unset)
 - `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET` (server-only, `packages/email`)
 - `TOKEN_ENCRYPTION_KEY` (server-only, for `encrypted_refresh_token`)
 

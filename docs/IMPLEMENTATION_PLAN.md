@@ -111,6 +111,17 @@ phase depends on a later phase's output.
       state before creating a new TAILORED résumé (from a MASTER base) or the next version of the
       same one (from a TAILORED base not shared with another application) — see "Phase 7F" below.
       Zero AI provider calls anywhere in this phase.
+- [x] Phase 7G — Company research intelligence foundation, RESEARCH ONLY: an explicit "Research
+      company" click (never automatic) builds bounded deterministic search queries, discovers
+      public sources via Tavily (search + extraction — the only external provider in this
+      codebase, chosen after confirming no prior search/scraping infrastructure existed), ranks/
+      dedupes/caps them (official sources first, job-board/ATS domains excluded entirely), and asks
+      Claude to synthesize a bounded list of structured findings that must cite real, request-local
+      source/requirement ids — an unknown id rejects the whole plan, one retry, then an honest
+      failure. Every citation is independently re-validated before one atomic RPC
+      (`create_company_research_snapshot`, migration 0025) persists an immutable snapshot. Never
+      sends candidate facts/résumé content anywhere; never touches résumé tailoring or interview
+      prep. Full design record: `docs/COMPANY_RESEARCH.md`.
 - [ ] Phase 7 — Multi-user beta hardening, privacy controls, testing, deployment
 - [ ] Phase 8 — Optional mypham.space integration, public onboarding, future sharing
 
@@ -4308,3 +4319,57 @@ sufficient for v1), requirement-mapping-run-level staleness (only job-snapshot i
 checked; a mapping re-run against the same snapshot without a new snapshot is a narrower,
 lower-priority edge case), and any second AI call anywhere in this phase (accept/reject/edit/save
 are all, and will remain, deterministic).
+
+## Phase 7G — Company research intelligence foundation
+
+Full design record: **`docs/COMPANY_RESEARCH.md`** — provider selection and evaluation, the
+search/rank/extract/synthesize pipeline, source classification, the immutable data model, the
+prompt-injection defense, the executive-summary architecture, freshness/refresh/concurrency
+semantics, the one real bug live pgTAP verification caught (an immutability trigger conflicting
+with `application_id`'s own `SET NULL` FK, fixed in migration 0027), cost/call budget, and the
+explicit Phase 7H/7I boundaries. This section only records what's new at the level every other
+phase section in this file uses.
+
+### What's new
+
+Migrations 0025 (four new tables + `create_company_research_snapshot` RPC), 0026 (widens
+`ai_usage_events.task_type` to add `'company_research'`, preserving all eight prior values,
+live-verified before and after), 0027 (the immutability-trigger fix). `packages/shared`: the
+persisted/read schema (`company-research.ts`), the model-facing contract
+(`company-research-contract.ts`), the deep validator (`validate-company-research-plan.ts`), the
+deterministic query builder, source classifier, source ranker/deduper, executive-summary builder,
+and a general-purpose `isSafeExternalUrl` guard. `packages/ai`: the Tavily provider client
+(`research/tavily-client.ts`), the discovery+extraction orchestrator
+(`research/discover-and-extract-company-research-sources.ts`), the system/user prompt builders,
+the contract validator, a new `callClaudeForCompanyResearch`, and the top-level orchestrator
+(`generate-company-research.ts`). `packages/database`: `queries/company-research.ts` (reads +
+the RPC wrapper). `apps/web`: `POST /api/applications/:id/company-research`, the application
+detail page's `CompanyResearchSection` + `ResearchCompanyButton`, and the dedicated
+`/applications/:id/company-research` view page with citation numbering and snapshot history.
+
+### Tests
+
+`packages/shared` (+56): `classify-company-research-source.test.ts` (13),
+`select-company-research-sources.test.ts` (7), `build-company-research-queries.test.ts` (5),
+`build-company-research-summary.test.ts` (5), `validate-company-research-plan.test.ts` (7),
+`is-safe-external-url.test.ts` (12) — including the localhost/private-IP/link-local/IP-literal-
+obfuscation cases §22 asks for. `packages/ai` (+53): `tavily-client.test.ts` (15, mocked fetch —
+no real network access required or attempted), `discover-and-extract-company-research-sources.
+test.ts` (10), `build-company-research-user-prompt.test.ts` (7, including a literal
+prompt-injection string assertion), `validate-company-research-contract.test.ts` (7),
+`generate-company-research.test.ts` (14 — eligibility, rate limiting, every web-retrieval outcome,
+synthesis retry/rejection, staleness for both "company changed" and "application deleted," and an
+explicit audit that zero résumé/interview-prep/networking mutation functions are ever called).
+`packages/database` (+5): `company-research.test.ts`. `apps/web` (+22):
+`company-research/route.test.ts` (12), `company-research-section.test.tsx` (4),
+`research-company-button.test.tsx` (6). `supabase/tests/database`: `0030_company_research.
+test.sql` (+25, live-verified, including the cross-snapshot-citation FK guarantee and the
+application-delete-semantics assertions that caught §11's bug). All run alongside the full
+existing suite (1,491 tests across every workspace) with zero regressions.
+
+### Explicitly deferred to Phase 7H+
+
+Research-aware résumé tailoring (7E/7F reading a `companyResearchSnapshotId`), research-aware
+interview prep, a `companies` table (no architectural need surfaced), snapshot diffing, automatic/
+scheduled refresh, a numeric source-quality score, and any second AI call in this phase's own
+pipeline (synthesis is the only one, with its existing one-retry policy).

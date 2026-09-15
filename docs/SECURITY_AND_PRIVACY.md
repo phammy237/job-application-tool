@@ -53,13 +53,17 @@ Never exposed to the client, the extension bundle, logs, or version control:
 - Claude API key
 - Google OAuth client secret
 - Gmail refresh tokens (see §4 for at-rest handling)
+- Tavily API key (Phase 7G, `packages/ai/src/research/tavily-client.ts` — the company-research
+  search/extraction provider)
 
 Mechanism: these live only in server-side environment variables consumed by Next.js API
 routes / server components, and only within `packages/ai`, `packages/email`, and the
 service-role code paths of `packages/database`. `apps/extension` ships with zero secrets —
 its only credential is a short-lived, revocable, hashed session token. `.env*` files are
 gitignored; a secret-scanning pre-commit hook (or CI check) is part of Phase 1 repository
-setup.
+setup. `tavily-client.ts` reads `TAVILY_API_KEY` lazily from `process.env` (same posture as
+`claude/client.ts`'s Anthropic key) and never includes it in a returned value, a thrown error
+message, or a log line — verified by its own test suite.
 
 ## 4. Encryption at rest
 
@@ -190,6 +194,39 @@ shell commands via `\write18`/shell-escape. This repo's actual posture:
   requirements list. The generated-LaTeX path is safer but should still go through the same
   sandbox, not a shortcut, since a future structured-content bug could still produce unexpected
   LaTeX.
+
+## 9B. Company research web-content risk (Phase 7G)
+
+Company research (docs/IMPLEMENTATION_PLAN.md "Phase 7G", docs/COMPANY_RESEARCH.md) is the first
+place this codebase deliberately ingests arbitrary third-party web content. Real risks, and this
+phase's actual mitigations:
+
+- **SSRF.** Career OS never fetches an arbitrary URL itself — discovery and extraction both go
+  through the Tavily API over plain HTTPS (`packages/ai/src/research/tavily-client.ts`), the
+  §22-preferred design. Every URL the provider returns is still independently validated
+  (`isSafeExternalUrl`, `packages/shared`) before Career OS does anything else with it, including
+  asking the same provider to extract it — http(s)-only, no embedded credentials, no localhost/
+  loopback/RFC1918/link-local/metadata-address/IP-literal-obfuscation host, checked with 12 unit
+  tests covering exactly those cases.
+- **Prompt injection from extracted page text.** Every source's text is wrapped in an explicit
+  `<source id="...">` tag Career OS controls, with a system prompt that repeatedly states sources
+  are untrusted evidence-only data, never instructions — and there are no tools on the synthesis
+  call at all, so even a successful injection attempt has nothing to invoke. See
+  docs/COMPANY_RESEARCH.md's own prompt-injection section for the full design and test coverage.
+- **Fabricated/uncited claims.** Every finding must cite a real, request-local source id
+  (`validateCompanyResearchPlan`) and a real requirement id when it cites one at all — an
+  unknown/invented id rejects the entire plan (one retry, then a real refusal), the same posture
+  Phase 7E already established for résumé tailoring. As with Phase 7E, this validates that a
+  citation resolves to something real, not that the claim is semantically entailed by it — see
+  docs/COMPANY_RESEARCH.md for that honest limitation.
+- **Data minimization.** Company research sends only company name, role title, and (when
+  available) job-requirement text/topics to both the search provider and Claude — never the
+  candidate's résumé, approved facts, profile, networking contacts, or Gmail data (§40 of the
+  phase brief; verified by an explicit mutation/no-candidate-data audit test in
+  `generate-company-research.test.ts`).
+- **Storage minimization.** Only URL/title/publisher/dates plus one bounded (≤1500 character)
+  evidence excerpt are ever persisted per source — never a full page, never HTML/scripts/nav
+  chrome, never an entire article.
 
 ## 10. Dependency and platform risk (lighter-touch, tracked not deeply mitigated yet)
 

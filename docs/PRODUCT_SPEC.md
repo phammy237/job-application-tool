@@ -144,9 +144,18 @@ pre-accepted) and may explicitly save a reviewed subset as a new immutable résu
 the master, a new job-specific tailored résumé; from an existing tailored résumé, its next
 version. Saving is fully revalidated server-side against the user's current approved facts —
 never trusting anything the review UI itself claims — and never happens without that explicit
-click. No company research, no ATS score — see `docs/AI_GROUNDING.md` §11,
-`docs/RESUME_STUDIO.md` §12, `docs/IMPLEMENTATION_PLAN.md` "Phase 7F", and `docs/DATA_MODEL.md`
-§"resumes"/§"resume_versions".
+click. No ATS score anywhere — see `docs/AI_GROUNDING.md` §11, `docs/RESUME_STUDIO.md` §12,
+`docs/IMPLEMENTATION_PLAN.md` "Phase 7F", and `docs/DATA_MODEL.md` §"resumes"/§"resume_versions".
+
+As of Phase 7G, an application detail page also offers an explicit, separate **Research company**
+action — RESEARCH ONLY, never automatic, and not yet connected to résumé tailoring or interview
+prep. Clicking it discovers public sources about the company (its own site, newsroom, investor
+relations, engineering/product blog, careers page, and independent reporting — never the job
+posting's own ATS/job-board hosting page), then synthesizes a bounded, source-cited list of
+findings relevant to the specific role, saved as one immutable, timestamped snapshot; refreshing
+creates a new snapshot rather than editing the old one. No `companies` table, no candidate facts
+or résumé content ever sent to the research provider or the model, no ATS-style score — see
+`docs/COMPANY_RESEARCH.md` and `docs/IMPLEMENTATION_PLAN.md` "Phase 7G" for the full design.
 
 ## 7. Application tracker scope
 
