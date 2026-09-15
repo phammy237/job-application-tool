@@ -14,7 +14,7 @@ export default defineConfig({
   workers: 1,
   reporter: 'list',
   use: {
-    baseURL: process.env.E2E_BASE_URL ?? 'http://localhost:3000',
+    baseURL: process.env.E2E_BASE_URL ?? 'http://localhost:3003',
     trace: 'retain-on-failure',
   },
   projects: [
@@ -30,7 +30,7 @@ export default defineConfig({
         // rather than `next dev`, whose dev-mode overlay is prone to intercepting Playwright
         // clicks. Locally, `npm run dev` with reuseExistingServer keeps the fast dev loop.
         command: process.env.CI ? 'npm run start' : 'npm run dev',
-        url: 'http://localhost:3000',
+        url: 'http://localhost:3003',
         reuseExistingServer: !process.env.CI,
         timeout: 60_000,
       },

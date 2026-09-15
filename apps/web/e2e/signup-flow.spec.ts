@@ -105,7 +105,9 @@ test('login → edit profile → create application → logout', async ({ page }
   // createApplication redirects straight to the new application's detail page.
   await page.waitForURL(/\/applications\/[^/]+$/);
   await expect(page.getByRole('heading', { name: 'Backend Engineer' })).toBeVisible();
-  await expect(page.getByText('Globex Corporation')).toBeVisible();
+  await expect(
+  page.getByText('Globex Corporation', { exact: true }),
+).toBeVisible();
 
   await page.getByLabel('Status').selectOption('INTERVIEW');
   await page.getByRole('button', { name: 'Update status' }).click();
@@ -117,12 +119,10 @@ test('login → edit profile → create application → logout', async ({ page }
   await expect(page.getByText('Globex Corporation')).toBeVisible();
 
   // ---- Logout -------------------------------------------------------------------------------
-  // { force: true }: Next.js's dev-mode overlay portal sometimes intercepts pointer events even
-  // when visually out of the way — a dev-server-only artifact, not present in production.
-  await page.getByRole('button', { name: 'Sign out' }).click({ force: true });
+  await page.getByRole('button', { name: 'Sign out' }).click();
   await page.waitForURL('/');
 
   // Session is gone — the authenticated area redirects to /login again.
   await page.goto('/dashboard');
   await page.waitForURL(/\/login/);
-});
+  });
