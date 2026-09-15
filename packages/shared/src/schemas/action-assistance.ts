@@ -1,6 +1,7 @@
 import { z } from 'zod';
-import { uuidSchema } from './common';
+import { isoDateTimeSchema, uuidSchema } from './common';
 import type { NextActionType } from './next-action';
+import { companyResearchModeSchema, companyResearchRelevanceItemSchema } from './resume-tailoring';
 
 /**
  * Phase 5C.3 — the AI-assistance layer's own domain concept, deliberately separate from
@@ -76,6 +77,23 @@ export type FollowUpDraftResult = z.infer<typeof followUpDraftResultSchema>;
 // Interview preparation (5C.3B)
 // ================================================================================================
 
+/** Phase 7I (docs/IMPLEMENTATION_PLAN.md "Phase 7I" §"researchFindingIds provenance pattern") —
+ * deliberately small: a research finding never grounds a claim, it only explains why a candidate-
+ * or role-relevant item is strategically relevant for this company right now, so a handful is
+ * always enough. Same cap as Phase 7H's per-operation `MAX_RESEARCH_FINDINGS_PER_OPERATION`. */
+const MAX_RESEARCH_FINDINGS_PER_ITEM = 4;
+/** OPTIONAL on every interview-prep item type — never required, and never a substitute for
+ * `sourceFactIds`/`sourceRequirementId(s)`: it is a THIRD, independent provenance bucket (company
+ * relevance), never merged with factual or role grounding. */
+const researchFindingIdsSchema = z
+  .array(uuidSchema)
+  .max(MAX_RESEARCH_FINDINGS_PER_ITEM)
+  .default([]);
+/** Resolved, human-readable company-relevance context for the final result (never raw ids) —
+ * same shape Phase 7H already established for résumé tailoring, reused under a neutral name (see
+ * `resume-tailoring.ts`'s `companyResearchRelevanceItemSchema`). */
+const companyRelevanceSchema = z.array(companyResearchRelevanceItemSchema).default([]);
+
 /**
  * `sourceRequirementId` is nullable throughout: when no CURRENT requirement-mapping run exists
  * for the job snapshot, this pipeline degrades to reading the snapshot's own requirement lists
@@ -89,22 +107,37 @@ export const interviewPrepRolePrioritySchema = z.object({
   requirement: z.string().trim().min(1).max(400),
   importance: z.enum(['REQUIRED', 'PREFERRED']),
   sourceRequirementId: uuidSchema.nullable(),
+  researchFindingIds: researchFindingIdsSchema,
 });
 export type InterviewPrepRolePriority = z.infer<typeof interviewPrepRolePrioritySchema>;
+export const interviewPrepRolePriorityViewSchema = interviewPrepRolePrioritySchema
+  .omit({ researchFindingIds: true })
+  .extend({ companyRelevance: companyRelevanceSchema });
+export type InterviewPrepRolePriorityView = z.infer<typeof interviewPrepRolePriorityViewSchema>;
 
 export const interviewPrepEvidenceSchema = z.object({
   theme: z.string().trim().min(1).max(200),
   sourceFactIds: z.array(uuidSchema).max(10),
   summary: z.string().trim().min(1).max(500),
+  researchFindingIds: researchFindingIdsSchema,
 });
 export type InterviewPrepEvidence = z.infer<typeof interviewPrepEvidenceSchema>;
+export const interviewPrepEvidenceViewSchema = interviewPrepEvidenceSchema
+  .omit({ researchFindingIds: true })
+  .extend({ companyRelevance: companyRelevanceSchema });
+export type InterviewPrepEvidenceView = z.infer<typeof interviewPrepEvidenceViewSchema>;
 
 export const interviewPrepStarStorySchema = z.object({
   competency: z.string().trim().min(1).max(200),
   sourceFactIds: z.array(uuidSchema).max(10),
   prompt: z.string().trim().min(1).max(500),
+  researchFindingIds: researchFindingIdsSchema,
 });
 export type InterviewPrepStarStory = z.infer<typeof interviewPrepStarStorySchema>;
+export const interviewPrepStarStoryViewSchema = interviewPrepStarStorySchema
+  .omit({ researchFindingIds: true })
+  .extend({ companyRelevance: companyRelevanceSchema });
+export type InterviewPrepStarStoryView = z.infer<typeof interviewPrepStarStoryViewSchema>;
 
 /** Never "the recruiter will ask this" — see this field's system-prompt instruction. `rationale`
  * exists precisely so the UI can render "Likely area to prepare based on the role requirements"
@@ -113,23 +146,42 @@ export const interviewPrepPossibleQuestionSchema = z.object({
   question: z.string().trim().min(1).max(400),
   rationale: z.string().trim().min(1).max(400),
   sourceRequirementIds: z.array(uuidSchema).max(10),
+  researchFindingIds: researchFindingIdsSchema,
 });
 export type InterviewPrepPossibleQuestion = z.infer<
   typeof interviewPrepPossibleQuestionSchema
+>;
+export const interviewPrepPossibleQuestionViewSchema = interviewPrepPossibleQuestionSchema
+  .omit({ researchFindingIds: true })
+  .extend({ companyRelevance: companyRelevanceSchema });
+export type InterviewPrepPossibleQuestionView = z.infer<
+  typeof interviewPrepPossibleQuestionViewSchema
 >;
 
 export const interviewPrepQuestionToAskSchema = z.object({
   question: z.string().trim().min(1).max(400),
   rationale: z.string().trim().min(1).max(400),
+  researchFindingIds: researchFindingIdsSchema,
 });
 export type InterviewPrepQuestionToAsk = z.infer<typeof interviewPrepQuestionToAskSchema>;
+export const interviewPrepQuestionToAskViewSchema = interviewPrepQuestionToAskSchema
+  .omit({ researchFindingIds: true })
+  .extend({ companyRelevance: companyRelevanceSchema });
+export type InterviewPrepQuestionToAskView = z.infer<
+  typeof interviewPrepQuestionToAskViewSchema
+>;
 
 export const interviewPrepGapSchema = z.object({
   requirement: z.string().trim().min(1).max(400),
   sourceRequirementId: uuidSchema.nullable(),
   note: z.string().trim().min(1).max(400),
+  researchFindingIds: researchFindingIdsSchema,
 });
 export type InterviewPrepGap = z.infer<typeof interviewPrepGapSchema>;
+export const interviewPrepGapViewSchema = interviewPrepGapSchema
+  .omit({ researchFindingIds: true })
+  .extend({ companyRelevance: companyRelevanceSchema });
+export type InterviewPrepGapView = z.infer<typeof interviewPrepGapViewSchema>;
 
 /** The model's raw-response contract. Capped array lengths bound worst-case output size/cost and
  * keep the UI from ever needing to render an unbounded list. */
@@ -154,12 +206,56 @@ export type InterviewPrepSubmittedAnswer = z.infer<
   typeof interviewPrepSubmittedAnswerSchema
 >;
 
-/** The full result returned to the client: the validated model contract, plus server-assembled
- * (never model-generated) frozen-answer context and a short human-readable provenance summary
- * (e.g. "Based on 6 job requirements and 8 approved profile facts"). */
-export const interviewPrepResultSchema = interviewPrepModelContractSchema.extend({
+/** The full result returned to the client: the validated model contract (with every item's
+ * `researchFindingIds` resolved into human-readable `companyRelevance`, never a raw id — Phase
+ * 7I), plus server-assembled (never model-generated) frozen-answer context, a short human-
+ * readable provenance summary, and (Phase 7I) server-computed company-research metadata. */
+export const interviewPrepResultSchema = z.object({
+  rolePriorities: z.array(interviewPrepRolePriorityViewSchema).max(12),
+  evidenceToEmphasize: z.array(interviewPrepEvidenceViewSchema).max(8),
+  starStoryPrompts: z.array(interviewPrepStarStoryViewSchema).max(6),
+  possibleQuestions: z.array(interviewPrepPossibleQuestionViewSchema).max(8),
+  questionsToAsk: z.array(interviewPrepQuestionToAskViewSchema).max(6),
+  gapsToPrepare: z.array(interviewPrepGapViewSchema).max(8),
   submittedAnswersToReview: z.array(interviewPrepSubmittedAnswerSchema).max(20),
   provenanceSummary: z.string(),
   usedCurrentRequirementMapping: z.boolean(),
+  /** Phase 7I — the ACTUAL mode this prep was generated with, which may differ from what the
+   * caller requested: requesting `JOB_PLUS_COMPANY_RESEARCH` with no eligible snapshot for this
+   * application degrades honestly to `JOB_ONLY` rather than erroring, and this always reflects
+   * what actually happened. */
+  researchMode: companyResearchModeSchema,
+  /** The exact immutable snapshot actually used, or null when `researchMode` is `JOB_ONLY`.
+   * Never the "latest" snapshot re-resolved implicitly. */
+  companyResearchSnapshotId: uuidSchema.nullable(),
+  /** The snapshot's own frozen `researchedAt` — resolved once here so the UI never has to
+   * re-fetch the snapshot just to show its date. Null exactly when
+   * `companyResearchSnapshotId` is null. */
+  companyResearchResearchedAt: isoDateTimeSchema.nullable(),
+  /** How many of the snapshot's findings were actually selected into this request's prompt —
+   * bounded, never the snapshot's full finding count. 0 when `researchMode` is `JOB_ONLY`. */
+  selectedResearchFindingCount: z.number().int().min(0),
+  /** Distinct company-research finding ids actually cited by any item in this result — never
+   * trusted from the model, always recomputed server-side after validation. */
+  researchFindingsReferenced: z.number().int().min(0),
+  /** Count of items (across every section) whose `researchFindingIds` was non-empty — a coarser,
+   * separate signal from `researchFindingsReferenced` (one item may cite several findings). */
+  itemsInfluencedByResearch: z.number().int().min(0),
 });
 export type InterviewPrepResult = z.infer<typeof interviewPrepResultSchema>;
+
+/**
+ * POST /api/applications/:id/interview-prep request body (Phase 7I, same shape/rationale as
+ * résumé tailoring's `generateResumeTailoringRequestSchema`) — deliberately the ONLY two fields
+ * this route accepts; every other input (which application, which job snapshot) is still always
+ * re-derived server-side, never client-supplied. An empty/absent body parses to
+ * `{researchMode: 'JOB_ONLY'}` — exactly Phase 5C.3B's original, unchanged behavior — so no
+ * existing call site breaks.
+ */
+export const generateInterviewPrepRequestSchema = z.object({
+  researchMode: companyResearchModeSchema.default('JOB_ONLY'),
+  /** Ignored entirely when researchMode is JOB_ONLY — never trusted blindly either way; the
+   * pipeline re-resolves ownership/compatibility server-side before ever using it. */
+  companyResearchSnapshotId: uuidSchema.nullable().optional(),
+});
+export type GenerateInterviewPrepRequest = z.infer<typeof generateInterviewPrepRequestSchema>;

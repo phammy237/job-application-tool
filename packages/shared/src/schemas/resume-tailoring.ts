@@ -58,6 +58,18 @@ export type ResumeTailoringResearchMode = z.infer<
 >;
 
 /**
+ * Phase 7I — a generic alias, not a redefinition. `JOB_ONLY`/`JOB_PLUS_COMPANY_RESEARCH` is a
+ * concept shared by every pipeline that can optionally fold in company research (résumé
+ * tailoring, interview prep), so a second, non-resume-named alias exists for those other call
+ * sites (docs/IMPLEMENTATION_PLAN.md "Phase 7I" — "do not couple to a resume-specific
+ * abstraction merely for reuse") without touching Phase 7H's own schema, export name, or
+ * behavior at all — this is exactly the same runtime value, just referenced under a name that
+ * doesn't imply résumés.
+ */
+export const companyResearchModeSchema = resumeTailoringResearchModeSchema;
+export type CompanyResearchMode = ResumeTailoringResearchMode;
+
+/**
  * POST /api/applications/:id/resume-tailoring request body (Phase 7H §37) — deliberately the
  * ONLY two fields this route accepts; every other input (which application, which working
  * résumé, which job snapshot) is still always re-derived server-side, never client-supplied
@@ -178,6 +190,13 @@ export const resumeTailoringCompanyRelevanceItemSchema = z.object({
 export type ResumeTailoringCompanyRelevanceItem = z.infer<
   typeof resumeTailoringCompanyRelevanceItemSchema
 >;
+
+/** Phase 7I — generic alias, same reasoning as `companyResearchModeSchema` above: this shape
+ * (`{id, claim, roleRelevance, category}`) has nothing résumé-specific about it, so other
+ * research-aware pipelines (interview prep) reference it under a neutral name rather than
+ * importing something named "resumeTailoring...". */
+export const companyResearchRelevanceItemSchema = resumeTailoringCompanyRelevanceItemSchema;
+export type CompanyResearchRelevanceItem = ResumeTailoringCompanyRelevanceItem;
 const companyRelevanceSchema = z.array(resumeTailoringCompanyRelevanceItemSchema).default([]);
 
 /**

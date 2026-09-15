@@ -1,14 +1,10 @@
-import {
-  getOwnCompanyResearchSnapshot,
-  listOwnCompanyResearchSnapshotsForApplication,
-  type CareerOsSupabaseClient,
-} from '@career-os/database';
-import {
-  isCompanyResearchSnapshotCompatible,
-  type CompanyResearchSnapshot,
-  type ResumeTailoringResearchMode,
-} from '@career-os/shared';
+import type { CareerOsSupabaseClient } from '@career-os/database';
+import type { CompanyResearchSnapshot, ResumeTailoringResearchMode } from '@career-os/shared';
 import { RESEARCH_TAILORING_AUTO_RESOLVE_CANDIDATE_LIMIT } from '../config';
+import {
+  resolveCompanyResearchSnapshotForRequest,
+  type ResolveCompanyResearchSnapshotResult,
+} from './resolve-company-research-snapshot';
 
 export interface ResolveResumeTailoringResearchSnapshotParams {
   applicationId: string;
@@ -37,59 +33,20 @@ export type ResolveResumeTailoringResearchSnapshotResult =
   | { status: 'ok'; snapshot: CompanyResearchSnapshot };
 
 /**
- * Phase 7H's one snapshot-resolution gate (docs/IMPLEMENTATION_PLAN.md "Phase 7H" §3/§4/§6/§7) —
- * pure orchestration over already-persisted Phase 7G data, zero Tavily/Claude calls of its own
- * (§5/§27). Two distinct paths:
- *
- *   - Explicit `requestedSnapshotId`: the user (or the UI on their behalf) asked for a *specific*
- *     snapshot — resolved via the same RLS-scoped, ownership-checked read Phase 7G's research page
- *     itself uses, then compatibility-checked; either failure is a real, surfaced rejection (the
- *     caller asked for something specific and it can't honestly be honored).
- *   - No explicit id (`JOB_PLUS_COMPANY_RESEARCH` with nothing more specific requested): the
- *     "use latest research" default (§3/§35) — the application's own most recent compatible
- *     snapshot is used, or this silently degrades to `JOB_ONLY` if none exists/matches (§4);
- *     never an error, since nothing specific was ever promised.
+ * Phase 7H's snapshot-resolution gate (docs/IMPLEMENTATION_PLAN.md "Phase 7H" §3/§4/§6/§7) —
+ * unchanged name, params, and behavior. Phase 7I extracted the actual logic into a generic
+ * primitive (`resolve-company-research-snapshot.ts`, `resolveCompanyResearchSnapshotForRequest`)
+ * so interview prep could reuse it without importing something résumé-named; this function is now
+ * a thin, behavior-preserving wrapper around that primitive, not a reimplementation — every test
+ * written against this exact export continues to exercise the same code path.
  */
 export async function resolveResumeTailoringResearchSnapshot(
   supabase: CareerOsSupabaseClient,
   userId: string,
   params: ResolveResumeTailoringResearchSnapshotParams,
 ): Promise<ResolveResumeTailoringResearchSnapshotResult> {
-  if (params.researchMode === 'JOB_ONLY') {
-    return { status: 'none' };
-  }
-
-  const applicationContext = {
-    company: params.company,
-    title: params.title,
-    jobSnapshotId: params.jobSnapshotId,
-  };
-
-  if (params.requestedSnapshotId) {
-    const snapshot = await getOwnCompanyResearchSnapshot(
-      supabase,
-      userId,
-      params.requestedSnapshotId,
-    );
-    if (!snapshot) {
-      return { status: 'not_found' };
-    }
-    if (!isCompanyResearchSnapshotCompatible(snapshot, applicationContext)) {
-      return { status: 'context_mismatch' };
-    }
-    return { status: 'ok', snapshot };
-  }
-
-  const summaries = await listOwnCompanyResearchSnapshotsForApplication(
-    supabase,
-    userId,
-    params.applicationId,
-  );
-  for (const summary of summaries.slice(0, RESEARCH_TAILORING_AUTO_RESOLVE_CANDIDATE_LIMIT)) {
-    const snapshot = await getOwnCompanyResearchSnapshot(supabase, userId, summary.id);
-    if (snapshot && isCompanyResearchSnapshotCompatible(snapshot, applicationContext)) {
-      return { status: 'ok', snapshot };
-    }
-  }
-  return { status: 'none' };
+  return resolveCompanyResearchSnapshotForRequest(supabase, userId, {
+    ...params,
+    autoResolveCandidateLimit: RESEARCH_TAILORING_AUTO_RESOLVE_CANDIDATE_LIMIT,
+  });
 }

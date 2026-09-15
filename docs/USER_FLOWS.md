@@ -147,8 +147,9 @@ false`, `visibleOnPublicProfile = false`. Nothing extracted is usable until step
    and numbered source citations you can open, and the full source list with publisher and
    publication date when known. Previous research snapshots remain available and unchanged —
    refreshing always creates a new snapshot rather than editing the old one.
-5. Company research does not affect interview prep yet — that intersection is planned for a later
-   phase. It CAN optionally inform résumé tailoring, as of Phase 7H (§3E below).
+5. Company research can optionally inform résumé tailoring (Phase 7H, §3E below) and interview
+   prep (Phase 7I, §5 above) — both explicit, both never automatic, and neither ever turns a
+   company fact into a candidate fact.
 
 ## 3E. Research-aware résumé tailoring (Phase 7H)
 
@@ -312,6 +313,14 @@ false`, `visibleOnPublicProfile = false`. Nothing extracted is usable until step
    approved facts, never claiming to know what the employer's interview will actually contain.
    Neither button does anything on page load; both require an explicit click, and neither result
    is persisted — refreshing the page loses it.
+
+   As of Phase 7I, if a compatible company-research snapshot exists for this application,
+   interview prep shows a compact "Job only" / "Job + company research" choice (defaulting to
+   Job only — never mandatory just because a snapshot exists); with research selected, prep may
+   prioritize a real, already-supported theme that's now more relevant, suggest a preparation area
+   or a question to ask tied to what the company is currently focused on, and shows a small
+   "Based on this job + company research from <date>" note — but company research still never
+   becomes a candidate fact (see §3E's own boundary, which applies identically here).
 
 ## 7. Gmail sync (optional)
 

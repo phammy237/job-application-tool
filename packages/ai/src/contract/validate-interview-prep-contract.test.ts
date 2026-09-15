@@ -4,6 +4,7 @@ import { validateInterviewPrepContract } from './validate-interview-prep-contrac
 const FACT_ID = '11111111-1111-4111-8111-111111111111';
 const REQUIREMENT_ID = '77777777-7777-4777-8777-777777777777';
 const UNKNOWN_ID = '99999999-9999-4999-8999-999999999999';
+const FINDING_ID = '55555555-5555-4555-8555-555555555555';
 
 function prepJson(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({
@@ -17,8 +18,12 @@ function prepJson(overrides: Record<string, unknown> = {}): string {
   });
 }
 
-const ALLOWED_FACT_IDS = new Set([FACT_ID]);
-const ALLOWED_REQUIREMENT_IDS = new Set([REQUIREMENT_ID]);
+const ALLOWLISTS = {
+  factIds: new Set([FACT_ID]),
+  factTextById: new Map([[FACT_ID, 'Led the referral workflow rebuild']]),
+  requirementIds: new Set([REQUIREMENT_ID]),
+  researchFindingIds: new Set<string>(),
+};
 
 describe('validateInterviewPrepContract', () => {
   it('accepts a well-formed, fully-cited contract', () => {
@@ -33,8 +38,7 @@ describe('validateInterviewPrepContract', () => {
         ],
         evidenceToEmphasize: [{ theme: 'x', sourceFactIds: [FACT_ID], summary: 'y' }],
       }),
-      ALLOWED_FACT_IDS,
-      ALLOWED_REQUIREMENT_IDS,
+      ALLOWLISTS,
     );
     expect(result.status).toBe('ok');
   });
@@ -47,29 +51,21 @@ describe('validateInterviewPrepContract', () => {
         ],
         possibleQuestions: [{ question: 'x', rationale: 'y', sourceRequirementIds: [] }],
       }),
-      ALLOWED_FACT_IDS,
-      ALLOWED_REQUIREMENT_IDS,
+      ALLOWLISTS,
     );
     expect(result.status).toBe('ok');
   });
 
   it('rejects malformed JSON', () => {
-    expect(
-      validateInterviewPrepContract(
-        'not json',
-        ALLOWED_FACT_IDS,
-        ALLOWED_REQUIREMENT_IDS,
-      ),
-    ).toEqual({ status: 'rejected', reason: 'validation_failed' });
+    expect(validateInterviewPrepContract('not json', ALLOWLISTS)).toEqual({
+      status: 'rejected',
+      reason: 'validation_failed',
+    });
   });
 
   it('rejects a schema violation (missing required array)', () => {
     expect(
-      validateInterviewPrepContract(
-        JSON.stringify({ rolePriorities: [] }),
-        ALLOWED_FACT_IDS,
-        ALLOWED_REQUIREMENT_IDS,
-      ),
+      validateInterviewPrepContract(JSON.stringify({ rolePriorities: [] }), ALLOWLISTS),
     ).toEqual({ status: 'rejected', reason: 'validation_failed' });
   });
 
@@ -78,8 +74,7 @@ describe('validateInterviewPrepContract', () => {
       prepJson({
         evidenceToEmphasize: [{ theme: 'x', sourceFactIds: [UNKNOWN_ID], summary: 'y' }],
       }),
-      ALLOWED_FACT_IDS,
-      ALLOWED_REQUIREMENT_IDS,
+      ALLOWLISTS,
     );
     expect(result).toEqual({ status: 'rejected', reason: 'unknown_source_fact_id' });
   });
@@ -89,8 +84,7 @@ describe('validateInterviewPrepContract', () => {
       prepJson({
         starStoryPrompts: [{ competency: 'x', sourceFactIds: [UNKNOWN_ID], prompt: 'y' }],
       }),
-      ALLOWED_FACT_IDS,
-      ALLOWED_REQUIREMENT_IDS,
+      ALLOWLISTS,
     );
     expect(result).toEqual({ status: 'rejected', reason: 'unknown_source_fact_id' });
   });
@@ -102,8 +96,7 @@ describe('validateInterviewPrepContract', () => {
           { requirement: 'x', importance: 'REQUIRED', sourceRequirementId: UNKNOWN_ID },
         ],
       }),
-      ALLOWED_FACT_IDS,
-      ALLOWED_REQUIREMENT_IDS,
+      ALLOWLISTS,
     );
     expect(result).toEqual({ status: 'rejected', reason: 'unknown_source_fact_id' });
   });
@@ -113,8 +106,7 @@ describe('validateInterviewPrepContract', () => {
       prepJson({
         gapsToPrepare: [{ requirement: 'x', sourceRequirementId: UNKNOWN_ID, note: 'y' }],
       }),
-      ALLOWED_FACT_IDS,
-      ALLOWED_REQUIREMENT_IDS,
+      ALLOWLISTS,
     );
     expect(result).toEqual({ status: 'rejected', reason: 'unknown_source_fact_id' });
   });
@@ -126,8 +118,7 @@ describe('validateInterviewPrepContract', () => {
           { question: 'x', rationale: 'y', sourceRequirementIds: [UNKNOWN_ID] },
         ],
       }),
-      ALLOWED_FACT_IDS,
-      ALLOWED_REQUIREMENT_IDS,
+      ALLOWLISTS,
     );
     expect(result).toEqual({ status: 'rejected', reason: 'unknown_source_fact_id' });
   });
@@ -143,9 +134,110 @@ describe('validateInterviewPrepContract', () => {
           },
         ],
       }),
-      ALLOWED_FACT_IDS,
-      new Set(),
+      { ...ALLOWLISTS, requirementIds: new Set() },
     );
     expect(result).toEqual({ status: 'rejected', reason: 'unknown_source_fact_id' });
+  });
+});
+
+describe('validateInterviewPrepContract — Phase 7I researchFindingIds', () => {
+  const ALLOWLISTS_WITH_RESEARCH = { ...ALLOWLISTS, researchFindingIds: new Set([FINDING_ID]) };
+
+  it('accepts a valid researchFindingIds citation on any item type', () => {
+    const result = validateInterviewPrepContract(
+      prepJson({
+        questionsToAsk: [
+          { question: 'x', rationale: 'y', researchFindingIds: [FINDING_ID] },
+        ],
+      }),
+      ALLOWLISTS_WITH_RESEARCH,
+    );
+    expect(result.status).toBe('ok');
+  });
+
+  it('rejects a researchFindingIds citation not offered in this request', () => {
+    const result = validateInterviewPrepContract(
+      prepJson({
+        gapsToPrepare: [
+          {
+            requirement: 'x',
+            sourceRequirementId: null,
+            note: 'y',
+            researchFindingIds: [UNKNOWN_ID],
+          },
+        ],
+      }),
+      ALLOWLISTS_WITH_RESEARCH,
+    );
+    expect(result).toEqual({ status: 'rejected', reason: 'unknown_source_fact_id' });
+  });
+
+  it('rejects any researchFindingIds citation when no research context was offered at all (empty allowlist)', () => {
+    const result = validateInterviewPrepContract(
+      prepJson({
+        rolePriorities: [
+          {
+            requirement: 'x',
+            importance: 'REQUIRED',
+            sourceRequirementId: null,
+            researchFindingIds: [FINDING_ID],
+          },
+        ],
+      }),
+      ALLOWLISTS, // researchFindingIds allowlist is empty here
+    );
+    expect(result).toEqual({ status: 'rejected', reason: 'unknown_source_fact_id' });
+  });
+
+  it('CRITICAL: citing a research finding never grounds a technology claim absent from cited facts', () => {
+    // ALLOWLISTS' only fact says nothing about Snowflake — citing FINDING_ID must not launder it.
+    const result = validateInterviewPrepContract(
+      prepJson({
+        evidenceToEmphasize: [
+          {
+            theme: 'Data platform experience',
+            sourceFactIds: [FACT_ID],
+            summary: 'Emphasize your Snowflake pipeline experience',
+            researchFindingIds: [FINDING_ID],
+          },
+        ],
+      }),
+      ALLOWLISTS_WITH_RESEARCH,
+    );
+    expect(result).toEqual({ status: 'rejected', reason: 'ungrounded_technology' });
+  });
+
+  it('CRITICAL: citing a research finding never grounds a numeric claim absent from cited facts', () => {
+    const result = validateInterviewPrepContract(
+      prepJson({
+        starStoryPrompts: [
+          {
+            competency: 'Scale',
+            sourceFactIds: [FACT_ID],
+            prompt: 'Tell them about the time you drove $10B in company revenue',
+            researchFindingIds: [FINDING_ID],
+          },
+        ],
+      }),
+      ALLOWLISTS_WITH_RESEARCH,
+    );
+    expect(result).toEqual({ status: 'rejected', reason: 'ungrounded_number' });
+  });
+
+  it('a candidate claim independently grounded by cited facts still passes even when research is also cited', () => {
+    const result = validateInterviewPrepContract(
+      prepJson({
+        evidenceToEmphasize: [
+          {
+            theme: 'Referral workflow',
+            sourceFactIds: [FACT_ID],
+            summary: 'Discuss the referral workflow rebuild',
+            researchFindingIds: [FINDING_ID],
+          },
+        ],
+      }),
+      ALLOWLISTS_WITH_RESEARCH,
+    );
+    expect(result.status).toBe('ok');
   });
 });

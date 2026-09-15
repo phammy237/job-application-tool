@@ -138,6 +138,23 @@ phase depends on a later phase's output.
       (`resume_versions.company_research_snapshot_id`, migration 0028) — immutable, snapshot
       IDENTITY not latestness, and never repointed by a later research refresh. Full design
       record: this section below.
+- [x] Phase 7I — Research-aware interview preparation: extends the SAME Phase 5C.3B pipeline
+      (never a parallel one) with the identical OPTIONAL, explicit company-research mode Phase 7H
+      established for résumé tailoring. "COMPANY RESEARCH MAY CHANGE WHAT THE CANDIDATE PREPARES
+      FOR OR EMPHASIZES. COMPANY RESEARCH MAY NOT CREATE CANDIDATE FACTS." Snapshot resolution and
+      finding selection/ranking are the exact same Phase 7H primitives — extracted into
+      résumé-agnostic form (`resolveCompanyResearchSnapshotForRequest`,
+      `selectRelevantResearchFindings`) rather than duplicated, with Phase 7H's own exports and
+      behavior verified unchanged. Every interview-prep item type gains an optional
+      `researchFindingIds` (a third, strictly separate citation bucket from `sourceFactIds`/
+      `sourceRequirementId(s)`); `evidenceToEmphasize`/`starStoryPrompts` — the two sections that
+      can make a candidate-fact claim — now also run through Phase 7E's own numeric/technology
+      grounding guards (reused unmodified), with evidence text built ONLY from cited approved
+      facts, so a company-research finding can never launder an ungrounded candidate claim even
+      when cited. Zero additional Tavily/Claude calls; still exactly one attempt plus one retry,
+      `task_type` still `interview_prep`. Fully ephemeral (unchanged from 5C.3B) — no migration,
+      no new table, no persisted research-provenance link, since there is no saved artifact for
+      one to attach to. Full design record: this section below.
 - [ ] Phase 7 — Multi-user beta hardening, privacy controls, testing, deployment
 - [ ] Phase 8 — Optional mypham.space integration, public onboarding, future sharing
 
@@ -4545,8 +4562,158 @@ regressions.
 
 ### Explicitly deferred beyond Phase 7H
 
-Research-aware interview prep (still Phase 7I+), any UI affordance implying the candidate is
-affiliated with a company initiative, a merged "fit score" of any kind (still explicitly
-prohibited), automatic/scheduled research refresh, and retroactively backfilling
-`company_research_snapshot_id` onto résumé versions saved before this phase (they simply keep
-`null` — real, honest history, not reinterpreted).
+Any UI affordance implying the candidate is affiliated with a company initiative, a merged "fit
+score" of any kind (still explicitly prohibited), automatic/scheduled research refresh, and
+retroactively backfilling `company_research_snapshot_id` onto résumé versions saved before this
+phase (they simply keep `null` — real, honest history, not reinterpreted). Research-aware
+interview prep itself shipped in Phase 7I, below.
+
+## Phase 7I — Research-aware interview preparation
+
+Extends the SAME Phase 5C.3B interview-prep pipeline (never a redesign, never a parallel one) so
+an exact, immutable Phase 7G company-research snapshot may influence what a candidate prepares for
+or emphasizes during interview prep, without ever creating a candidate fact from company research.
+Same two hard rules Phase 7H established, restated for this domain: "COMPANY RESEARCH MAY CHANGE
+WHAT THE CANDIDATE PREPARES FOR OR EMPHASIZES" and "COMPANY RESEARCH MAY NOT CREATE CANDIDATE
+FACTS."
+
+### The reasoning model
+
+`JOB REQUIREMENTS ∩ COMPANY RESEARCH ∩ APPROVED CANDIDATE EVIDENCE → GROUNDED INTERVIEW PREP`.
+Concretely: research may prioritize a real, already-supported candidate theme that's now more
+strategically relevant, suggest a preparation area tied to what the company is currently focused
+on, or suggest a company-specific question to ask — it may never turn a company fact into a
+candidate fact ("the company uses Snowflake" is never evidence the candidate has Snowflake
+experience), and it may never imply the candidate worked on or is affiliated with a company
+initiative. The pre-existing uncertainty rule is unchanged and reinforced: research can make a
+topic worth preparing for, never something Career OS is certain an interviewer will actually ask.
+
+### Reused, not duplicated, from Phase 7H
+
+Two Phase 7H primitives had genuinely generic behavior wearing résumé-specific names — extracted
+into neutral form (docs/IMPLEMENTATION_PLAN.md's own "smaller change, less regression risk"
+guidance) rather than reimplemented with subtly divergent semantics, and rather than importing a
+résumé-named function directly into interview prep's own code:
+
+- **Snapshot resolution.** `resolveResumeTailoringResearchSnapshot` (`packages/ai/src/retrieval/`)
+  is now a thin, behavior-preserving wrapper around a new generic
+  `resolveCompanyResearchSnapshotForRequest` (`resolve-company-research-snapshot.ts`) — same
+  export name, same params, same behavior; Phase 7H's own test suite (`generate-resume-tailoring-
+  plan.test.ts`, 35 tests) passes unchanged, proving the extraction didn't alter it. Interview prep
+  calls the generic function directly.
+- **Finding selection/ranking.** `selectResumeTailoringResearchFindings` gained a generic alias,
+  `selectRelevantResearchFindings` (same function reference, not a fork) — interview prep imports
+  the alias; Phase 7H's own ranking tests (`select-resume-tailoring-research-findings.test.ts`)
+  are untouched.
+- **Company-relevance display shape and research-mode enum** each already had (or gained) a
+  neutral alias in `resume-tailoring.ts` (`companyResearchRelevanceItemSchema`/
+  `companyResearchModeSchema`) for the identical reason — one validated definition, referenced
+  under a name that doesn't imply résumés, with zero behavior change to the résumé-tailoring
+  exports.
+
+`isCompanyResearchSnapshotCompatible` needed no change at all — it was already fully generic in
+name and signature.
+
+### Three separate, never-merged provenance buckets — extended to interview prep
+
+Every interview-prep item type (`rolePriorities`, `evidenceToEmphasize`, `starStoryPrompts`,
+`possibleQuestions`, `questionsToAsk`, `gapsToPrepare`) gains an optional `researchFindingIds`,
+validated against a request-local allowlist exactly like `sourceFactIds`/`sourceRequirementId(s)`
+already are:
+
+- `sourceFactIds` — FACTUAL GROUNDING (candidate evidence answers "is this true about me?").
+- `sourceRequirementId`/`sourceRequirementIds` — ROLE GROUNDING (job requirements answer "does the
+  role care?").
+- `researchFindingIds` (new) — COMPANY RELEVANCE (company research answers "why might this matter
+  more for this company?"). Never evidence that a candidate claim is true.
+
+### Candidate-fact safety — the critical addition
+
+`evidenceToEmphasize` and `starStoryPrompts` are the two sections that can make or imply a
+statement about the candidate. Their `summary`/`prompt` text now runs through Phase 7E's own
+deterministic numeric/technology grounding guards (`findUngroundedNumericClaims`/
+`findUngroundedTechnologyTokens`, reused unmodified — never a second heuristic), with
+`evidenceTexts` built ONLY from that item's own cited approved-fact text. Company-research finding
+text is never appended to that array anywhere in `validate-interview-prep-contract.ts`, no matter
+how many findings an item cites via `researchFindingIds` — this is the structural guarantee, not
+merely a prompt instruction, that "Acme is expanding its Snowflake-based analytics platform" can
+never make "Emphasize your Snowflake pipeline experience" pass unless an approved fact
+independently says the candidate used Snowflake. A company metric is caught the same way. Verified
+with dedicated adversarial tests. `rolePriorities`/`possibleQuestions`/`questionsToAsk`/
+`gapsToPrepare` never make a candidate-fact claim in the first place, so the guard doesn't apply to
+them — their `researchFindingIds` still go through the same id-allowlist check every other id in
+this pipeline receives. If no research context was offered to the model at all, the allowlist is
+empty, so ANY `researchFindingIds` citation is rejected by construction.
+
+### What's new
+
+`packages/ai`: new `resolve-company-research-snapshot.ts` (generic primitive);
+`resolve-resume-tailoring-research-snapshot.ts` refactored into a thin wrapper around it;
+`build-interview-prep-user-prompt.ts` gains `researchSnapshot` and returns
+`allowedResearchFindingIds`/`researchFindingsById`/`selectedResearchFindingCount`/`factTextById`
+(new — needed for the grounding guard); the system prompt gains explicit company-vs-candidate
+boundary language plus the existing uncertainty rule extended to research; the JSON schema in
+`callClaudeForInterviewPrep` gains `researchFindingIds` on every item type;
+`validate-interview-prep-contract.ts` switches to an options-object signature
+(`InterviewPrepAllowlists`: `factIds`, `factTextById`, `requirementIds`, `researchFindingIds`),
+validates every `researchFindingIds` entry, and runs the reused numeric/technology guards on
+`evidenceToEmphasize`/`starStoryPrompts`; `generate-interview-prep.ts` gains
+`researchMode`/`companyResearchSnapshotId` params, two new result statuses
+(`research_snapshot_not_found`, `stale_company_research`), and threads the resolved snapshot
+through prompt build → validator allowlist → response resolution → result fields — still exactly
+one attempt + one retry, `task_type` still `interview_prep`.
+
+`packages/shared`: `action-assistance.ts` gains `researchFindingIds` on every raw interview-prep
+item schema, a resolved `*ViewSchema` per item type (`companyRelevance` instead of raw ids) used
+by the final `interviewPrepResultSchema`, six new server-computed result fields (`researchMode`,
+`companyResearchSnapshotId`, `companyResearchResearchedAt`, `selectedResearchFindingCount`,
+`researchFindingsReferenced`, `itemsInfluencedByResearch`), and a new
+`generateInterviewPrepRequestSchema`; new pure module `interview-prep-research-response.ts`
+(`resolveInterviewPrepItemsCompanyRelevance`, `computeInterviewPrepResearchSummary`) generalizes
+résumé tailoring's own per-section resolver pattern across all six item types in one function
+rather than six near-duplicates; `resume-tailoring.ts` gains the two neutral aliases described
+above.
+
+`apps/web`: `POST .../interview-prep` accepts an optional `{researchMode,
+companyResearchSnapshotId}` body (empty/absent body still behaves exactly as before);
+`InterviewPrepPanel` gets a mode selector (radios, shown only when a compatible snapshot exists,
+defaulting to Job only, never mandatory) and per-item "Company relevance" notes (human-readable,
+no UUIDs, linking to the canonical research page) without changing any existing section's
+rendering logic or the ephemeral-result posture at all; the application detail page passes the
+same already-computed `latestCompanyResearch` summary Phase 7H introduced to both panels — no
+extra fetch needed.
+
+### Database / migration status
+
+**None.** Interview prep remains fully ephemeral (unchanged from Phase 5C.3B) — there is no saved
+artifact analogous to a résumé version for a research-provenance reference to attach to, so unlike
+Phase 7H there is no new column, no new table, and no migration. `ai_usage_events` already allows
+`task_type = 'interview_prep'` and `rejection_reason = 'unsupported_claims_present'` (both
+pre-existing, confirmed against the live linked project before writing this section) — no widening
+needed there either.
+
+### Tests
+
+`packages/shared`: new `interview-prep-research-response.test.ts`; extended
+`action-assistance.test.ts` coverage implicitly via the schema's own use in the other test files
+below. `packages/ai`: rewrote `validate-interview-prep-contract.test.ts` for the new
+options-object signature plus a full Phase 7I describe block (valid/unknown/empty-allowlist
+`researchFindingIds`, and the two CRITICAL adversarial grounding-bypass tests); extended
+`generate-interview-prep.test.ts` with a full Phase 7I describe block (default-JOB_ONLY
+regression, explicit-JOB_ONLY-ignores-id, honest-degrade for both no-snapshot and stale-snapshot
+auto-resolve cases, not_found, stale_company_research, R1-stays-valid-after-R2-exists,
+auto-resolve, companyRelevance resolution, unknown-finding-id rejection and retry, the two
+CRITICAL grounding-bypass adversarial tests, a legitimate-independently-grounded-claim-still-
+passes test, and a call-count audit proving zero extra Claude/search calls) — the pre-existing 17
+5C.3B tests remain green unchanged, proving exact backward compatibility. `apps/web`: extended
+`route.test.ts` and `interview-prep-panel.test.tsx` with Phase 7I describe blocks (mode-selector
+visibility/default, request forwarding, human-readable research-context display with no raw ids,
+`stale_company_research`/`research_snapshot_not_found` messaging, and a no-fetch-on-render check).
+All run alongside the full existing suite (1,589 tests across every workspace) with zero
+regressions.
+
+### Explicitly deferred beyond Phase 7I
+
+Interview-round prediction, calendar integration, recruiter/contact enrichment, any persisted
+interview-prep generation, browser/extension interview-prep UI, and — same as every phase in this
+research-aware line — any merged fit/probability score.

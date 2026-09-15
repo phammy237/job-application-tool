@@ -226,7 +226,10 @@ export default async function ApplicationDetailPage({
 
       {nextAction.type === 'PREPARE_INTERVIEW' ? (
         <div id="interview-prep-panel">
-          <InterviewPrepPanel applicationId={application.id} />
+          <InterviewPrepPanel
+            applicationId={application.id}
+            latestCompanyResearch={latestCompanyResearch}
+          />
         </div>
       ) : null}
 

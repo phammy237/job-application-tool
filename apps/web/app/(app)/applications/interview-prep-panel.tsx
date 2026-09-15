@@ -2,8 +2,13 @@
 
 import { Badge, Button } from '@career-os/ui';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { useCallback, useState } from 'react';
-import type { InterviewPrepResult } from '@career-os/shared';
+import type {
+  CompanyResearchMode,
+  CompanyResearchRelevanceItem,
+  InterviewPrepResult,
+} from '@career-os/shared';
 
 type GenerationState =
   | { status: 'idle' }
@@ -12,7 +17,14 @@ type GenerationState =
   | { status: 'action_not_current' }
   | { status: 'insufficient_context' }
   | { status: 'rate_limited' }
+  | { status: 'research_snapshot_not_found' }
+  | { status: 'stale_company_research' }
   | { status: 'error'; message: string };
+
+export interface LatestCompanyResearchSummary {
+  id: string;
+  researchedAt: string;
+}
 
 /**
  * Phase 5C.3B/5C.3G — explicit, user-triggered interview preparation. Same no-fetch-on-mount
@@ -21,16 +33,35 @@ type GenerationState =
  * this pipeline persists nothing (docs/IMPLEMENTATION_PLAN.md "Phase 5C.3E") — acceptable per that
  * decision, and it also means there is never a "stale persisted result" to distinguish from a
  * fresh one in this UI.
+ *
+ * Phase 7I (docs/IMPLEMENTATION_PLAN.md "Phase 7I") — when `latestCompanyResearch` is given (a
+ * snapshot exists for this application), a mode selector analogous to résumé tailoring's own lets
+ * the user choose whether to fold it into this generation. Company research is NEVER mandatory
+ * just because a snapshot exists: with no snapshot, this panel behaves exactly as it always has.
  */
-export function InterviewPrepPanel({ applicationId }: { applicationId: string }) {
+export function InterviewPrepPanel({
+  applicationId,
+  latestCompanyResearch,
+}: {
+  applicationId: string;
+  latestCompanyResearch: LatestCompanyResearchSummary | null;
+}) {
   const router = useRouter();
   const [generation, setGeneration] = useState<GenerationState>({ status: 'idle' });
+  const [researchMode, setResearchMode] = useState<CompanyResearchMode>('JOB_ONLY');
 
   const generate = useCallback(async () => {
     setGeneration({ status: 'generating' });
     try {
       const response = await fetch(`/api/applications/${applicationId}/interview-prep`, {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          researchMode,
+          ...(researchMode === 'JOB_PLUS_COMPANY_RESEARCH' && latestCompanyResearch
+            ? { companyResearchSnapshotId: latestCompanyResearch.id }
+            : {}),
+        }),
       });
       const body = (await response.json()) as {
         status?: string;
@@ -50,6 +81,14 @@ export function InterviewPrepPanel({ applicationId }: { applicationId: string })
         setGeneration({ status: 'insufficient_context' });
         return;
       }
+      if (body.status === 'research_snapshot_not_found') {
+        setGeneration({ status: 'research_snapshot_not_found' });
+        return;
+      }
+      if (body.status === 'stale_company_research') {
+        setGeneration({ status: 'stale_company_research' });
+        return;
+      }
       if (!response.ok || body.status === 'validation_failed' || !body.prep) {
         setGeneration({
           status: 'error',
@@ -62,7 +101,7 @@ export function InterviewPrepPanel({ applicationId }: { applicationId: string })
     } catch {
       setGeneration({ status: 'error', message: 'Prep generation failed. Try again.' });
     }
-  }, [applicationId]);
+  }, [applicationId, researchMode, latestCompanyResearch]);
 
   const isGenerating = generation.status === 'generating';
   const isReady = generation.status === 'ready';
@@ -73,20 +112,44 @@ export function InterviewPrepPanel({ applicationId }: { applicationId: string })
         <h2 className="text-muted-foreground text-sm font-medium">
           Interview preparation
         </h2>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={isGenerating}
-          aria-busy={isGenerating}
-          onClick={() => void generate()}
-        >
-          {isGenerating
-            ? 'Generating…'
-            : isReady
-              ? 'Regenerate'
-              : 'Generate interview prep'}
-        </Button>
       </div>
+
+      {latestCompanyResearch ? (
+        <div className="flex flex-col gap-1 text-sm">
+          <label className="flex items-center gap-2">
+            <input
+              type="radio"
+              name={`interview-research-mode-${applicationId}`}
+              checked={researchMode === 'JOB_ONLY'}
+              onChange={() => setResearchMode('JOB_ONLY')}
+            />
+            Job only
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="radio"
+              name={`interview-research-mode-${applicationId}`}
+              checked={researchMode === 'JOB_PLUS_COMPANY_RESEARCH'}
+              onChange={() => setResearchMode('JOB_PLUS_COMPANY_RESEARCH')}
+            />
+            Job + company research ({formatDate(latestCompanyResearch.researchedAt)})
+          </label>
+        </div>
+      ) : null}
+
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={isGenerating}
+        aria-busy={isGenerating}
+        onClick={() => void generate()}
+      >
+        {isGenerating
+          ? 'Generating…'
+          : isReady
+            ? 'Regenerate'
+            : 'Generate interview prep'}
+      </Button>
 
       {generation.status === 'action_not_current' ? (
         <div className="space-y-2">
@@ -111,22 +174,71 @@ export function InterviewPrepPanel({ applicationId }: { applicationId: string })
           You&apos;ve reached your AI request limit for this period.
         </p>
       ) : null}
+      {generation.status === 'research_snapshot_not_found' ? (
+        <p className="text-destructive text-sm">
+          That company research snapshot is no longer available. Refresh the page and try
+          again.
+        </p>
+      ) : null}
+      {generation.status === 'stale_company_research' ? (
+        <p className="text-destructive text-sm">
+          The company research on file no longer matches this application&apos;s current
+          company or job posting.{' '}
+          <Link
+            href={`/applications/${applicationId}/company-research`}
+            className="text-primary hover:underline"
+          >
+            Research company again
+          </Link>
+          , or prepare using the job posting only.
+        </p>
+      ) : null}
       {generation.status === 'error' ? (
         <p className="text-destructive text-sm">{generation.message}</p>
       ) : null}
 
-      {isReady ? <PrepSections prep={generation.prep} /> : null}
+      {isReady ? <PrepSections applicationId={applicationId} prep={generation.prep} /> : null}
     </section>
   );
 }
 
-function PrepSections({ prep }: { prep: InterviewPrepResult }) {
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
+}
+
+function PrepSections({
+  applicationId,
+  prep,
+}: {
+  applicationId: string;
+  prep: InterviewPrepResult;
+}) {
   return (
     <div className="space-y-4">
       <p className="text-muted-foreground text-xs">
         {prep.provenanceSummary} AI-generated — a starting point, not a prediction of
         actual interview questions.
       </p>
+
+      {/* Phase 7I §"Prompt design"/"Output metadata" — always reflects the ACTUAL mode used,
+          never what was requested; never implies research is mandatory. */}
+      {prep.researchMode === 'JOB_PLUS_COMPANY_RESEARCH' && prep.companyResearchResearchedAt ? (
+        <p className="text-muted-foreground text-xs">
+          Based on this job + company research from {formatDate(prep.companyResearchResearchedAt)}{' '}
+          ({prep.selectedResearchFindingCount} finding
+          {prep.selectedResearchFindingCount === 1 ? '' : 's'} considered) ·{' '}
+          <Link
+            href={`/applications/${applicationId}/company-research`}
+            className="text-primary hover:underline"
+          >
+            View company research
+          </Link>
+        </p>
+      ) : null}
 
       {prep.rolePriorities.length > 0 ? (
         <PrepGroup title="Role priorities">
@@ -140,6 +252,7 @@ function PrepSections({ prep }: { prep: InterviewPrepResult }) {
                   {item.importance}
                 </Badge>
                 {item.requirement}
+                <CompanyRelevanceNote applicationId={applicationId} companyRelevance={item.companyRelevance} />
               </li>
             ))}
           </ul>
@@ -152,6 +265,7 @@ function PrepSections({ prep }: { prep: InterviewPrepResult }) {
             {prep.evidenceToEmphasize.map((item, index) => (
               <li key={index} className="text-sm">
                 <span className="font-medium">{item.theme}:</span> {item.summary}
+                <CompanyRelevanceNote applicationId={applicationId} companyRelevance={item.companyRelevance} />
               </li>
             ))}
           </ul>
@@ -164,6 +278,7 @@ function PrepSections({ prep }: { prep: InterviewPrepResult }) {
             {prep.starStoryPrompts.map((item, index) => (
               <li key={index} className="text-sm">
                 <span className="font-medium">{item.competency}:</span> {item.prompt}
+                <CompanyRelevanceNote applicationId={applicationId} companyRelevance={item.companyRelevance} />
               </li>
             ))}
           </ul>
@@ -177,6 +292,7 @@ function PrepSections({ prep }: { prep: InterviewPrepResult }) {
               <li key={index} className="text-sm">
                 {item.question}
                 <p className="text-muted-foreground text-xs">{item.rationale}</p>
+                <CompanyRelevanceNote applicationId={applicationId} companyRelevance={item.companyRelevance} />
               </li>
             ))}
           </ul>
@@ -190,6 +306,7 @@ function PrepSections({ prep }: { prep: InterviewPrepResult }) {
               <li key={index} className="text-sm">
                 {item.question}
                 <p className="text-muted-foreground text-xs">{item.rationale}</p>
+                <CompanyRelevanceNote applicationId={applicationId} companyRelevance={item.companyRelevance} />
               </li>
             ))}
           </ul>
@@ -202,6 +319,7 @@ function PrepSections({ prep }: { prep: InterviewPrepResult }) {
             {prep.gapsToPrepare.map((item, index) => (
               <li key={index} className="text-sm">
                 <span className="font-medium">{item.requirement}:</span> {item.note}
+                <CompanyRelevanceNote applicationId={applicationId} companyRelevance={item.companyRelevance} />
               </li>
             ))}
           </ul>
@@ -219,6 +337,38 @@ function PrepSections({ prep }: { prep: InterviewPrepResult }) {
           </ul>
         </PrepGroup>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * Phase 7I §32/§33/§67 (résumé-tailoring precedent) — resolves `companyRelevance` (already
+ * server-resolved from the exact snapshot used, never a client-supplied claim) into a small,
+ * human-readable note. Never a raw uuid; never worded as something the candidate did — always
+ * about why the company makes this worth preparing for.
+ */
+function CompanyRelevanceNote({
+  applicationId,
+  companyRelevance,
+}: {
+  applicationId: string;
+  companyRelevance: CompanyResearchRelevanceItem[];
+}) {
+  if (companyRelevance.length === 0) return null;
+  return (
+    <div className="border-border/60 mt-1 space-y-1 border-l-2 pl-2 text-xs">
+      <p className="text-muted-foreground font-medium">Company relevance:</p>
+      {companyRelevance.map((item) => (
+        <p key={item.id} className="text-muted-foreground">
+          • {item.roleRelevance ?? item.claim}
+        </p>
+      ))}
+      <Link
+        href={`/applications/${applicationId}/company-research`}
+        className="text-primary hover:underline"
+      >
+        View research
+      </Link>
     </div>
   );
 }

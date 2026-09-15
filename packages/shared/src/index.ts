@@ -55,6 +55,7 @@ export * from './lib/validate-resume-tailoring-plan';
 export * from './lib/select-resume-tailoring-research-findings';
 export * from './lib/apply-resume-tailoring-plan';
 export * from './lib/resume-tailoring-response';
+export * from './lib/interview-prep-research-response';
 export * from './lib/build-reviewed-tailored-resume';
 export * from './lib/validate-resume-tailoring-save';
 export * from './lib/validate-company-research-plan';

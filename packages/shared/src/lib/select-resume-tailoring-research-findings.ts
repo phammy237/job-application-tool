@@ -75,3 +75,12 @@ export function selectResumeTailoringResearchFindings(
     .slice(0, Math.max(0, maxFindings))
     .map((entry) => entry.finding);
 }
+
+/**
+ * Phase 7I — generic alias, not a fork. This ranking function has no résumé-specific behavior at
+ * all (it operates purely on findings + requirement ids); the name predates its reuse elsewhere
+ * (docs/IMPLEMENTATION_PLAN.md "Phase 7I" — interview prep selects research context the same
+ * way). Kept as a wrapper rather than a rename so Phase 7H's own already-shipped export name,
+ * behavior, and tests are untouched.
+ */
+export const selectRelevantResearchFindings = selectResumeTailoringResearchFindings;

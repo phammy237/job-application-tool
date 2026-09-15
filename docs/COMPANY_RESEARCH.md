@@ -2,9 +2,9 @@
 
 This document is the design record for Career OS's company-research feature — a RESEARCH ONLY
 foundation (docs/IMPLEMENTATION_PLAN.md "Phase 7G"). As of Phase 7H, résumé tailoring may
-optionally read one immutable snapshot this feature produced (§13); the feature itself — discovery,
-extraction, synthesis, persistence — is otherwise unchanged. Interview prep does not consume
-company research yet; that intersection remains deferred to Phase 7I (§14 below).
+optionally read one immutable snapshot this feature produced (§13); as of Phase 7I, interview prep
+may too (§14). The feature itself — discovery, extraction, synthesis, persistence — is unchanged by
+either.
 
 ## 1. What this is, and isn't
 
@@ -267,9 +267,19 @@ source excerpts/URLs) to decide emphasis, never facts — see `docs/IMPLEMENTATI
 superseded by a new one) is exactly what made that later phase possible without any change to this
 one's own data model, beyond the deletion narrowing in §9a.
 
-## 14. Explicitly deferred — Phase 7I boundary
+## 14. Phase 7I boundary — now crossed
 
-Interview prep does not consume company research yet. Phase 7I should be able to read a job
-snapshot, submitted résumé, application answers, a company research snapshot, approved candidate
-facts, and networking context — but Phase 7G itself adds no networking/candidate data into company
-research, keeping the two concerns cleanly separated until 7I actually needs to join them.
+Company research itself is unchanged by Phase 7I, exactly as it was unchanged by Phase 7H (§13):
+still never automatic, still never sends candidate data anywhere, still the same discovery/
+extraction/synthesis/persistence pipeline. What Phase 7I added lives entirely in interview prep's
+own pipeline (`docs/AI_GROUNDING.md` §15): it now OPTIONALLY reads one specific, immutable
+snapshot's `id`, `researchedAt`, and a bounded, ranked subset of its `findings` (never a full
+snapshot, never source excerpts/URLs) — the exact same selection mechanism résumé tailoring
+already uses (`selectRelevantResearchFindings`, a generic alias over the same ranking function) —
+to decide what's worth preparing for or emphasizing, never to manufacture a candidate fact.
+Interview prep remains fully ephemeral (docs/IMPLEMENTATION_PLAN.md "Phase 5C.3E"), so unlike
+Phase 7H's résumé-version linkage, this crossing needed no new column, table, or migration — there
+is no persisted artifact for a research reference to attach to.
+
+Networking context is still not part of this intersection — Phase 7G itself adds no
+networking/candidate data into company research, and Phase 7I did not change that either.

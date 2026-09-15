@@ -499,3 +499,81 @@ CHANGE RELEVANCE. COMPANY RESEARCH MAY NOT CREATE CANDIDATE FACTS.**
 - **UI language describes the company, never the candidate (§67 of the phase brief).** "Company
   research suggests this experience is particularly relevant" is correct; "you worked on a company
   priority" is not — the review UI is worded accordingly, and no UUID is ever shown to the user.
+
+## 15. Research-aware interview preparation (Phase 7I) — the same three-bucket boundary, extended
+
+Extends §10's interview-prep pipeline (5C.3B) and §14's provenance model — not a new pipeline, not
+a parallel one. The hard rule: **COMPANY RESEARCH MAY CHANGE WHAT THE CANDIDATE PREPARES FOR OR
+EMPHASIZES. COMPANY RESEARCH MAY NOT CREATE CANDIDATE FACTS.**
+
+The final answer to "why does this pipeline need three separate citation fields, never one":
+
+- **Candidate evidence answers "is this true about me?"** — `sourceFactIds`.
+- **Job requirements answer "does the role care?"** — `sourceRequirementId`/`sourceRequirementIds`.
+- **Company research answers "why might this matter more for this company?"** —
+  `researchFindingIds` (Phase 7I, optional on every interview-prep item type).
+
+These are never collapsed into one score or one citation bucket, and citing one never satisfies
+another: a `researchFindingIds` entry can justify why a theme is worth emphasizing right now, but
+it can never stand in for a `sourceFactIds` citation the item also needs to make a candidate claim.
+
+- **Reused, not duplicated, from Phase 7H.** Snapshot resolution (`resolveCompanyResearchSnapshotForRequest`,
+  `packages/ai/src/retrieval/resolve-company-research-snapshot.ts`) and finding selection/ranking
+  (`selectRelevantResearchFindings`, a generic alias over
+  `selectResumeTailoringResearchFindings`) are the exact same primitives résumé tailoring uses —
+  extracted into résumé-agnostic form (Phase 7H's own exports/behavior untouched, verified by its
+  own unchanged test suite) rather than reimplemented with subtly different semantics. Same
+  ranking signal (job-requirement overlap, `roleRelevance` presence, a soft category preference,
+  deterministic tie-breaking), same bounded/minimized `{id, category, claim, roleRelevance,
+  requirementIds, sourceTypes}` per finding, same explicit/auto-resolve/honest-degrade resolution
+  shape, same `research_snapshot_not_found`/`stale_company_research` rejections for an explicit,
+  invalid request.
+- **The candidate-fact-safety guard is the critical addition.** `evidenceToEmphasize` and
+  `starStoryPrompts` are the two sections that can make or imply a statement about the candidate
+  (§14 asks the identical question of résumé tailoring's `REWRITE_BULLET`/`ADD_BULLET`). Their
+  `summary`/`prompt` text now runs through the exact same deterministic guards
+  (`findUngroundedNumericClaims`/`findUngroundedTechnologyTokens`, unmodified) with `evidenceTexts`
+  built ONLY from that item's own cited approved-fact text — company-research finding text is
+  never appended to that array anywhere in `validate-interview-prep-contract.ts`, no matter how
+  many findings the item cites via `researchFindingIds`. Concretely: "Acme is expanding its
+  Snowflake-based analytics platform" can justify emphasizing a candidate's genuinely-supported
+  data-platform theme, but citing that same finding can never make "Emphasize your Snowflake
+  pipeline experience" pass if no approved fact says the candidate used Snowflake — the guard
+  rejects it exactly as if no finding had been cited at all. A company metric (revenue, funding,
+  headcount) is caught the same way. Verified with dedicated adversarial tests in both
+  `validate-interview-prep-contract.test.ts` and `generate-interview-prep.test.ts`.
+- **rolePriorities/possibleQuestions/questionsToAsk/gapsToPrepare never make a candidate-fact
+  claim in the first place** (they describe the role, the interview format, or an area to
+  prepare — never "the candidate has X"), so the numeric/technology guard doesn't apply to them;
+  their `researchFindingIds` entries still go through the same request-local allowlist check
+  every other id in this pipeline already receives. `questionsToAsk` is the section research is
+  most naturally suited to — asking about a real, researched company initiative is exactly the
+  kind of company-specific, non-candidate-claim content this pipeline should produce more of.
+- **The uncertainty rule is unchanged, and reinforced for research.** §10's "never write or imply
+  what an interviewer will actually ask" now explicitly extends to company research too: a
+  researched initiative can make a topic *worth preparing for*, never a *certain* interview
+  question — the system prompt says so directly, and `possibleQuestions`'s existing
+  `rationale`-not-a-real-question shape is unchanged.
+- **Snapshot resolution is never trusted from the client.**
+  `resolveCompanyResearchSnapshotForRequest` re-resolves and ownership/compatibility-checks any
+  requested `companyResearchSnapshotId` server-side before it can influence anything — a stale or
+  foreign snapshot is a real, surfaced rejection, never silently used; requesting
+  `JOB_PLUS_COMPANY_RESEARCH` with no explicit id and nothing compatible degrades honestly to
+  `JOB_ONLY` instead of erroring, since nothing specific was ever promised.
+- **Zero additional provider calls.** This pipeline reads an already-persisted Phase 7G snapshot;
+  it never calls Tavily and never makes a second Claude call. Interview prep remains exactly one
+  attempt plus one retry, `task_type` still `interview_prep` — no new telemetry category.
+- **Every research citation is independently request-allowlisted, and an unknown one rejects the
+  whole response** — same all-or-nothing posture every other pipeline in this file uses. If no
+  research context was offered to the model at all (`JOB_ONLY`, or no compatible snapshot), the
+  allowlist is empty, so ANY `researchFindingIds` citation is rejected by construction — never a
+  special case, just the same membership check with an empty set.
+- **Provenance is never a model claim.** `researchMode` (the ACTUAL mode used, which may differ
+  from what was requested), `companyResearchSnapshotId`, `companyResearchResearchedAt`,
+  `selectedResearchFindingCount`, `researchFindingsReferenced`, and `itemsInfluencedByResearch`
+  are all computed server-side in `generate-interview-prep.ts`, never trusted from the model's own
+  output — same posture as résumé tailoring's summary fields (§14) and every other pipeline's
+  provenance in this document. `researchFindingIds` never reaches the client raw either: each
+  item's ids are resolved into human-readable `companyRelevance` (`{id, claim, roleRelevance,
+  category}`) before the result is returned, and an id with no resolvable context is dropped, not
+  fabricated.

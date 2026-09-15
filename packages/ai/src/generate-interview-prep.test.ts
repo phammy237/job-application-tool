@@ -19,6 +19,9 @@ const mocks = vi.hoisted(() => ({
   recordApplicationEvent: vi.fn(),
   revertApplicationEvent: vi.fn(),
   updateOwnApplication: vi.fn(),
+  // Phase 7I
+  getOwnCompanyResearchSnapshot: vi.fn(),
+  listOwnCompanyResearchSnapshotsForApplication: vi.fn(),
 }));
 
 vi.mock('@career-os/database', () => ({
@@ -37,6 +40,8 @@ vi.mock('@career-os/database', () => ({
   recordApplicationEvent: mocks.recordApplicationEvent,
   revertApplicationEvent: mocks.revertApplicationEvent,
   updateOwnApplication: mocks.updateOwnApplication,
+  getOwnCompanyResearchSnapshot: mocks.getOwnCompanyResearchSnapshot,
+  listOwnCompanyResearchSnapshotsForApplication: mocks.listOwnCompanyResearchSnapshotsForApplication,
 }));
 
 vi.mock('./claude/call-claude', () => ({
@@ -120,6 +125,47 @@ function prepJson(overrides: Record<string, unknown> = {}): string {
   });
 }
 
+const RESEARCH_SNAPSHOT_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const FINDING_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const SOURCE_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+
+function companyResearchSnapshot(overrides: Record<string, unknown> = {}) {
+  const source = {
+    id: SOURCE_ID,
+    url: 'https://acme.example/engineering-blog/data-platform',
+    canonicalUrl: null,
+    title: 'Acme engineering blog: our data platform',
+    publisher: 'Acme',
+    sourceType: 'ENGINEERING_BLOG',
+    publishedAt: null,
+    retrievedAt: '2026-09-10T00:00:00.000Z',
+    evidenceExcerpt: null,
+    contentHash: null,
+  };
+  return {
+    id: RESEARCH_SNAPSHOT_ID,
+    userId: USER_ID,
+    applicationId: APPLICATION_ID,
+    companyName: 'Acme',
+    roleTitle: 'Engineer',
+    jobSnapshotId: SNAPSHOT_ID,
+    researchedAt: '2026-09-10T00:00:00.000Z',
+    createdAt: '2026-09-10T00:00:00.000Z',
+    findings: [
+      {
+        id: FINDING_ID,
+        category: 'TECHNOLOGY',
+        claim: 'Acme is expanding its Snowflake-based analytics platform.',
+        roleRelevance: 'This role works directly with the data platform.',
+        requirementIds: [],
+        sources: [source],
+      },
+    ],
+    sources: [source],
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.getOwnApplication.mockResolvedValue(application());
@@ -135,6 +181,8 @@ beforeEach(() => {
     status: 'ok',
     rawText: prepJson(),
   });
+  mocks.getOwnCompanyResearchSnapshot.mockResolvedValue(null);
+  mocks.listOwnCompanyResearchSnapshotsForApplication.mockResolvedValue([]);
 });
 
 describe('generateInterviewPrep — eligibility gate', () => {
@@ -367,5 +415,289 @@ describe('generateInterviewPrep — application-state safety (Phase 5C.4 audit)'
     expect(mocks.recordApplicationEvent).not.toHaveBeenCalled();
     expect(mocks.revertApplicationEvent).not.toHaveBeenCalled();
     expect(mocks.updateOwnApplication).not.toHaveBeenCalled();
+  });
+});
+
+describe('generateInterviewPrep — Phase 7I research-aware interview prep', () => {
+  it('behaves exactly like plain 5C.3B when researchMode is omitted (default JOB_ONLY) — never reads research', async () => {
+    const result = await generateInterviewPrep(FAKE_SUPABASE, USER_ID, PARAMS);
+    expect(result.status).toBe('ok');
+    if (result.status === 'ok') {
+      expect(result.prep.researchMode).toBe('JOB_ONLY');
+      expect(result.prep.companyResearchSnapshotId).toBeNull();
+      expect(result.prep.companyResearchResearchedAt).toBeNull();
+      expect(result.prep.selectedResearchFindingCount).toBe(0);
+      expect(result.prep.researchFindingsReferenced).toBe(0);
+      expect(result.prep.itemsInfluencedByResearch).toBe(0);
+    }
+    expect(mocks.getOwnCompanyResearchSnapshot).not.toHaveBeenCalled();
+    expect(mocks.listOwnCompanyResearchSnapshotsForApplication).not.toHaveBeenCalled();
+  });
+
+  it('explicit JOB_ONLY ignores any supplied companyResearchSnapshotId entirely', async () => {
+    const result = await generateInterviewPrep(FAKE_SUPABASE, USER_ID, {
+      ...PARAMS,
+      researchMode: 'JOB_ONLY',
+      companyResearchSnapshotId: RESEARCH_SNAPSHOT_ID,
+    });
+    expect(result.status).toBe('ok');
+    if (result.status === 'ok') {
+      expect(result.prep.researchMode).toBe('JOB_ONLY');
+    }
+    expect(mocks.getOwnCompanyResearchSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('degrades honestly to JOB_ONLY (never an error) when JOB_PLUS_COMPANY_RESEARCH is requested with no explicit id and no compatible snapshot exists', async () => {
+    mocks.listOwnCompanyResearchSnapshotsForApplication.mockResolvedValue([]);
+    const result = await generateInterviewPrep(FAKE_SUPABASE, USER_ID, {
+      ...PARAMS,
+      researchMode: 'JOB_PLUS_COMPANY_RESEARCH',
+    });
+    expect(result.status).toBe('ok');
+    if (result.status === 'ok') {
+      expect(result.prep.researchMode).toBe('JOB_ONLY');
+      expect(result.prep.companyResearchSnapshotId).toBeNull();
+    }
+  });
+
+  it('degrades honestly to JOB_ONLY when only incompatible (stale) snapshots exist for the auto-resolve path', async () => {
+    mocks.listOwnCompanyResearchSnapshotsForApplication.mockResolvedValue([
+      {
+        id: RESEARCH_SNAPSHOT_ID,
+        companyName: 'Acme',
+        roleTitle: 'Engineer',
+        researchedAt: '2026-09-10T00:00:00.000Z',
+        findingCount: 1,
+        sourceCount: 1,
+      },
+    ]);
+    mocks.getOwnCompanyResearchSnapshot.mockResolvedValue(
+      companyResearchSnapshot({ companyName: 'A Totally Different Company' }),
+    );
+    const result = await generateInterviewPrep(FAKE_SUPABASE, USER_ID, {
+      ...PARAMS,
+      researchMode: 'JOB_PLUS_COMPANY_RESEARCH',
+    });
+    expect(result.status).toBe('ok');
+    if (result.status === 'ok') {
+      expect(result.prep.researchMode).toBe('JOB_ONLY');
+    }
+  });
+
+  it('returns research_snapshot_not_found for an explicit id that does not resolve, without spending quota', async () => {
+    mocks.getOwnCompanyResearchSnapshot.mockResolvedValue(null);
+    const result = await generateInterviewPrep(FAKE_SUPABASE, USER_ID, {
+      ...PARAMS,
+      researchMode: 'JOB_PLUS_COMPANY_RESEARCH',
+      companyResearchSnapshotId: RESEARCH_SNAPSHOT_ID,
+    });
+    expect(result).toEqual({ status: 'research_snapshot_not_found' });
+    expect(mocks.incrementOwnAiRequestUsage).not.toHaveBeenCalled();
+    expect(mocks.callClaudeForInterviewPrep).not.toHaveBeenCalled();
+  });
+
+  it('returns stale_company_research for an explicit id whose frozen company no longer matches — never silently used', async () => {
+    mocks.getOwnCompanyResearchSnapshot.mockResolvedValue(
+      companyResearchSnapshot({ companyName: 'A Totally Different Company' }),
+    );
+    const result = await generateInterviewPrep(FAKE_SUPABASE, USER_ID, {
+      ...PARAMS,
+      researchMode: 'JOB_PLUS_COMPANY_RESEARCH',
+      companyResearchSnapshotId: RESEARCH_SNAPSHOT_ID,
+    });
+    expect(result).toEqual({ status: 'stale_company_research' });
+    expect(mocks.incrementOwnAiRequestUsage).not.toHaveBeenCalled();
+  });
+
+  it('R1 generated, then R2 created — a still-explicit request for R1 remains valid (snapshot identity, not latestness)', async () => {
+    mocks.getOwnCompanyResearchSnapshot.mockResolvedValue(companyResearchSnapshot());
+    const result = await generateInterviewPrep(FAKE_SUPABASE, USER_ID, {
+      ...PARAMS,
+      researchMode: 'JOB_PLUS_COMPANY_RESEARCH',
+      companyResearchSnapshotId: RESEARCH_SNAPSHOT_ID,
+    });
+    expect(result.status).toBe('ok');
+    if (result.status === 'ok') {
+      expect(result.prep.companyResearchSnapshotId).toBe(RESEARCH_SNAPSHOT_ID);
+    }
+    expect(mocks.listOwnCompanyResearchSnapshotsForApplication).not.toHaveBeenCalled();
+  });
+
+  it('auto-resolves the latest compatible snapshot when no explicit id is given', async () => {
+    mocks.listOwnCompanyResearchSnapshotsForApplication.mockResolvedValue([
+      {
+        id: RESEARCH_SNAPSHOT_ID,
+        companyName: 'Acme',
+        roleTitle: 'Engineer',
+        researchedAt: '2026-09-10T00:00:00.000Z',
+        findingCount: 1,
+        sourceCount: 1,
+      },
+    ]);
+    mocks.getOwnCompanyResearchSnapshot.mockResolvedValue(companyResearchSnapshot());
+    const result = await generateInterviewPrep(FAKE_SUPABASE, USER_ID, {
+      ...PARAMS,
+      researchMode: 'JOB_PLUS_COMPANY_RESEARCH',
+    });
+    expect(result.status).toBe('ok');
+    if (result.status === 'ok') {
+      expect(result.prep.researchMode).toBe('JOB_PLUS_COMPANY_RESEARCH');
+      expect(result.prep.companyResearchSnapshotId).toBe(RESEARCH_SNAPSHOT_ID);
+      expect(result.prep.companyResearchResearchedAt).toBe('2026-09-10T00:00:00.000Z');
+      expect(result.prep.selectedResearchFindingCount).toBe(1);
+    }
+  });
+
+  it('resolves a valid researchFindingIds citation into companyRelevance without it grounding any claim', async () => {
+    mocks.getOwnCompanyResearchSnapshot.mockResolvedValue(companyResearchSnapshot());
+    mocks.callClaudeForInterviewPrep.mockResolvedValue({
+      status: 'ok',
+      rawText: prepJson({
+        questionsToAsk: [
+          {
+            question: 'How is the analytics platform investment going?',
+            rationale: 'Shows genuine interest in a current company priority',
+            researchFindingIds: [FINDING_ID],
+          },
+        ],
+      }),
+    });
+    const result = await generateInterviewPrep(FAKE_SUPABASE, USER_ID, {
+      ...PARAMS,
+      researchMode: 'JOB_PLUS_COMPANY_RESEARCH',
+      companyResearchSnapshotId: RESEARCH_SNAPSHOT_ID,
+    });
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') return;
+    expect(result.prep.itemsInfluencedByResearch).toBe(1);
+    expect(result.prep.researchFindingsReferenced).toBe(1);
+    expect(result.prep.questionsToAsk[0]?.companyRelevance).toEqual([
+      {
+        id: FINDING_ID,
+        claim: 'Acme is expanding its Snowflake-based analytics platform.',
+        roleRelevance: 'This role works directly with the data platform.',
+        category: 'TECHNOLOGY',
+      },
+    ]);
+    // Raw ids never leak into the final result.
+    expect(result.prep.questionsToAsk[0]).not.toHaveProperty('researchFindingIds');
+  });
+
+  it('rejects and retries a plan citing a research finding id outside this request\'s snapshot', async () => {
+    mocks.getOwnCompanyResearchSnapshot.mockResolvedValue(companyResearchSnapshot());
+    mocks.callClaudeForInterviewPrep
+      .mockResolvedValueOnce({
+        status: 'ok',
+        rawText: prepJson({
+          gapsToPrepare: [
+            {
+              requirement: 'x',
+              sourceRequirementId: null,
+              note: 'y',
+              researchFindingIds: ['99999999-9999-4999-8999-999999999999'],
+            },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({ status: 'ok', rawText: prepJson() });
+    const result = await generateInterviewPrep(FAKE_SUPABASE, USER_ID, {
+      ...PARAMS,
+      researchMode: 'JOB_PLUS_COMPANY_RESEARCH',
+      companyResearchSnapshotId: RESEARCH_SNAPSHOT_ID,
+    });
+    expect(result.status).toBe('ok');
+    expect(mocks.callClaudeForInterviewPrep).toHaveBeenCalledTimes(2);
+  });
+
+  it('CRITICAL: a company-research finding about a technology never grounds a candidate technology claim, even when cited', async () => {
+    mocks.getOwnCompanyResearchSnapshot.mockResolvedValue(companyResearchSnapshot());
+    mocks.callClaudeForInterviewPrep.mockResolvedValue({
+      status: 'ok',
+      rawText: prepJson({
+        evidenceToEmphasize: [
+          {
+            theme: 'Data platform',
+            sourceFactIds: [FACT_ID],
+            summary: 'Emphasize your Snowflake pipeline experience',
+            researchFindingIds: [FINDING_ID],
+          },
+        ],
+      }),
+    });
+    const result = await generateInterviewPrep(FAKE_SUPABASE, USER_ID, {
+      ...PARAMS,
+      researchMode: 'JOB_PLUS_COMPANY_RESEARCH',
+      companyResearchSnapshotId: RESEARCH_SNAPSHOT_ID,
+    });
+    // Rejected on both attempts — citing the finding does not satisfy the technology guard.
+    expect(result).toEqual({ status: 'validation_failed' });
+  });
+
+  it('CRITICAL: a large company metric never grounds a candidate-specific metric claim', async () => {
+    mocks.getOwnCompanyResearchSnapshot.mockResolvedValue(companyResearchSnapshot());
+    mocks.callClaudeForInterviewPrep.mockResolvedValue({
+      status: 'ok',
+      rawText: prepJson({
+        starStoryPrompts: [
+          {
+            competency: 'Scale',
+            sourceFactIds: [FACT_ID],
+            prompt: 'Tell them about driving $10B in company revenue',
+            researchFindingIds: [FINDING_ID],
+          },
+        ],
+      }),
+    });
+    const result = await generateInterviewPrep(FAKE_SUPABASE, USER_ID, {
+      ...PARAMS,
+      researchMode: 'JOB_PLUS_COMPANY_RESEARCH',
+      companyResearchSnapshotId: RESEARCH_SNAPSHOT_ID,
+    });
+    expect(result).toEqual({ status: 'validation_failed' });
+  });
+
+  it('research may still influence a legitimate candidate fact that is independently grounded', async () => {
+    mocks.getOwnCompanyResearchSnapshot.mockResolvedValue(companyResearchSnapshot());
+    mocks.callClaudeForInterviewPrep.mockResolvedValue({
+      status: 'ok',
+      rawText: prepJson({
+        evidenceToEmphasize: [
+          {
+            theme: 'Kubernetes migration',
+            sourceFactIds: [FACT_ID],
+            summary: 'Discuss the Kubernetes migration you led at Acme',
+            researchFindingIds: [FINDING_ID],
+          },
+        ],
+      }),
+    });
+    // APPROVED_FACT's own text is "Led the Kubernetes migration at Acme." — genuinely grounded.
+    const result = await generateInterviewPrep(FAKE_SUPABASE, USER_ID, {
+      ...PARAMS,
+      researchMode: 'JOB_PLUS_COMPANY_RESEARCH',
+      companyResearchSnapshotId: RESEARCH_SNAPSHOT_ID,
+    });
+    expect(result.status).toBe('ok');
+  });
+
+  it('never makes an extra provider/search call for research-aware prep — still at most 2 Claude calls, zero elsewhere', async () => {
+    mocks.getOwnCompanyResearchSnapshot.mockResolvedValue(companyResearchSnapshot());
+    await generateInterviewPrep(FAKE_SUPABASE, USER_ID, {
+      ...PARAMS,
+      researchMode: 'JOB_PLUS_COMPANY_RESEARCH',
+      companyResearchSnapshotId: RESEARCH_SNAPSHOT_ID,
+    });
+    expect(mocks.callClaudeForInterviewPrep.mock.calls.length).toBeLessThanOrEqual(2);
+    expect(mocks.recordAiUsageEvent).toHaveBeenCalledWith(
+      FAKE_SUPABASE,
+      USER_ID,
+      expect.objectContaining({ taskType: 'interview_prep' }),
+    );
+  });
+
+  it('refreshing research never happens automatically — this pipeline only reads what it is explicitly told to', async () => {
+    await generateInterviewPrep(FAKE_SUPABASE, USER_ID, PARAMS);
+    expect(mocks.listOwnCompanyResearchSnapshotsForApplication).not.toHaveBeenCalled();
+    expect(mocks.getOwnCompanyResearchSnapshot).not.toHaveBeenCalled();
   });
 });
