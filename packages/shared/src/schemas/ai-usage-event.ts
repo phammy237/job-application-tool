@@ -60,7 +60,13 @@ export type AiUsageEventEscalationReason = z.infer<
  * added in migration 0023 (Phase 7E) for packages/ai's generate-resume-tailoring-plan.ts — an
  * explicit, user-triggered, ephemeral generation of a semantic edit plan against a copy of the
  * base résumé; never a persisted result row, only this telemetry event
- * (docs/IMPLEMENTATION_PLAN.md "Phase 7E" §21/§45). */
+ * (docs/IMPLEMENTATION_PLAN.md "Phase 7E" §21/§45). 'company_research' added in migration 0026
+ * (Phase 7G) for packages/ai's generate-company-research.ts — an explicit, user-triggered
+ * synthesis of structured, source-cited findings about a company, from sources a separate,
+ * non-AI search/extraction step already discovered; the persisted result is a real
+ * `company_research_snapshots` row (unlike every task type before it, whose only durable trace
+ * is this same telemetry event), so this row records the *generation attempt*, not the snapshot
+ * itself (docs/IMPLEMENTATION_PLAN.md "Phase 7G"). */
 export const aiUsageEventTaskTypeSchema = z.enum([
   'field_suggestion',
   'requirement_mapping',
@@ -69,6 +75,7 @@ export const aiUsageEventTaskTypeSchema = z.enum([
   'follow_up_draft',
   'interview_prep',
   'resume_tailoring',
+  'company_research',
 ]);
 export type AiUsageEventTaskType = z.infer<typeof aiUsageEventTaskTypeSchema>;
 

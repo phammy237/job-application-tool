@@ -41,5 +41,10 @@ export type {
   GenerateResumeTailoringPlanParams,
   GenerateResumeTailoringPlanResult,
 } from './generate-resume-tailoring-plan';
+export { generateCompanyResearch } from './generate-company-research';
+export type {
+  GenerateCompanyResearchParams,
+  GenerateCompanyResearchResult,
+} from './generate-company-research';
 export { deriveEligibleNextAction } from './derive-eligible-next-action';
 export { NEVER_SUGGEST_CLASSIFICATIONS } from './config';

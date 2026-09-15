@@ -120,3 +120,28 @@ export const RESUME_BULLET_CHAR_CAP = 600;
  * doesn't produce an unbounded prompt. See retrieval/select-resume-tailoring-facts.ts.
  */
 export const RESUME_TAILORING_MAX_FACTS = 60;
+
+/**
+ * Phase 7G explicit, user-triggered company-research synthesis
+ * (packages/ai/src/generate-company-research.ts) — the model returns a bounded array of findings,
+ * each citing already-discovered sources (never a URL/title/date it invents itself, and never a
+ * whole-report free-text field — see `companyResearchPlanContractSchema`'s own doc comment for
+ * why there is no `executiveSummary` field here). Sits in the same tier as
+ * RESUME_TAILORING_MAX_OUTPUT_TOKENS: bounded array of small, capped objects, not a
+ * free-length report.
+ */
+export const COMPANY_RESEARCH_MAX_OUTPUT_TOKENS = 8192;
+export const COMPANY_RESEARCH_PROMPT_VERSION = 'company-research-v1';
+/** Bounds worst-case injected content volume from one extracted source's text placed in the
+ * prompt — same rationale as FACT_TEXT_CHAR_CAP/RESUME_BULLET_CHAR_CAP. Matches
+ * `EVIDENCE_EXCERPT_MAX` (packages/shared) — the same cap applies to what's stored and what's
+ * sent to the model, one number to reason about rather than two independently-tunable ones. */
+export const COMPANY_RESEARCH_SOURCE_TEXT_CHAR_CAP = 1500;
+/**
+ * Phase 7G's own bounded call budget (docs/IMPLEMENTATION_PLAN.md "Phase 7G" §18), reported
+ * verbatim in that phase's cost/performance writeup — never left implicit in scattered magic
+ * numbers across the pipeline.
+ */
+export const COMPANY_RESEARCH_MAX_SEARCH_QUERIES = 6;
+export const COMPANY_RESEARCH_MAX_SOURCES = 12;
+export const COMPANY_RESEARCH_MAX_PER_DOMAIN = 3;

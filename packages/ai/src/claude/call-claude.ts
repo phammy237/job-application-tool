@@ -1,4 +1,5 @@
 import {
+  COMPANY_RESEARCH_MAX_OUTPUT_TOKENS,
   EMAIL_CLASSIFICATION_MAX_OUTPUT_TOKENS,
   FOLLOW_UP_DRAFT_MAX_OUTPUT_TOKENS,
   INTERVIEW_PREP_MAX_OUTPUT_TOKENS,
@@ -523,6 +524,86 @@ export async function callClaudeForResumeTailoring(
       messages: [{ role: 'user', content: userText }],
       output_config: {
         format: { type: 'json_schema', schema: RESUME_TAILORING_JSON_SCHEMA },
+      },
+    });
+
+    if (response.stop_reason === 'refusal') {
+      return { status: 'refusal', category: response.stop_details?.category ?? null };
+    }
+
+    const textBlock = response.content.find((block) => block.type === 'text');
+    if (!textBlock || textBlock.type !== 'text') {
+      return { status: 'provider_error', message: 'No text content in Claude response' };
+    }
+    return { status: 'ok', rawText: textBlock.text };
+  } catch (error) {
+    return {
+      status: 'provider_error',
+      message: error instanceof Error ? error.message : 'Unknown Anthropic API error',
+    };
+  }
+}
+
+/**
+ * Mirrors `companyResearchPlanContractSchema` (packages/shared) — a single object with one array
+ * field, `findings`, each a small object citing already-discovered source/requirement ids. No
+ * `url`/`title`/`publisher`/`publishedAt` field exists anywhere in this schema, by construction
+ * (docs/IMPLEMENTATION_PLAN.md "Phase 7G" §16/§25: "The model should not invent URLs").
+ */
+const COMPANY_RESEARCH_JSON_SCHEMA = {
+  type: 'object',
+  properties: {
+    findings: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          category: {
+            type: 'string',
+            enum: [
+              'PRODUCT',
+              'STRATEGY',
+              'TECHNOLOGY',
+              'BUSINESS',
+              'CULTURE',
+              'HIRING',
+              'RECENT_DEVELOPMENT',
+              'OTHER',
+            ],
+          },
+          claim: { type: 'string' },
+          roleRelevance: { type: ['string', 'null'] },
+          sourceIds: { type: 'array', items: { type: 'string' } },
+          requirementIds: { type: 'array', items: { type: 'string' } },
+        },
+        required: ['category', 'claim', 'roleRelevance', 'sourceIds', 'requirementIds'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['findings'],
+  additionalProperties: false,
+} as const;
+
+/**
+ * Same no-tools/thinking-disabled/schema-constrained posture as every other call* function — the
+ * extracted source text placed in the prompt is third-party web content, the single strongest
+ * prompt-injection vector in this entire codebase (docs/IMPLEMENTATION_PLAN.md "Phase 7G" §24),
+ * which is exactly why there are no tools on this call at all.
+ */
+export async function callClaudeForCompanyResearch(
+  systemPrompt: string,
+  userText: string,
+): Promise<CallClaudeResult> {
+  try {
+    const response = await getAnthropicClient().messages.create({
+      model: MODEL_ID,
+      max_tokens: COMPANY_RESEARCH_MAX_OUTPUT_TOKENS,
+      thinking: { type: 'disabled' },
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userText }],
+      output_config: {
+        format: { type: 'json_schema', schema: COMPANY_RESEARCH_JSON_SCHEMA },
       },
     });
 

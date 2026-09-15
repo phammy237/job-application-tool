@@ -697,6 +697,90 @@ export interface Database {
         Update: Partial<Database['public']['Tables']['contact_interactions']['Row']>;
         Relationships: [];
       };
+      // Added in migration 0025 (Phase 7G) — company research. All four tables are immutable
+      // once written (block-update triggers) and have no INSERT policy for `authenticated`;
+      // every row is created exclusively through the create_company_research_snapshot RPC below.
+      company_research_snapshots: {
+        Row: {
+          id: string;
+          user_id: string;
+          application_id: string | null;
+          company_name: string;
+          role_title: string;
+          job_snapshot_id: string | null;
+          researched_at: string;
+          created_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['company_research_snapshots']['Row']> & {
+          user_id: string;
+          company_name: string;
+          role_title: string;
+        };
+        Update: Partial<Database['public']['Tables']['company_research_snapshots']['Row']>;
+        Relationships: [];
+      };
+      company_research_sources: {
+        Row: {
+          id: string;
+          user_id: string;
+          snapshot_id: string;
+          url: string;
+          canonical_url: string | null;
+          title: string;
+          publisher: string | null;
+          source_type: string;
+          published_at: string | null;
+          retrieved_at: string;
+          evidence_excerpt: string | null;
+          content_hash: string | null;
+        };
+        Insert: Partial<Database['public']['Tables']['company_research_sources']['Row']> & {
+          user_id: string;
+          snapshot_id: string;
+          url: string;
+          title: string;
+          source_type: string;
+        };
+        Update: Partial<Database['public']['Tables']['company_research_sources']['Row']>;
+        Relationships: [];
+      };
+      company_research_findings: {
+        Row: {
+          id: string;
+          user_id: string;
+          snapshot_id: string;
+          category: string;
+          claim: string;
+          role_relevance: string | null;
+          requirement_ids: string[];
+          created_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['company_research_findings']['Row']> & {
+          user_id: string;
+          snapshot_id: string;
+          category: string;
+          claim: string;
+        };
+        Update: Partial<Database['public']['Tables']['company_research_findings']['Row']>;
+        Relationships: [];
+      };
+      company_research_finding_sources: {
+        Row: {
+          user_id: string;
+          snapshot_id: string;
+          finding_id: string;
+          source_id: string;
+          created_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['company_research_finding_sources']['Row']> & {
+          user_id: string;
+          snapshot_id: string;
+          finding_id: string;
+          source_id: string;
+        };
+        Update: Partial<Database['public']['Tables']['company_research_finding_sources']['Row']>;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: {
@@ -874,6 +958,25 @@ export interface Database {
           version_id: string;
           version_number: number;
           display_name: string;
+        }[];
+      };
+      // Added in migration 0025 (Phase 7G) — the one atomic path for persisting a completed
+      // company-research pipeline run. p_sources/p_findings are JSON arrays whose shape is
+      // validated structurally inside the function itself (see the migration's own doc comment).
+      create_company_research_snapshot: {
+        Args: {
+          p_user_id: string;
+          p_application_id: string | null;
+          p_company_name: string;
+          p_role_title: string;
+          p_job_snapshot_id: string | null;
+          p_sources: Json;
+          p_findings: Json;
+        };
+        Returns: {
+          snapshot_id: string;
+          source_count: number;
+          finding_count: number;
         }[];
       };
     };

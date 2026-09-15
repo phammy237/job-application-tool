@@ -12,6 +12,7 @@ import { requireUser } from '../../../../lib/auth';
 import { attachNextActions } from '../../../../lib/dashboard';
 import { createClient } from '../../../../lib/supabase/server';
 import { changeApplicationStatus, updateApplicationNotes } from '../actions';
+import { CompanyResearchSection } from '../company-research-section';
 import { DeleteApplicationButton } from '../delete-application-button';
 import { FollowUpDraftPanel } from '../follow-up-draft-panel';
 import { InterviewPrepPanel } from '../interview-prep-panel';
@@ -174,6 +175,12 @@ export default async function ApplicationDetailPage({
       {workingResumeVersion?.snapshotFormat === 'STRUCTURED_V1' ? (
         <ResumeTailoringPanel applicationId={application.id} />
       ) : null}
+
+      {/* Phase 7G — company research is a separate, RESEARCH ONLY flow (docs/
+          IMPLEMENTATION_PLAN.md "Phase 7G"): it never reads or affects the résumé/tailoring
+          sections above, never runs automatically, and only ever generates on an explicit click
+          inside this section. */}
+      <CompanyResearchSection supabase={supabase} userId={user.id} applicationId={application.id} />
 
       <section className="space-y-2">
         <h2 className="text-muted-foreground text-sm font-medium">Notes</h2>
