@@ -1,0 +1,28 @@
+{
+  "jobs": [
+    {
+      "id": 9000001,
+      "title": "Valid Job",
+      "absolute_url": "https://stripe.com/jobs/search?gh_jid=9000001",
+      "location": { "name": "New York, NY" },
+      "content": "&lt;p&gt;Valid content.&lt;/p&gt;",
+      "updated_at": "2026-01-01T00:00:00-05:00",
+      "first_published": "2026-01-01T00:00:00-05:00"
+    },
+    {
+      "id": 9000002,
+      "title": "",
+      "absolute_url": "https://stripe.com/jobs/search?gh_jid=9000002"
+    },
+    {
+      "title": "Missing id entirely",
+      "absolute_url": "https://stripe.com/jobs/search?gh_jid=9000003"
+    },
+    {
+      "id": 9000004,
+      "title": "Missing apply URL"
+    },
+    "not even an object"
+  ],
+  "meta": { "total": 5 }
+}

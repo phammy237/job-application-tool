@@ -15,7 +15,9 @@
     "test": "npm run test --workspaces --if-present",
     "test:e2e": "npm run test:e2e --workspace=@career-os/web",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "discovery:sync": "vite-node scripts/discovery/sync.ts",
+    "discovery:import-sources": "vite-node scripts/discovery/import-sources.ts"
   },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^8.18.0",

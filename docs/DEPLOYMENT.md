@@ -68,6 +68,22 @@ Google OAuth client.
 - Database migrations (`supabase/migrations/`) are applied via the Supabase CLI as an
   explicit, reviewed step — not auto-applied from a dev branch to production.
 
+## 6a. Job Discovery daily sync (Job Discovery Track D1–D3)
+
+Full design: `docs/JOB_DISCOVERY.md`. Runs as its own scheduled GitHub Actions workflow
+(`.github/workflows/job-discovery-sync.yml`), independent of the app deploy pipeline —
+`npm run discovery:sync` runs deterministic ATS ingestion (Greenhouse/Lever/Ashby) and needs
+only:
+
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+
+Deliberately does **not** need `ANTHROPIC_API_KEY`, `TAVILY_API_KEY`, or any `GOOGLE_OAUTH_*`
+secret — the discovery path makes zero Claude/Tavily/embedding calls, so it has zero exposure
+to those credentials even if the workflow's secret scope were misconfigured. GitHub Actions
+secrets are configured once, separately from the hosting provider's environment store used for
+`apps/web`, and are never printed in workflow logs.
+
 ## 7. What is explicitly not shared with mypham.space's deployment
 
 - No shared build pipeline, no shared hosting project, no shared environment variable store.

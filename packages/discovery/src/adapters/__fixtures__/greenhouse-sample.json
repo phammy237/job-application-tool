@@ -1,0 +1,50 @@
+{
+  "jobs": [
+    {
+      "id": 8172510,
+      "internal_job_id": 3537063,
+      "title": "Abuse Investigator",
+      "updated_at": "2026-09-10T13:11:58-04:00",
+      "first_published": "2026-09-09T10:50:29-04:00",
+      "requisition_id": "See Opening ID",
+      "location": { "name": "Seattle, San Francisco, New York City" },
+      "absolute_url": "https://stripe.com/jobs/search?gh_jid=8172510",
+      "metadata": null,
+      "company_name": "Stripe",
+      "content": "&lt;h2&gt;&lt;strong&gt;About the team&lt;/strong&gt;&lt;/h2&gt;\n&lt;p&gt;Abuse Operations investigates fraud.&lt;/p&gt;",
+      "departments": [{ "id": 81946, "name": "Security Analytics", "child_ids": [], "parent_id": 78876 }],
+      "offices": [{ "id": 65234, "name": "US", "location": null, "child_ids": [], "parent_id": 673 }]
+    },
+    {
+      "id": 8200001,
+      "internal_job_id": 3540000,
+      "title": " Software Engineer, Backend ",
+      "updated_at": "2026-09-11T09:00:00-04:00",
+      "first_published": "2026-09-11T09:00:00-04:00",
+      "requisition_id": null,
+      "location": { "name": "Remote" },
+      "absolute_url": "https://stripe.com/jobs/search?gh_jid=8200001",
+      "metadata": null,
+      "company_name": "Stripe",
+      "content": "&lt;p&gt;Build payment infrastructure.&lt;/p&gt;",
+      "departments": [],
+      "offices": []
+    },
+    {
+      "id": 8200002,
+      "internal_job_id": 3540001,
+      "title": "Site Reliability Engineer",
+      "updated_at": null,
+      "first_published": null,
+      "requisition_id": null,
+      "location": { "name": null },
+      "absolute_url": "https://stripe.com/jobs/search?gh_jid=8200002",
+      "metadata": null,
+      "company_name": "Stripe",
+      "content": null,
+      "departments": [],
+      "offices": []
+    }
+  ],
+  "meta": { "total": 3 }
+}

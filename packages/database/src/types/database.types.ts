@@ -787,6 +787,80 @@ export interface Database {
         Update: Partial<Database['public']['Tables']['company_research_finding_sources']['Row']>;
         Relationships: [];
       };
+      job_sources: {
+        Row: {
+          id: string;
+          company_name: string;
+          source_type: string;
+          source_identifier: string;
+          careers_url: string | null;
+          enabled: boolean;
+          crawl_interval_hours: number;
+          last_crawled_at: string | null;
+          last_success_at: string | null;
+          last_error_at: string | null;
+          last_error: string | null;
+          consecutive_failures: number;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['job_sources']['Row']> & {
+          company_name: string;
+          source_type: string;
+          source_identifier: string;
+        };
+        Update: Partial<Database['public']['Tables']['job_sources']['Row']>;
+        Relationships: [];
+      };
+      job_catalog: {
+        Row: {
+          id: string;
+          source_id: string;
+          source_job_id: string;
+          company_name: string;
+          title: string;
+          normalized_title: string;
+          location_text: string | null;
+          normalized_location: string | null;
+          city: string | null;
+          state_region: string | null;
+          country: string | null;
+          workplace_type: string | null;
+          employment_type: string | null;
+          description: string | null;
+          responsibilities: string | null;
+          qualifications: string | null;
+          salary_min: number | null;
+          salary_max: number | null;
+          salary_currency: string | null;
+          apply_url: string;
+          source_url: string | null;
+          canonical_apply_url: string | null;
+          dedupe_fingerprint: string | null;
+          posted_at: string | null;
+          source_updated_at: string | null;
+          first_seen_at: string;
+          last_seen_at: string;
+          content_updated_at: string;
+          consecutive_misses: number;
+          status: string;
+          closed_at: string | null;
+          content_hash: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['job_catalog']['Row']> & {
+          source_id: string;
+          source_job_id: string;
+          company_name: string;
+          title: string;
+          normalized_title: string;
+          apply_url: string;
+          content_hash: string;
+        };
+        Update: Partial<Database['public']['Tables']['job_catalog']['Row']>;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: {

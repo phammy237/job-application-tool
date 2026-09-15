@@ -158,6 +158,44 @@ phase depends on a later phase's output.
 - [ ] Phase 7 — Multi-user beta hardening, privacy controls, testing, deployment
 - [ ] Phase 8 — Optional mypham.space integration, public onboarding, future sharing
 
+## Job Discovery Track
+
+A separate roadmap track, not another Phase 7 letter — the front half of Career OS ("find
+opportunities") rather than a deepening of the existing "act on an opportunity you already
+found" phases above. Full design record: `docs/JOB_DISCOVERY.md`.
+
+- [x] D1 — Global job catalog + source registry
+- [x] D2 — Greenhouse / Lever / Ashby ingestion
+- [x] D3 — Freshness, lifecycle, daily synchronization
+- [ ] D4 — Deterministic feature extraction + personalized ranking
+- [ ] D5 — /discover dashboard
+- [ ] D6 — Discovery → existing Career OS application handoff
+- [ ] D7 — Generic company career-site crawler
+- [ ] D8 — Feedback-driven ranking
+
+**D1–D3 (migration `0029_job_discovery_catalog.sql`)**: `job_sources` (global ATS board
+registry) + `job_catalog` (global, mutable "what jobs currently exist" catalog) — deliberately
+separate from the user-owned `jobs`/`job_snapshots` system above, no `user_id` column, no AI/
+Tavily/embedding calls anywhere in the path. Greenhouse/Lever/Ashby adapters normalize into one
+shared `RawDiscoveredJob` shape; `(source_id, source_job_id)` is the one authoritative identity
+constraint. Deterministic content hashing (`"v1:" + sha256hex`, same pattern as
+`job_snapshots.content_fingerprint`) drives idempotent upserts that distinguish new/unchanged/
+changed/reopened without rewriting untouched columns. A two-miss closed-job lifecycle
+(`ACTIVE → POSSIBLY_CLOSED → CLOSED`, reopening on reappearance) runs only after a *successful,
+complete* crawl — a provider outage never mass-closes jobs, proven by an explicit failure-
+isolation test. No custom Postgres RPC for the catalog writes — two batched PostgREST round
+trips per source comfortably cover the "hundreds of sources / tens of thousands of jobs" scale
+target. `job_catalog` is `authenticated`-readable (global, non-sensitive data, ready for D5);
+`job_sources` is service-role-only in both directions. `npm run discovery:sync` /
+`npm run discovery:import-sources` are the manual entry points; a daily GitHub Actions workflow
+(`.github/workflows/job-discovery-sync.yml`, only `NEXT_PUBLIC_SUPABASE_URL`/
+`SUPABASE_SERVICE_ROLE_KEY` in scope) runs the same script. Live-verified against the linked
+Supabase project: pgTAP (`supabase/tests/database/0032_job_discovery_catalog.test.sql`, 30/30
+assertions), a real ingestion run against 7 real, hand-verified boards spanning all three
+providers (1,371 real postings fetched and cataloged with zero rejects), and a forced second run
+proving idempotency (1,371/1,371 "unchanged," zero duplicates). See `docs/JOB_DISCOVERY.md` for
+the full design, including what's deliberately deferred to D4+.
+
 The whole Phase 5B line (5B.0 through 5B.4, plus the hardening pass) is complete. Phase 5C is now
 complete end to end — 5C.1 (deterministic next actions) through 5C.4 (polish and closure) — see
 each phase's own section below for the full writeup. No 5C sub-phase remains unstarted.

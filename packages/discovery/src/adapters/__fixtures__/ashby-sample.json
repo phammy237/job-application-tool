@@ -1,0 +1,66 @@
+{
+  "jobs": [
+    {
+      "id": "34413f8d-26bf-4bbc-8ade-eb309a0e2245",
+      "title": " Security Engineer, Cloud",
+      "department": "Engineering",
+      "team": "Backend",
+      "employmentType": "FullTime",
+      "location": "New York, NY (HQ)",
+      "secondaryLocations": [
+        { "location": "Remote (Canada)", "address": { "postalAddress": { "addressCountry": "Canada" } } }
+      ],
+      "publishedAt": "2026-04-07T17:12:35.753+00:00",
+      "isListed": true,
+      "isRemote": true,
+      "workplaceType": "Hybrid",
+      "address": { "postalAddress": { "addressRegion": "NY", "addressCountry": "USA", "addressLocality": "New York City" } },
+      "jobUrl": "https://jobs.ashbyhq.com/ramp/34413f8d-26bf-4bbc-8ade-eb309a0e2245",
+      "applyUrl": "https://jobs.ashbyhq.com/ramp/34413f8d-26bf-4bbc-8ade-eb309a0e2245/application",
+      "descriptionHtml": "<h1>About Ramp</h1><p>Ramp is finance infrastructure.</p>",
+      "descriptionPlain": "About Ramp\nRamp is finance infrastructure.",
+      "compensation": {
+        "compensationTierSummary": "$211.4K – $290.6K • Offers Equity",
+        "compensationTiers": [],
+        "summaryComponents": [
+          { "compensationType": "EquityPercentage", "interval": "NONE", "currencyCode": null, "minValue": null, "maxValue": null },
+          { "compensationType": "Salary", "interval": "1 YEAR", "currencyCode": "USD", "minValue": 211400, "maxValue": 290600 }
+        ]
+      }
+    },
+    {
+      "id": "44413f8d-26bf-4bbc-8ade-eb309a0e2246",
+      "title": "Product Manager",
+      "department": "Product",
+      "team": "Core",
+      "employmentType": "FullTime",
+      "location": "Remote",
+      "secondaryLocations": [],
+      "publishedAt": "2026-04-08T10:00:00.000+00:00",
+      "isListed": true,
+      "isRemote": true,
+      "workplaceType": "Remote",
+      "address": null,
+      "jobUrl": "https://jobs.ashbyhq.com/ramp/44413f8d-26bf-4bbc-8ade-eb309a0e2246",
+      "applyUrl": "https://jobs.ashbyhq.com/ramp/44413f8d-26bf-4bbc-8ade-eb309a0e2246/application",
+      "descriptionHtml": "<p>Own the roadmap.</p>",
+      "descriptionPlain": "Own the roadmap."
+    },
+    {
+      "id": "54413f8d-26bf-4bbc-8ade-eb309a0e2247",
+      "title": "Confidential Executive Search",
+      "department": "Exec",
+      "team": "Exec",
+      "employmentType": "FullTime",
+      "location": "San Francisco, CA",
+      "publishedAt": "2026-04-09T10:00:00.000+00:00",
+      "isListed": false,
+      "isRemote": false,
+      "workplaceType": "Onsite",
+      "jobUrl": "https://jobs.ashbyhq.com/ramp/54413f8d-26bf-4bbc-8ade-eb309a0e2247",
+      "applyUrl": "https://jobs.ashbyhq.com/ramp/54413f8d-26bf-4bbc-8ade-eb309a0e2247/application",
+      "descriptionHtml": "<p>Confidential.</p>"
+    }
+  ],
+  "apiVersion": "1"
+}

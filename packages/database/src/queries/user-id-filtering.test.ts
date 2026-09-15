@@ -31,8 +31,21 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
  * verified inside that row-locked database function itself (migration 0024), proven by the
  * pgTAP cross-user rejection assertions in supabase/tests/database/0029_resume_tailoring_save.
  * test.sql, not by a PostgREST-level filter this file could add.
+ *
+ * job-sources.ts and job-catalog.ts (Job Discovery Track D1) are exempt for the same reason as
+ * feature_flags: `job_sources`/`job_catalog` are deliberately global, platform-owned tables with
+ * no `user_id` column at all (docs/JOB_DISCOVERY.md) — there is no per-user row to scope by, by
+ * design, not by omission. Every write goes through the service-role admin client exclusively
+ * (no authenticated write RLS policy on either table), which is the actual enforcement boundary
+ * here, verified by supabase/tests/database/'s job-discovery pgTAP suite.
  */
-const EXEMPT_FILES = new Set(['feature-flags.ts', 'consistency.ts', 'resume-tailoring-save.ts']);
+const EXEMPT_FILES = new Set([
+  'feature-flags.ts',
+  'consistency.ts',
+  'resume-tailoring-save.ts',
+  'job-sources.ts',
+  'job-catalog.ts',
+]);
 
 describe('every user-scoped query filters by user_id explicitly', () => {
   const queriesDir = __dirname;

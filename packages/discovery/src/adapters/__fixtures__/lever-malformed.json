@@ -1,0 +1,24 @@
+[
+  {
+    "id": "valid-1",
+    "text": "Valid Posting",
+    "categories": { "location": "Remote" },
+    "workplaceType": "remote",
+    "createdAt": 1700000000000,
+    "hostedUrl": "https://jobs.lever.co/acme/valid-1",
+    "applyUrl": "https://jobs.lever.co/acme/valid-1/apply"
+  },
+  {
+    "id": "missing-text",
+    "applyUrl": "https://jobs.lever.co/acme/missing-text/apply"
+  },
+  {
+    "text": "Missing id entirely",
+    "applyUrl": "https://jobs.lever.co/acme/missing-id/apply"
+  },
+  {
+    "id": "missing-apply-url",
+    "text": "Missing apply URL"
+  },
+  42
+]

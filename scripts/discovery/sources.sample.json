@@ -1,0 +1,44 @@
+[
+  {
+    "companyName": "Stripe",
+    "sourceType": "GREENHOUSE",
+    "sourceIdentifier": "stripe",
+    "careersUrl": "https://stripe.com/jobs"
+  },
+  {
+    "companyName": "Palantir",
+    "sourceType": "LEVER",
+    "sourceIdentifier": "palantir",
+    "careersUrl": "https://www.palantir.com/careers/"
+  },
+  {
+    "companyName": "Pipedrive",
+    "sourceType": "LEVER",
+    "sourceIdentifier": "pipedrive",
+    "careersUrl": "https://www.pipedrive.com/en/jobs"
+  },
+  {
+    "companyName": "Ramp",
+    "sourceType": "ASHBY",
+    "sourceIdentifier": "ramp",
+    "careersUrl": "https://ramp.com/careers"
+  },
+  {
+    "companyName": "Notion",
+    "sourceType": "ASHBY",
+    "sourceIdentifier": "notion",
+    "careersUrl": "https://www.notion.so/careers"
+  },
+  {
+    "companyName": "Vanta",
+    "sourceType": "ASHBY",
+    "sourceIdentifier": "vanta",
+    "careersUrl": "https://www.vanta.com/careers"
+  },
+  {
+    "companyName": "Linear",
+    "sourceType": "ASHBY",
+    "sourceIdentifier": "linear",
+    "careersUrl": "https://linear.app/careers"
+  }
+]

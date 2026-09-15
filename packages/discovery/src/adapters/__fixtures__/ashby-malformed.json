@@ -1,0 +1,29 @@
+{
+  "jobs": [
+    {
+      "id": "valid-1",
+      "title": "Valid Ashby Job",
+      "employmentType": "FullTime",
+      "location": "Austin, TX",
+      "workplaceType": "Onsite",
+      "publishedAt": "2026-01-01T00:00:00.000Z",
+      "jobUrl": "https://jobs.ashbyhq.com/acme/valid-1",
+      "applyUrl": "https://jobs.ashbyhq.com/acme/valid-1/application",
+      "descriptionHtml": "<p>Valid.</p>"
+    },
+    {
+      "id": "missing-title",
+      "applyUrl": "https://jobs.ashbyhq.com/acme/missing-title/application"
+    },
+    {
+      "title": "Missing id entirely",
+      "applyUrl": "https://jobs.ashbyhq.com/acme/missing-id/application"
+    },
+    {
+      "id": "missing-apply-url",
+      "title": "Missing apply URL"
+    },
+    ["not", "an", "object"]
+  ],
+  "apiVersion": "1"
+}
