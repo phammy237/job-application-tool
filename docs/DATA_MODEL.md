@@ -228,14 +228,16 @@ nothing ever updates a version's own row in place (database-enforced, same
 | `snapshot_format`    | `text not null default 'METADATA_ONLY'`                    | `METADATA_ONLY` (Phase 7A — no content, just identity) or `STRUCTURED_V1` (Phase 7C — `snapshot_payload` is a real `StructuredResumeV1` JSON document); widened additively, never in advance of the format it describes actually existing (migration 0022) |
 | `snapshot_payload`  | `jsonb`                                                     | null while `snapshot_format = 'METADATA_ONLY'`; a non-null `StructuredResumeV1` object while `snapshot_format = 'STRUCTURED_V1'` — both directions database-enforced (`resume_versions_snapshot_payload_matches_format`), never a fabricated placeholder either way. The JSON itself also carries its own `schemaVersion` field, independent of this column, so a future `STRUCTURED_V2` can exist without ever reinterpreting an existing `STRUCTURED_V1` row |
 | `created_at`        | `timestamptz`                                               |                                                                                                        |
+| `company_research_snapshot_id` | `uuid`                                          | nullable (Phase 7H, migration 0028); composite FK to `company_research_snapshots(user_id, id)`, **`on delete restrict`** (deliberately not `set null` — see that migration's own doc comment and `docs/COMPANY_RESEARCH.md` §9a). Set once, only by `save_reviewed_tailored_resume` (below) when the reviewed proposal was generated with `JOB_PLUS_COMPANY_RESEARCH`; every other version (manual Studio saves, `JOB_ONLY` tailoring, every version created before this phase) is null. Never re-pointed after creation — a later research refresh always produces a new résumé version rather than repointing an old one |
 
-Unique: `(resume_id, version_number)`. Indexes: `(user_id)`, `(resume_id)`. RLS: `select`/`delete`
-for `authenticated`, scoped by `user_id` — deliberately **no** ordinary `insert`/`update` policy
-(same deviation as `job_snapshots`/`requirement_mapping_runs`): `version_number` must never be
-client-supplied or racy, so every version is created exclusively through the `create_resume_version`
-RPC below. Deletion *is* ordinary — the real "a submitted version can never be deleted" invariant is
-enforced structurally by `submission_packets.resume_version_id`'s `on delete restrict` FK (Phase
-7B), not by withholding delete.
+Unique: `(resume_id, version_number)`. Indexes: `(user_id)`, `(resume_id)`,
+`(company_research_snapshot_id)`. RLS: `select`/`delete` for `authenticated`, scoped by `user_id` —
+deliberately **no** ordinary `insert`/`update` policy (same deviation as `job_snapshots`/
+`requirement_mapping_runs`): `version_number` must never be client-supplied or racy, so every
+version is created exclusively through the `create_resume_version` RPC below. Deletion *is*
+ordinary — the real "a submitted version can never be deleted" invariant is enforced structurally
+by `submission_packets.resume_version_id`'s `on delete restrict` FK (Phase 7B), not by withholding
+delete.
 
 **Phase 7C — structured content is canonical, LaTeX is derived.** `StructuredResumeV1`
 (`packages/shared`) is the one thing actually snapshotted; LaTeX is generated from it on demand
@@ -275,6 +277,17 @@ obscure both). Sets `applications.working_resume_version_id` to the new version 
 transaction. `security invoker`, granted only to `service_role`, same calling convention as
 `create_resume_version`. Never references `submission_packets` — no parameter, no code path
 reaches it, so a submitted résumé's frozen record is structurally unreachable from this function.
+
+**Phase 7H (migration 0028)** added one optional trailing parameter,
+`p_company_research_snapshot_id uuid default null` — the old 9-arg signature was dropped and
+recreated (PostgreSQL treats an added parameter, even with a default, as a distinct overload, per
+migration 0021's own precedent for `mark_application_applied`). When non-null, the function
+verifies the snapshot belongs to `p_user_id` first (raising `company_research_snapshot_not_found`
+otherwise, the same ownership-check posture `create_company_research_snapshot` already uses for
+every id it's handed) and writes it onto the new `resume_versions` row. `create_resume_version`
+itself was deliberately left unchanged — its non-tailoring callers (the Studio's manual save) have
+no research context to record, and the column is nullable with no default reference, so their
+existing `insert` simply leaves it null.
 
 ---
 

@@ -192,3 +192,24 @@ version — still deliberately separate from the Studio's own manual editing flo
   grounding design — Phase 7E's own generation-time guards, and Phase 7F's save-time re-verification
   against freshly-read approved facts (never the client's own claims) plus its honest MANUAL-vs-
   CANDIDATE_FACTS provenance rule for user-edited text.
+
+### 12a. Research-aware tailoring provenance (Phase 7H)
+
+As of Phase 7H (`docs/AI_GROUNDING.md` §14), the tailoring generation step above may optionally
+fold in one exact company-research snapshot, and a saved version's `resume_versions` row gains one
+new nullable column, `company_research_snapshot_id` (migration 0028) — the exact snapshot that
+informed this version, if any. Set once, at save time, exactly like every other column on this
+already-immutable row:
+
+- **Identity, not latestness.** A version saved against research snapshot R1 keeps referencing R1
+  forever, even after a later refresh produces R2 — re-tailoring against R2 always creates a
+  *new* version instead of repointing an old one. Nothing here changes §7's immutability guarantee
+  or §8's master/tailored lineage rules.
+- **Never affects Studio content.** This column is pure audit metadata ("which research informed
+  this version") — it has no bearing on the résumé's actual structured content, its rendering, or
+  the Studio's own manual-edit flow, and manual saves through §7's own "Save New Version" simply
+  leave it null.
+- **Deletion is narrower than Phase 7G's original semantics.** Once a version references a
+  snapshot, that snapshot can no longer be deleted (`ON DELETE RESTRICT` — see
+  `docs/COMPANY_RESEARCH.md`) rather than silently losing the reference; an unreferenced snapshot
+  remains exactly as deletable as before.

@@ -1,9 +1,10 @@
 # Company Research (Phase 7G)
 
 This document is the design record for Career OS's company-research feature — a RESEARCH ONLY
-foundation (docs/IMPLEMENTATION_PLAN.md "Phase 7G"). It does not affect résumé tailoring (Phase
-7E/7F) or interview prep yet; that intersection is explicitly deferred to Phase 7H/7I (§13/§14
-below).
+foundation (docs/IMPLEMENTATION_PLAN.md "Phase 7G"). As of Phase 7H, résumé tailoring may
+optionally read one immutable snapshot this feature produced (§13); the feature itself — discovery,
+extraction, synthesis, persistence — is otherwise unchanged. Interview prep does not consume
+company research yet; that intersection remains deferred to Phase 7I (§14 below).
 
 ## 1. What this is, and isn't
 
@@ -193,6 +194,22 @@ by the second call). The research page shows the latest by default with a lightw
 snapshots list (`?snapshot=<id>`) — no diffing between snapshots exists yet, and none is planned
 for this phase.
 
+### 9a. Deletion (narrowed by Phase 7H)
+
+The owner can delete their own snapshot (ordinary RLS `delete` policy) — through Phase 7G, always
+unconditionally. As of Phase 7H, this is narrowed once a résumé version has actually saved a
+reference to it: `resume_versions.company_research_snapshot_id` is a composite FK with `ON DELETE
+RESTRICT` (migration 0028), so deleting a snapshot that's referenced by at least one saved tailored
+résumé version now fails with an ordinary foreign-key-violation error instead of succeeding. An
+UNREFERENCED snapshot (the common case — most snapshots are never actually saved into a résumé
+version) remains exactly as deletable as before. This was a deliberate choice over `ON DELETE SET
+NULL`: once a résumé version explicitly references a research artifact, silently losing that
+identity to a later delete would be dishonest audit-wise, and reusing `SET NULL` here would
+reintroduce the exact immutability-trigger-vs-FK conflict §11 documents (`resume_versions` already
+has its own blanket immutability trigger) for a second table, rather than accepting the smaller,
+well-understood behavior change RESTRICT provides. See `docs/IMPLEMENTATION_PLAN.md` "Phase 7H"
+and `docs/RESUME_STUDIO.md` §12a.
+
 ## 10. Concurrency and staleness
 
 Two concurrent "Research company" clicks (same tab, disabled while pending, or two different tabs)
@@ -237,14 +254,18 @@ function never had to handle the combination before.
   once, before any external call, not just before the Claude call. No separate research-specific
   rate-limit table was added.
 
-## 13. Explicitly deferred — Phase 7H boundary
+## 13. Phase 7H boundary — now crossed
 
-Company research does not affect résumé tailoring, résumé content, or `working_resume_version_id`
-in any way in this phase. Phase 7H will read a specific, immutable `companyResearchSnapshotId`
-(stable by construction — snapshots are never mutated, only superseded by a new one) alongside job
-requirements, approved candidate facts, and the base résumé to produce research-aware tailoring.
-Nothing in this phase's architecture needs to change to support that later — the snapshot's own
-identity is already exactly what a later phase would need to reference.
+Company research itself (this document's whole scope — discovery, extraction, synthesis,
+persistence) is unchanged by Phase 7H: it still never affects anything automatically, still never
+sends candidate data anywhere, and a "Research company" click still makes exactly the same calls
+it always has. What Phase 7H added lives in résumé tailoring's own pipeline (§14/§15 of
+`docs/AI_GROUNDING.md`), which now OPTIONALLY reads one specific, immutable snapshot's `id`,
+`researchedAt`, and a bounded, ranked subset of its `findings` (never a full snapshot, never
+source excerpts/URLs) to decide emphasis, never facts — see `docs/IMPLEMENTATION_PLAN.md` "Phase
+7H" for the full design. This snapshot's own stability by construction (never mutated, only
+superseded by a new one) is exactly what made that later phase possible without any change to this
+one's own data model, beyond the deletion narrowing in §9a.
 
 ## 14. Explicitly deferred — Phase 7I boundary
 

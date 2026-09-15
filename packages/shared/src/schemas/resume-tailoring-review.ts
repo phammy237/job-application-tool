@@ -74,6 +74,19 @@ export const saveReviewedTailoredResumeInputSchema = z.object({
    * server-checked acknowledgment that saving regenerates LaTeX from structured content and does
    * not carry the override forward (§39). Ignored (never required) when there is no override. */
   acknowledgeCustomLatexOverrideReset: z.boolean().default(false),
+  /**
+   * Phase 7H (§9/§41) — the exact company-research snapshot this proposal was generated against,
+   * echoed back from the proposal's own `companyResearchSnapshotId` so the saved résumé version
+   * can carry immutable provenance of which research (if any) informed it. Deliberately NOT
+   * re-checked for staleness against a "current" snapshot — snapshot IDENTITY, not latestness, is
+   * what matters here (§9): a proposal generated against snapshot R1 must still save successfully
+   * even if a newer snapshot R2 exists by the time the user clicks save. The save route does its
+   * own lightweight ownership re-check of this id before forwarding it (never trusted blindly),
+   * primarily as data-integrity defense-in-depth rather than a security-critical gate — the
+   * accepted/rejected résumé content itself is independently re-derived and re-validated
+   * regardless of what this field says. Null/omitted whenever the proposal used `JOB_ONLY`.
+   */
+  companyResearchSnapshotId: uuidSchema.nullable().optional(),
 });
 export type SaveReviewedTailoredResumeInput = z.infer<
   typeof saveReviewedTailoredResumeInputSchema

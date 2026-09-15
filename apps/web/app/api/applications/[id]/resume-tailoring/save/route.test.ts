@@ -9,7 +9,8 @@ class MockSaveReviewedTailoredResumeError extends Error {
       | 'application_not_found'
       | 'resume_not_found'
       | 'stale_base_resume'
-      | 'stale_job_context',
+      | 'stale_job_context'
+      | 'company_research_snapshot_not_found',
     public readonly currentValue: string | null,
   ) {
     super(reason);
@@ -25,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   isOwnResumeWorkingForOtherApplication: vi.fn(),
   listOwnApprovedFactsForGeneration: vi.fn(),
   saveReviewedTailoredResume: vi.fn(),
+  getOwnCompanyResearchSnapshot: vi.fn(),
   getCurrentUser: vi.fn(),
   createAdminClient: vi.fn(),
   createClient: vi.fn(),
@@ -38,6 +40,7 @@ vi.mock('@career-os/database', () => ({
   isOwnResumeWorkingForOtherApplication: mocks.isOwnResumeWorkingForOtherApplication,
   listOwnApprovedFactsForGeneration: mocks.listOwnApprovedFactsForGeneration,
   saveReviewedTailoredResume: mocks.saveReviewedTailoredResume,
+  getOwnCompanyResearchSnapshot: mocks.getOwnCompanyResearchSnapshot,
   SaveReviewedTailoredResumeError: MockSaveReviewedTailoredResumeError,
 }));
 
@@ -436,5 +439,69 @@ describe('POST /api/applications/[id]/resume-tailoring/save', () => {
   it('never calls the database at all for an invalid request body', async () => {
     await POST(postRequest({ nonsense: true }), PARAMS);
     expect(mocks.getOwnApplication).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/applications/[id]/resume-tailoring/save — Phase 7H research provenance', () => {
+  const RESEARCH_SNAPSHOT_ID = '99999999-9999-4999-8999-999999999999';
+
+  it('forwards a companyResearchSnapshotId that resolves to an owned snapshot', async () => {
+    mocks.getOwnCompanyResearchSnapshot.mockResolvedValue({ id: RESEARCH_SNAPSHOT_ID });
+    const response = await POST(
+      postRequest(validBody({ companyResearchSnapshotId: RESEARCH_SNAPSHOT_ID })),
+      PARAMS,
+    );
+    expect((await response.json()).status).toBe('ok');
+    expect(mocks.getOwnCompanyResearchSnapshot).toHaveBeenCalledWith(
+      expect.anything(),
+      USER_ID,
+      RESEARCH_SNAPSHOT_ID,
+    );
+    expect(mocks.saveReviewedTailoredResume).toHaveBeenCalledWith(
+      expect.anything(),
+      USER_ID,
+      expect.objectContaining({ companyResearchSnapshotId: RESEARCH_SNAPSHOT_ID }),
+    );
+  });
+
+  it('degrades to null (never blocks the save) when the snapshot no longer resolves — losing only the audit link', async () => {
+    mocks.getOwnCompanyResearchSnapshot.mockResolvedValue(null);
+    const response = await POST(
+      postRequest(validBody({ companyResearchSnapshotId: RESEARCH_SNAPSHOT_ID })),
+      PARAMS,
+    );
+    expect((await response.json()).status).toBe('ok');
+    expect(mocks.saveReviewedTailoredResume).toHaveBeenCalledWith(
+      expect.anything(),
+      USER_ID,
+      expect.objectContaining({ companyResearchSnapshotId: null }),
+    );
+  });
+
+  it('never even calls getOwnCompanyResearchSnapshot when no companyResearchSnapshotId is present (JOB_ONLY proposal)', async () => {
+    const response = await POST(postRequest(validBody()), PARAMS);
+    expect((await response.json()).status).toBe('ok');
+    expect(mocks.getOwnCompanyResearchSnapshot).not.toHaveBeenCalled();
+    expect(mocks.saveReviewedTailoredResume).toHaveBeenCalledWith(
+      expect.anything(),
+      USER_ID,
+      expect.objectContaining({ companyResearchSnapshotId: null }),
+    );
+  });
+
+  it('maps an RPC-level company_research_snapshot_not_found rejection to validation_failed (defense-in-depth backstop)', async () => {
+    mocks.getOwnCompanyResearchSnapshot.mockResolvedValue({ id: RESEARCH_SNAPSHOT_ID });
+    mocks.saveReviewedTailoredResume.mockRejectedValue(
+      new MockSaveReviewedTailoredResumeError('company_research_snapshot_not_found', null),
+    );
+    const response = await POST(
+      postRequest(validBody({ companyResearchSnapshotId: RESEARCH_SNAPSHOT_ID })),
+      PARAMS,
+    );
+    expect(await response.json()).toEqual({
+      status: 'validation_failed',
+      reason: 'company_research_snapshot_not_found',
+      detail: '',
+    });
   });
 });

@@ -20,6 +20,9 @@ function rowToResumeVersion(row: Row): ResumeVersion {
     snapshotFormat: row.snapshot_format,
     snapshotPayload: row.snapshot_payload,
     createdAt: row.created_at,
+    // Phase 7H — added by migration 0028; null for every version created before this phase and
+    // for any version not produced by the research-aware tailoring save path.
+    companyResearchSnapshotId: row.company_research_snapshot_id,
   });
 }
 

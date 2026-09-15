@@ -9,6 +9,7 @@ const BASE = {
   versionNumber: 1,
   displayName: 'v1',
   createdAt: '2026-01-01T00:00:00.000Z',
+  companyResearchSnapshotId: null,
 };
 
 describe('resumeSnapshotFormatSchema', () => {
@@ -62,6 +63,16 @@ describe('resumeVersionSchema (discriminated on snapshotFormat)', () => {
     if (version.snapshotFormat === 'STRUCTURED_V1') {
       expect(version.snapshotPayload.header.fullName).toBe('Ada Lovelace');
     }
+  });
+
+  it('parses and preserves a non-null companyResearchSnapshotId (Phase 7H provenance)', () => {
+    const version = resumeVersionSchema.parse({
+      ...BASE,
+      companyResearchSnapshotId: '44444444-4444-4444-8444-444444444444',
+      snapshotFormat: 'METADATA_ONLY',
+      snapshotPayload: null,
+    });
+    expect(version.companyResearchSnapshotId).toBe('44444444-4444-4444-8444-444444444444');
   });
 
   it('rejects a STRUCTURED_V1 version with a null payload', () => {

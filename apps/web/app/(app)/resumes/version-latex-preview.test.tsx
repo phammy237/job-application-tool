@@ -12,6 +12,7 @@ const BASE = {
   versionNumber: 1,
   displayName: 'My Resume',
   createdAt: '2026-01-01T00:00:00.000Z',
+  companyResearchSnapshotId: null,
 };
 
 beforeEach(() => {

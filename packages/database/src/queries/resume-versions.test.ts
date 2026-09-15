@@ -21,6 +21,7 @@ const BASE_ROW = {
   snapshot_format: 'METADATA_ONLY',
   snapshot_payload: null,
   created_at: '2026-01-01T00:00:00.000Z',
+  company_research_snapshot_id: null,
 };
 
 describe('listOwnResumeVersionsForResume', () => {
@@ -38,6 +39,24 @@ describe('listOwnResumeVersionsForResume', () => {
     expect(eq).toHaveBeenCalledWith('resume_id', RESUME_ID);
     expect(chain.order).toHaveBeenCalledWith('version_number', { ascending: false });
     expect(result).toHaveLength(1);
+    expect(result[0]?.companyResearchSnapshotId).toBeNull();
+  });
+
+  it('surfaces a non-null companyResearchSnapshotId (Phase 7H provenance)', async () => {
+    const RESEARCH_SNAPSHOT_ID = '55555555-5555-4555-8555-555555555555';
+    const chain: Record<string, unknown> = {};
+    chain.select = vi.fn(() => chain);
+    chain.eq = vi.fn(() => chain);
+    chain.order = vi
+      .fn()
+      .mockResolvedValue({
+        data: [{ ...BASE_ROW, company_research_snapshot_id: RESEARCH_SNAPSHOT_ID }],
+        error: null,
+      });
+    const supabase = { from: vi.fn(() => chain) } as unknown as CareerOsSupabaseClient;
+
+    const result = await listOwnResumeVersionsForResume(supabase, USER_ID, RESUME_ID);
+    expect(result[0]?.companyResearchSnapshotId).toBe(RESEARCH_SNAPSHOT_ID);
   });
 });
 

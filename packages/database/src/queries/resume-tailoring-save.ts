@@ -13,13 +13,19 @@ export type SaveReviewedTailoredResumeRejection =
   | 'application_not_found'
   | 'resume_not_found'
   | 'stale_base_resume'
-  | 'stale_job_context';
+  | 'stale_job_context'
+  /** Phase 7H (migration 0028) — a non-null `companyResearchSnapshotId` was forwarded but does
+   * not belong to `p_user_id`. The save route already does its own lightweight ownership check
+   * before calling this RPC and degrades to `null` rather than forwarding an unowned id (§9), so
+   * this is a defense-in-depth backstop, not the primary gate — see that route's own comment. */
+  | 'company_research_snapshot_not_found';
 
 const KNOWN_REJECTIONS: SaveReviewedTailoredResumeRejection[] = [
   'application_not_found',
   'resume_not_found',
   'stale_base_resume',
   'stale_job_context',
+  'company_research_snapshot_not_found',
 ];
 
 /**
@@ -53,6 +59,12 @@ export interface SaveReviewedTailoredResumeInput {
   newResumeParentId: string | null;
   versionDisplayName: string;
   snapshotPayload: Json;
+  /** Phase 7H (docs/IMPLEMENTATION_PLAN.md "Phase 7H" §9/§41) — the exact immutable company-
+   * research snapshot this reviewed proposal was generated against, if any. Null (or omitted) for
+   * a `JOB_ONLY` save, same as before this phase. Never re-checked for staleness here — snapshot
+   * IDENTITY, not latestness, is what's saved (§9): a newer snapshot existing by save time never
+   * invalidates this value. The RPC still independently verifies ownership before writing it. */
+  companyResearchSnapshotId?: string | null;
 }
 
 export interface SaveReviewedTailoredResumeResult {
@@ -90,6 +102,7 @@ export async function saveReviewedTailoredResume(
       p_new_resume_parent_id: input.newResumeParentId,
       p_version_display_name: input.versionDisplayName,
       p_snapshot_payload: input.snapshotPayload,
+      p_company_research_snapshot_id: input.companyResearchSnapshotId ?? null,
     })
     .single();
 

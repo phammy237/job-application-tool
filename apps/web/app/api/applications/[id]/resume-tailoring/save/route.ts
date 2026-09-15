@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import {
   SaveReviewedTailoredResumeError,
   getOwnApplication,
+  getOwnCompanyResearchSnapshot,
   getOwnProfile,
   getOwnResume,
   getOwnResumeVersion,
@@ -210,6 +211,22 @@ export async function POST(
     }
   }
 
+  // Phase 7H (§9/§41) — an explicit, owned check of the proposal's own companyResearchSnapshotId,
+  // never trusted blindly. Deliberately NOT a staleness gate: identity, not latestness, is what
+  // matters (§9), so a snapshot that's simply no longer the "latest" one is still forwarded as-is.
+  // If it can no longer be resolved at all (deleted, or somehow not owned), this degrades to null
+  // rather than blocking the save entirely — the reviewed résumé content is unaffected either way,
+  // and losing only the audit-provenance link is more honest than refusing a save over it.
+  let companyResearchSnapshotId: string | null = null;
+  if (input.companyResearchSnapshotId) {
+    const researchSnapshot = await getOwnCompanyResearchSnapshot(
+      supabase,
+      user.id,
+      input.companyResearchSnapshotId,
+    );
+    companyResearchSnapshotId = researchSnapshot?.id ?? null;
+  }
+
   try {
     const saved = await saveReviewedTailoredResume(admin, user.id, {
       applicationId,
@@ -220,6 +237,7 @@ export async function POST(
       newResumeParentId,
       versionDisplayName,
       snapshotPayload: contentCheck.data,
+      companyResearchSnapshotId,
     });
 
     return NextResponse.json({
@@ -252,6 +270,15 @@ export async function POST(
           return NextResponse.json({
             status: 'validation_failed',
             reason: 'resume_not_found',
+            detail: '',
+          });
+        case 'company_research_snapshot_not_found':
+          // Unreachable in practice — companyResearchSnapshotId is already ownership-checked
+          // above and nulled out rather than forwarded when it doesn't resolve. Fails closed
+          // rather than silently retrying, same posture as resume_not_found above.
+          return NextResponse.json({
+            status: 'validation_failed',
+            reason: 'company_research_snapshot_not_found',
             detail: '',
           });
         default: {

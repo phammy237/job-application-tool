@@ -237,6 +237,12 @@ export interface Database {
           snapshot_format: string;
           snapshot_payload: Json | null;
           created_at: string;
+          // Added in migration 0028 (Phase 7H) — nullable; the exact immutable company-research
+          // snapshot that informed this version, if any. `on delete restrict` from
+          // company_research_snapshots: an owner cannot delete a snapshot once a résumé version
+          // references it (see that migration's own doc comment for why RESTRICT was chosen over
+          // SET NULL here).
+          company_research_snapshot_id: string | null;
         };
         Insert: Partial<Database['public']['Tables']['resume_versions']['Row']> & {
           user_id: string;
@@ -925,6 +931,10 @@ export interface Database {
           p_snapshot_format?: string;
           p_snapshot_payload?: Json | null;
         };
+        // `returns public.resume_versions` (a full rowtype) — migration 0028 (Phase 7H) added
+        // company_research_snapshot_id to that table, so it comes back here too (always null:
+        // this RPC's own signature was never extended with a param for it — see that migration's
+        // doc comment for why only save_reviewed_tailored_resume needed the new parameter).
         Returns: {
           id: string;
           user_id: string;
@@ -934,12 +944,17 @@ export interface Database {
           snapshot_format: string;
           snapshot_payload: Json | null;
           created_at: string;
+          company_research_snapshot_id: string | null;
         };
       };
       // Added in migration 0024 (Phase 7F) — the one atomic save path for a reviewed AI
       // résumé-tailoring draft. p_target_resume_id XOR (p_new_resume_name/p_new_resume_parent_id)
       // is exactly one of "append a version to this existing logical résumé" or "create a new
       // TAILORED résumé first" — see the migration's own doc comment.
+      // Migration 0028 (Phase 7H) added an optional p_company_research_snapshot_id param — the
+      // old 9-arg signature was dropped and recreated (PostgreSQL treats an added parameter, even
+      // with a default, as a distinct overload; see that migration's own doc comment, following
+      // migration 0021's precedent for mark_application_applied).
       save_reviewed_tailored_resume: {
         Args: {
           p_user_id: string;
@@ -951,6 +966,7 @@ export interface Database {
           p_new_resume_parent_id: string | null;
           p_version_display_name: string;
           p_snapshot_payload: Json;
+          p_company_research_snapshot_id?: string | null;
         };
         Returns: {
           resume_id: string;

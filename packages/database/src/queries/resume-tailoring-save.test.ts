@@ -57,6 +57,7 @@ describe('saveReviewedTailoredResume', () => {
       p_new_resume_parent_id: null,
       p_version_display_name: INPUT.versionDisplayName,
       p_snapshot_payload: INPUT.snapshotPayload,
+      p_company_research_snapshot_id: null,
     });
     expect(single).toHaveBeenCalled();
     expect(result).toEqual({
@@ -68,11 +69,37 @@ describe('saveReviewedTailoredResume', () => {
     });
   });
 
+  it('forwards a non-null companyResearchSnapshotId to the RPC unchanged (Phase 7H — snapshot identity, never re-checked here)', async () => {
+    const RESEARCH_SNAPSHOT_ID = '77777777-7777-4777-8777-777777777777';
+    const { rpc } = mockRpc({
+      data: {
+        resume_id: 'r1',
+        resume_created: true,
+        version_id: 'v1',
+        version_number: 1,
+        display_name: INPUT.versionDisplayName,
+      },
+      error: null,
+    });
+    const supabase = { rpc } as unknown as CareerOsSupabaseClient;
+
+    await saveReviewedTailoredResume(supabase, USER_ID, {
+      ...INPUT,
+      companyResearchSnapshotId: RESEARCH_SNAPSHOT_ID,
+    });
+
+    expect(rpc).toHaveBeenCalledWith(
+      'save_reviewed_tailored_resume',
+      expect.objectContaining({ p_company_research_snapshot_id: RESEARCH_SNAPSHOT_ID }),
+    );
+  });
+
   it.each([
     ['stale_base_resume' as const],
     ['stale_job_context' as const],
     ['application_not_found' as const],
     ['resume_not_found' as const],
+    ['company_research_snapshot_not_found' as const],
   ])('maps a %s rejection to a typed SaveReviewedTailoredResumeError', async (reason) => {
     const { rpc } = mockRpc({
       data: null,

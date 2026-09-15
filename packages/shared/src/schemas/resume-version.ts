@@ -21,6 +21,19 @@ const resumeVersionCommonFieldsSchema = z.object({
   versionNumber: z.number().int().positive(),
   displayName: z.string().min(1),
   createdAt: isoDateTimeSchema,
+  /**
+   * Phase 7H (docs/IMPLEMENTATION_PLAN.md "Phase 7H" §41/§44) — the exact immutable company-
+   * research snapshot that informed this version's tailoring, if any. Set once at creation time
+   * and never changed afterward (this row is otherwise fully immutable already); a later research
+   * refresh never re-points an existing version — tailoring again against a newer snapshot always
+   * produces a *new* version instead (§44/§45). Null for every version created before this phase,
+   * for a manually-edited (non-AI-tailored) version, or for one tailored with `JOB_ONLY`. Set to
+   * null (never the version itself) if the referenced snapshot is later deleted by its owner —
+   * see migration 0028's `on delete set null` — trading away audit provenance for keeping 7G's
+   * existing "owner can delete their own snapshot" behavior unchanged (documented in
+   * docs/COMPANY_RESEARCH.md).
+   */
+  companyResearchSnapshotId: uuidSchema.nullable(),
 });
 
 /**
