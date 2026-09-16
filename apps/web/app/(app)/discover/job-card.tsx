@@ -2,6 +2,7 @@ import { Card, CardContent, CardHeader } from '@career-os/ui';
 import type { DiscoveryFeedResultItem } from '@career-os/shared';
 import Link from 'next/link';
 import { MatchCoverageEligibility } from './match-coverage-eligibility';
+import { StartApplicationButton } from './start-application-button';
 
 const WORKPLACE_LABELS: Record<string, string> = {
   REMOTE: 'Remote',
@@ -58,6 +59,11 @@ export function JobCard({ job, now }: { job: DiscoveryFeedResultItem; now: Date 
           matchScore={job.matchScore}
           coverage={job.coverage}
           eligibilityStatus={job.eligibilityStatus}
+        />
+        <StartApplicationButton
+          jobCatalogId={job.jobCatalogId}
+          trackedApplicationId={job.trackedApplicationId}
+          trackedApplicationStatus={job.trackedApplicationStatus}
         />
       </CardContent>
     </Card>

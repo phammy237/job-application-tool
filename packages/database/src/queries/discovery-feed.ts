@@ -1,5 +1,6 @@
 import {
   discoveryFeedResultItemSchema,
+  type Application,
   type DiscoveryFeedFilters,
   type DiscoveryFeedResultItem,
   type JobCatalogEntry,
@@ -8,6 +9,7 @@ import {
 } from '@career-os/shared';
 import { assertNoError } from '../errors';
 import type { CareerOsSupabaseClient } from '../types/client';
+import { getOwnApplicationByCatalogJobId } from './applications';
 import { getJobCatalogEntryById } from './job-catalog';
 import { getJobCatalogFeatures } from './job-catalog-features';
 import { getOwnMatchScore } from './user-job-match-scores';
@@ -26,6 +28,8 @@ function rowToDiscoveryFeedResultItem(row: {
   match_score: number;
   coverage: number;
   eligibility_status: string;
+  tracked_application_id: string | null;
+  tracked_application_status: string | null;
 }): DiscoveryFeedResultItem {
   return discoveryFeedResultItemSchema.parse({
     jobCatalogId: row.job_catalog_id,
@@ -39,6 +43,8 @@ function rowToDiscoveryFeedResultItem(row: {
     matchScore: row.match_score,
     coverage: row.coverage,
     eligibilityStatus: row.eligibility_status,
+    trackedApplicationId: row.tracked_application_id,
+    trackedApplicationStatus: row.tracked_application_status,
   });
 }
 
@@ -103,14 +109,20 @@ export interface DiscoveryFeedJobDetail {
   job: JobCatalogEntry;
   features: JobCatalogFeatures | null;
   matchScore: UserJobMatchScore | null;
+  /** D6 (migration 0032) — the caller's own tracked application for this catalog job, if any.
+   * Null means untracked; never affects `matchScore`/`features`/`job` above. */
+  trackedApplication: Application | null;
 }
 
 /**
- * Composed detail view for `/discover/[id]` — three independent reads (the job_catalog row, its
- * extracted features, and the caller's own match score row), never a recomputation in this layer
- * or the page above it. `matchScore` is null when the requesting user has no score for this job
- * yet (e.g. a job entered the catalog after their last `discovery:rank` run) — callers must
- * render that as "not yet scored," never fabricate a 0/UNKNOWN triple in its place.
+ * Composed detail view for `/discover/[id]` — four independent reads (the job_catalog row, its
+ * extracted features, the caller's own match score row, and the caller's own tracked application
+ * for this job), never a recomputation in this layer or the page above it. `matchScore` is null
+ * when the requesting user has no score for this job yet (e.g. a job entered the catalog after
+ * their last `discovery:rank` run) — callers must render that as "not yet scored," never
+ * fabricate a 0/UNKNOWN triple in its place. This is a single-job read, so a direct
+ * `getOwnApplicationByCatalogJobId` call here is correctly sized — the list feed instead joins
+ * tracked state directly into `list_own_discovery_feed` to avoid an N+1 across many cards.
  */
 export async function getOwnDiscoveryFeedJobDetail(
   supabase: CareerOsSupabaseClient,
@@ -120,10 +132,11 @@ export async function getOwnDiscoveryFeedJobDetail(
   const job = await getJobCatalogEntryById(supabase, jobCatalogId);
   if (!job) return null;
 
-  const [features, matchScore] = await Promise.all([
+  const [features, matchScore, trackedApplication] = await Promise.all([
     getJobCatalogFeatures(supabase, jobCatalogId),
     getOwnMatchScore(supabase, userId, jobCatalogId),
+    getOwnApplicationByCatalogJobId(supabase, userId, jobCatalogId),
   ]);
 
-  return { job, features, matchScore };
+  return { job, features, matchScore, trackedApplication };
 }

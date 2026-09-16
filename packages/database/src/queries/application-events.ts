@@ -4,6 +4,7 @@ import {
   type ApplicationEventSource,
   type ApplicationEventType,
   type ApplicationStatus,
+  type DiscoveryHandoffEventMetadata,
 } from '@career-os/shared';
 import { assertNoError, unwrapRow } from '../errors';
 import type { Database } from '../types/database.types';
@@ -21,6 +22,9 @@ function rowToEvent(row: Row): ApplicationEvent {
     toStatus: row.to_status,
     source: row.source,
     emailSignalId: row.email_signal_id,
+    // Added in migration 0032 (D6) — missing key on an unmigrated database degrades to null,
+    // same convention as every other post-0001 applications/application_events column.
+    metadata: 'metadata' in row ? row.metadata : null,
     revertedAt: row.reverted_at,
     createdAt: row.created_at,
   });

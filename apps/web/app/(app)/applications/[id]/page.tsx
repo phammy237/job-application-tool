@@ -8,6 +8,7 @@ import {
 } from '@career-os/database';
 import { CREATABLE_APPLICATION_STATUSES, formatNextAction } from '@career-os/shared';
 import { Button, Label, Select, StatusBadge, Textarea } from '@career-os/ui';
+import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { requireUser } from '../../../../lib/auth';
 import { attachNextActions } from '../../../../lib/dashboard';
@@ -101,7 +102,7 @@ export default async function ApplicationDetailPage({
         {formatNextAction(nextAction).reason}
       </p>
 
-      {application.sourceUrl || application.autofillSummary ? (
+      {application.sourceUrl || application.autofillSummary || application.jobCatalogId ? (
         <section className="space-y-2">
           <h2 className="text-muted-foreground text-sm font-medium">Source</h2>
           <div className="text-muted-foreground space-y-1 text-sm">
@@ -126,6 +127,21 @@ export default async function ApplicationDetailPage({
                 {application.autofillSummary.failed} failed,{' '}
                 {application.autofillSummary.unresolved} unresolved,{' '}
                 {application.autofillSummary.manual} manual
+              </p>
+            ) : null}
+            {/* D6 — shown only when this application genuinely has catalog provenance, never
+                fabricated. Deliberately subtle (docs/JOB_DISCOVERY.md "Application-page
+                integration"): a plain text line plus a link back to /discover/[id], never a
+                Match score or any other discovery-scoring detail surfaced on this page. */}
+            {application.jobCatalogId ? (
+              <p>
+                Discovered through Career OS ·{' '}
+                <Link
+                  href={`/discover/${application.jobCatalogId}`}
+                  className="hover:text-primary underline"
+                >
+                  View discovery details
+                </Link>
               </p>
             ) : null}
           </div>
@@ -265,8 +281,17 @@ export default async function ApplicationDetailPage({
               className="border-border flex items-center justify-between rounded-md border px-3 py-2 text-sm"
             >
               <span>
-                {event.fromStatus ? `${event.fromStatus} → ` : ''}
-                {event.toStatus}
+                {/* D6 — DISCOVERY_HANDOFF carries no from/to status (it documents provenance, not
+                    a status transition, docs/JOB_DISCOVERY.md "Application-event behavior"); a
+                    dedicated label keeps this row readable instead of rendering blank. */}
+                {event.eventType === 'DISCOVERY_HANDOFF' ? (
+                  'Discovered through Career OS Discovery'
+                ) : (
+                  <>
+                    {event.fromStatus ? `${event.fromStatus} → ` : ''}
+                    {event.toStatus}
+                  </>
+                )}
                 <span className="text-muted-foreground ml-2 text-xs">
                   {new Date(event.createdAt).toLocaleString()} · {event.source}
                 </span>

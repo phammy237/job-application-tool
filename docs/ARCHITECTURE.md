@@ -23,7 +23,9 @@ job-application-tool/
 ├── apps/
 │   ├── web/                 # Next.js App Router — dashboard + public landing page +
 │   │                         # /discover, the first user-facing Job Discovery Track surface (D5A)
-│   │                         # + /settings/discovery, its preferences UI (D5B)
+│   │                         # + /settings/discovery, its preferences UI (D5B) + the discovery ->
+│   │                         # application handoff (D6, apps/web/app/api/discovery/[id]/
+│   │                         # start-application, the one canonical route)
 │   └── extension/           # Chrome MV3 extension — React + Vite
 ├── packages/
 │   ├── shared/               # Zod schemas + TS types shared by web and extension

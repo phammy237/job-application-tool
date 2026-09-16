@@ -111,6 +111,14 @@ export const applicationSchema = z.object({
    * keeps changing freely afterward, same as `notes` or `company`. Null means "no résumé
    * selected," never inferred or defaulted. */
   workingResumeVersionId: uuidSchema.nullable().default(null),
+  /** Added in migration 0032 (D6) — same missing-key-on-an-unmigrated-database reasoning as the
+   * fields above. Durable provenance back to the global `job_catalog` row this application was
+   * started from, if any; null for every application created manually or via the extension, and
+   * for every application that predates D6 (no retroactive backfill — docs/JOB_DISCOVERY.md
+   * "Backward compatibility"). Never required for the application to remain fully functional if
+   * the referenced catalog row is later removed (`on delete set null`) — this is provenance, not
+   * a dependency the application's own historical record relies on. */
+  jobCatalogId: uuidSchema.nullable().default(null),
   createdAt: isoDateTimeSchema,
   updatedAt: isoDateTimeSchema,
 });

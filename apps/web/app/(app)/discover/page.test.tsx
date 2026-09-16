@@ -17,6 +17,7 @@ vi.mock('@career-os/database', () => ({
 
 vi.mock('../../../lib/auth', () => ({ requireUser: mocks.requireUser }));
 vi.mock('../../../lib/supabase/server', () => ({ createClient: mocks.createClient }));
+vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }) }));
 
 const { default: DiscoverPage } = await import('./page');
 
@@ -36,6 +37,8 @@ function job(overrides: Partial<Record<string, unknown>> = {}) {
     matchScore: 78,
     coverage: 65,
     eligibilityStatus: 'ELIGIBLE',
+    trackedApplicationId: null,
+    trackedApplicationStatus: null,
     ...overrides,
   };
 }
@@ -190,5 +193,47 @@ describe('DiscoverPage', () => {
     mocks.listDiscoveryLocationTokens.mockResolvedValue(['NEW_YORK_NY']);
     await renderPage();
     expect(screen.getByRole('option', { name: 'New York NY' })).toBeInTheDocument();
+  });
+
+  describe('D6 tracked-state integration', () => {
+    it('an untracked card shows "Start application", never "View application"', async () => {
+      mocks.listOwnDiscoveryFeed.mockResolvedValue({ items: [job()], hasNextPage: false });
+      await renderPage();
+      expect(screen.getByRole('button', { name: 'Start application' })).toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: 'View application' })).not.toBeInTheDocument();
+    });
+
+    it('a tracked card shows "View application" and the real status, never also "Start application"', async () => {
+      mocks.listOwnDiscoveryFeed.mockResolvedValue({
+        items: [job({ trackedApplicationId: 'app-1', trackedApplicationStatus: 'IN_PROGRESS' })],
+        hasNextPage: false,
+      });
+      await renderPage();
+      expect(screen.getByRole('link', { name: 'View application' })).toHaveAttribute(
+        'href',
+        '/applications/app-1',
+      );
+      expect(screen.getByText('In progress')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Start application' })).not.toBeInTheDocument();
+    });
+
+    it('tracked state never changes the rendered Match/Coverage/Eligibility values', async () => {
+      mocks.listOwnDiscoveryFeed.mockResolvedValue({
+        items: [
+          job({
+            matchScore: 91,
+            coverage: 84,
+            eligibilityStatus: 'CONFLICT',
+            trackedApplicationId: 'app-1',
+            trackedApplicationStatus: 'SAVED',
+          }),
+        ],
+        hasNextPage: false,
+      });
+      await renderPage();
+      expect(screen.getByText('91%')).toBeInTheDocument();
+      expect(screen.getByText('84%')).toBeInTheDocument();
+      expect(screen.getAllByText('Possible conflict').length).toBeGreaterThan(0);
+    });
   });
 });

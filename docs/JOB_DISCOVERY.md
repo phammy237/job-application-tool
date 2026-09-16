@@ -1155,3 +1155,267 @@ directly doesn't already do more precisely). Explicitly not built, matching the 
 recommendations/explanations, semantic search, embeddings, behavioral learning, automatic weight
 tuning, the D6 application handoff, résumé/Gmail changes, and a second scoring system. D5A's
 default `/discover` ranking rule (§35) was not touched.
+
+## 45. D6 — discovery → application domain distinction
+
+D6 is a handoff layer, not a new application system. Two concepts stay structurally separate,
+exactly as before:
+
+```
+job_catalog        = a globally discovered opportunity (D1-D3, mutable, no user_id)
+applications        = one user's relationship with an opportunity (unchanged shape + semantics)
+```
+
+The only new thing is a **nullable provenance link**, `applications.job_catalog_id`, pointing the
+second at the first — never a merge, never a second tracker, never a dependency that makes the
+application's own history rely on the catalog row staying unchanged (migration 0032; full column
+docs in `docs/DATA_MODEL.md` "applications"). `job_catalog` rows are never hard-deleted by any
+existing D1-D3 code path (only status-transitioned `ACTIVE -> POSSIBLY_CLOSED -> CLOSED`), so in
+practice this FK's `on delete set null` almost never fires — but it's the correct, defensive
+choice regardless: an application and its historical snapshot must survive the catalog lifecycle
+doing *anything* to the source row, including a future cleanup job this phase doesn't build.
+
+Historical preservation is two independent things, as the spec requires, and D6 reuses the
+existing mechanism for each rather than inventing anything new:
+
+1. **Durable catalog provenance** — the `job_catalog_id` FK itself, a stable pointer.
+2. **Historical application snapshot** — the pre-existing `job_snapshots` table (Phase 5A),
+   reused verbatim. `source_job_id`, deliberately never FK-enforced since it was first added
+   ("outlives the row it was captured from" — see `docs/DATA_MODEL.md`), now also legitimately
+   holds a `job_catalog.id` for a discovery-originated snapshot; no new "discovery snapshot"
+   table was created, and none was needed.
+
+## 46. Handoff API/action architecture
+
+`POST /api/discovery/[id]/start-application` (`id` = `job_catalog.id`) is the one canonical
+handoff operation — no logic duplicated in the React component, mirroring the exact
+service-role-only-RPC-called-from-a-route-handler pattern `upsert_application_with_snapshot`
+already established (Phase 5A). No request body: everything the operation needs is either the
+path param or derived server-side from the verified session and the already-readable
+catalog/feature/score rows. `userId` comes only from `getCurrentUser()` — never accepted from the
+client, exactly the CLAUDE.md rule already governing every other write path in this codebase.
+
+**Why service-role at all**: `job_snapshots` has no `authenticated` INSERT policy (select-only —
+Phase 5A), so the one new database function this needs, `start_application_from_catalog_job`
+(migration 0032), must run as `service_role` regardless of the route's own careful RLS-respecting
+read choices elsewhere. It is `SECURITY INVOKER` (not `DEFINER`) and granted only to
+`service_role` — the exact same posture as `upsert_application_with_snapshot`, not a new pattern.
+`job_catalog`/`job_catalog_features`/the caller's own match score are all still read via the
+ordinary session-scoped client (no reason to elevate for tables that are already
+authenticated-readable or already RLS-scoped to the caller).
+
+**A real bug this route's own live verification caught**: `job_sources` — unlike `job_catalog` —
+has *no* `authenticated` SELECT policy at all (migration 0029: "no policy at all for
+job_sources"). The route's first draft read it via the session-scoped client anyway; RLS silently
+returned no row (not an error) for every single call, so `sourceType` was always `null` in both
+the snapshot and the event metadata regardless of the job's real ATS provider. No unit test could
+have caught this — a mocked Supabase client has no RLS to enforce. Confirmed live (a real Linear
+job's snapshot showed `source_type: null` despite `job_sources.source_type = 'ASHBY'` for that
+exact row), fixed at the source (read `job_sources` via the admin client, alongside the write step
+that already needs it), covered by a new regression test asserting the call site's client
+argument, and reverified live against three different real jobs across three different providers
+(Ashby, Ashby, Lever) — every one now shows the correct `source_type` in both the snapshot and the
+`DISCOVERY_HANDOFF` event metadata. See §51.
+
+## 47. Idempotency guarantee
+
+Non-negotiable, and proven at the database level, not by convention:
+
+- **`applications_user_job_catalog_id_key`** — a partial unique index on `(user_id,
+  job_catalog_id) where job_catalog_id is not null` (migration 0032). At most one application per
+  (user, catalog opportunity), enforced by Postgres itself, not by a `SELECT` the application code
+  merely hopes ran first.
+- **Tiered lookup under `for update` row locking, wrapped in a bounded `unique_violation` retry
+  loop** — the exact same shape `upsert_application_from_extension` (Phase 4D) already
+  established, applied here for the same reason: a plain `SELECT`-then-`INSERT` has a real race
+  window; locking the candidate row and retrying on the unique index's own violation is what makes
+  concurrent calls converge safely rather than merely "usually work."
+  - Tier 1: `job_catalog_id` match — this exact discovery opportunity, already tracked by this
+    user. Return it, write nothing new.
+  - Tier 2: `canonical_url` match (the **pre-existing** `applications_user_canonical_url_key`
+    index, Phase 4D) on a row with `external_id is null and job_catalog_id is null` — an
+    extension-created application at the identical posting URL that was never linked to any
+    catalog job. Converge onto it (backfill `job_catalog_id`, and `job_snapshot_id` only if the
+    application hasn't yet moved past `SAVED`/`IN_PROGRESS` — the identical freeze rule
+    `upsert_application_with_snapshot` already applies) rather than create a second row for the
+    same real-world posting. See §48 for why this specific tiering is the correct answer to
+    extension interoperability.
+  - Neither tier matches: insert a new application (`status` hardcoded to the literal `'SAVED'` —
+    there is no parameter for anything else, see §46), record one `STATUS_CHANGE` event
+    (`null -> SAVED`, matching every other first-creation path in this codebase) and one
+    `DISCOVERY_HANDOFF` event.
+
+Proven live, not just by unit test: **10 genuinely concurrent HTTP requests** from a real
+authenticated browser session against the real running server and the real linked database, all
+targeting the same catalog job, converged onto exactly one application id, with exactly one
+response reporting `created: true` — confirmed independently at the database level (exactly one
+`applications` row, exactly one `STATUS_CHANGE` event, exactly one `DISCOVERY_HANDOFF` event). See
+§51.
+
+## 48. Extension interoperability
+
+Two real convergent flows, both handled by the *same* tiered lookup (§47), no new heuristic
+invented for either:
+
+- **Discover first, then the extension** — a user starts an application from `/discover`
+  (creating a row with `job_catalog_id` set, `canonical_url` populated from
+  `job_catalog.canonical_apply_url`), then later encounters the same employer posting page and
+  saves it through the extension. The extension's own `upsert_application_from_extension` tiering
+  (Phase 4D) already checks `canonical_url` as its own tier-2 key — since both paths compute
+  `canonical_url` the same way (`canonicalizeUrl`, `packages/shared`), and D6 populates it too,
+  the extension's own save naturally finds and updates the *same* row rather than creating a
+  second one, with zero D6-specific code required for this direction.
+- **Extension first, then discover** — the reverse (a user saves via the extension before the
+  same opportunity ever appears in `/discover`) is D6's own tier 2 (§47): the handoff RPC matches
+  the pre-existing extension-created row by `canonical_url` and backfills `job_catalog_id` onto
+  it, never creating a duplicate.
+
+Deliberately **not** built: company+title matching, or any other weak heuristic — two rows are
+only ever considered "the same opportunity" via a deterministic identifier (`canonical_url`, both
+sides computed by the identical function) or an explicit FK (`job_catalog_id`), never by fuzzy
+text similarity. Verified live end-to-end (§51): a synthetic extension-created application (via
+the real `upsert_application_from_extension` RPC, a real `jobs` row, a real `canonical_url`
+matching a real catalog job's `canonical_apply_url`) converged onto the *same* application id when
+the discovery handoff was called for the matching catalog job — `created: false`, `job_catalog_id`
+correctly backfilled, confirmed independently at the database level.
+
+## 49. Application status, events, and catalog lifecycle
+
+**Status**: discovery handoff creates `SAVED`, never anything else — structurally, not just by
+convention: `start_application_from_catalog_job` has no `status`/`p_status` parameter at all, so
+there is no value to pass that could produce `APPLIED` even by a future editing mistake. A second,
+independent backstop already exists regardless: migration 0015's
+`reject_direct_applied_transition` trigger only exempts `current_user = 'service_role'` from its
+APPLIED-transition guard — this function's own role *is* that exemption, so even a hypothetical
+future parameter would still need to defeat that trigger too, not merely this function's own
+logic. Neither viewing a job, clicking "Start application," opening the original posting, nor any
+other D6 interaction ever infers `APPLIED` — only the pre-existing `markOwnApplicationApplied`
+does that, completely untouched by this phase.
+
+**Events**: `DISCOVERY_HANDOFF` (new `event_type`, migration 0032) records the one meaningful
+transition — "discovered opportunity → tracked application" — never a per-interaction stream (no
+"viewed," "clicked details," "opened external URL" events; opening the original posting link
+creates nothing at all, see §50). Fired exactly once on first creation (alongside the ordinary
+`STATUS_CHANGE` event every other creation path already records), and again — with no
+`STATUS_CHANGE` alongside it, since status never changes in that case — the one time an existing
+extension-created application gets retroactively linked via tier 2. Never fired again on a
+repeat/idempotent handoff call. Its `metadata` (§50) is durable provenance only.
+
+**Catalog lifecycle**: `job_catalog.status` (`ACTIVE`/`POSSIBLY_CLOSED`/`CLOSED`, D1-D3) is
+deliberately never a gate on starting an application — a user may reasonably want to track/record
+a job that closed moments ago (e.g. they already have an interview scheduled through another
+channel, or just want a record of it). The only validation is that the referenced `job_catalog`
+row exists at all (checked in the route, and again inside the RPC as the real enforcement point);
+an already-created application is never affected by anything that later happens to its source
+catalog row — not a status change, and not even a hard delete, which this phase's `on delete set
+null` FK explicitly protects against (§45). Verified via pgTAP against the real linked project
+(§51): deleting a `job_catalog` row leaves every application that referenced it fully intact, with
+only `job_catalog_id` cleared to null.
+
+## 50. Match/Coverage/Eligibility treatment
+
+Discovery intelligence is useful historical provenance; it is never application state. D6 never
+creates a composite score, never makes Eligibility an application status, never lets Match
+influence application priority or Coverage influence "completeness." The only place a
+Match/Coverage/Eligibility value is preserved at all is the `DISCOVERY_HANDOFF` event's own
+`metadata` column (`jobCatalogId`, `sourceType`, `matchScore`, `coverage`, `eligibilityStatus`,
+`rankingVersion`, `featureVersion`, `eligibilityVersion`) — a bounded (4000 chars as text),
+clearly historical snapshot of what `/discover` showed at the exact moment of handoff, read back
+by nothing else in this codebase and capable of driving no lifecycle decision. `null` when the job
+hadn't been scored for this user yet (rather than a fabricated 0/UNKNOWN triple). This satisfies
+all three conditions the spec sets for preserving this data at all: it fits the existing event/
+provenance model cleanly (no new table), it is unambiguously historical (an event log entry, not
+a live-read field), and nothing in the codebase treats it as authoritative.
+
+## 51. D6 live verification (real 1,371-job catalog)
+
+Two disposable test `auth.users` accounts, each given a `BALANCED` scoring profile and ranked via
+`discovery:rank` against the full real catalog (1,371/1,371 scored each). Every step below was
+driven through the real running `/discover`, `/discover/[id]`, and `/applications/[id]` pages in a
+real headless Chromium session (Playwright, real password-authenticated cookies), never a
+service-role-only fake path, against real Greenhouse/Lever/Ashby-sourced jobs:
+
+```
+1-8.  User A opened an untracked /discover/[id] (a real Ashby-sourced Linear posting), clicked
+      Start application, was redirected to the real new /applications/[id], which correctly
+      showed the job title, the "View discovery details" link (href verified exact:
+      /discover/<catalog id>), and — confirmed via a full-body text search after the source_type
+      fix (see §46) — the "Discovered through Career OS" provenance line.
+9-10. Returned to /discover; a targeted search for the same job title confirmed the card now
+      shows "View application" linking to the correct real application id (the job wasn't on the
+      unfiltered first page of this profile's own ranking, which is expected and not a bug — the
+      targeted search proved the feed RPC's LEFT JOIN itself works correctly regardless).
+11-12. Returned to /discover/[id]: "Start application" was gone, replaced by "View application"
+      with the correct href — never both shown at once.
+13-15. Called the handoff endpoint again manually (the real fetch, real cookies): identical
+      application id returned, created=false, database-confirmed no new row/event.
+```
+
+**Concurrency**: 10 simultaneous real HTTP requests (same real session, same real catalog job)
+all returned status 200 with the identical `applicationId`; exactly one reported `created: true`.
+Independently confirmed at the database level: exactly one `applications` row, exactly one
+`STATUS_CHANGE` event, exactly one `DISCOVERY_HANDOFF` event survived.
+
+**Extension interoperability**: a synthetic extension-created application (real `jobs` row, real
+`upsert_application_from_extension` RPC call, `canonical_url` matching a real catalog job's
+`canonical_apply_url`) — the discovery handoff for that exact catalog job converged onto it
+(`created: false`, same application id), and `job_catalog_id` was confirmed backfilled at the
+database level.
+
+**Cross-user isolation**: User B, opening the *same* job User A had already tracked, correctly saw
+"Start application" (never User A's tracked state) and correctly saw no "View application" link.
+User B's own independent handoff call created a *separate* application — confirmed at the database
+level: two distinct `applications` rows for the same `job_catalog_id`, one per user, and User B's
+own session correctly returned zero rows when querying for User A's applications directly (RLS).
+
+**Malformed/unauthorized**: an unauthenticated `POST` returned `401`; a non-UUID path segment
+returned `400` with `{"error": "Invalid job id."}` — both live-confirmed via `curl` against the
+real running route.
+
+**Catalog lifecycle**: proven via the pgTAP suite (§ below) running against the real linked
+project rather than a mutation of real shared catalog data — deleting a synthetic `job_catalog`
+row inside a rolled-back transaction left every application referencing it fully intact,
+`job_catalog_id` cleared to null, matching §49's documented behavior exactly.
+
+**pgTAP**: `supabase/tests/database/0035_discovery_application_handoff.test.sql`, 33/33
+assertions against the real linked project (structural existence; `ASHBY` widening; first-call
+creation with correct status/events/snapshot/provenance; idempotent repeat with zero new writes;
+the raw duplicate-insert rejection via the partial unique index; tier-2 convergence with correct
+event/status/snapshot-freeze behavior; missing-catalog-job rejection; service-role-only grants,
+including a re-confirmation that `anon` still cannot call `list_own_discovery_feed` after this
+migration's drop+recreate; cross-user independence and isolation; the feed's tracked-state LEFT
+JOIN scoped correctly per user; catalog-deletion FK behavior).
+
+**A second genuine live bug this suite's own first run caught**: Postgres auto-declares every
+`RETURNS TABLE` output column as a local `plpgsql` variable in the function body — the RPC's own
+`status` output column collided with the `applications.status` *table* column referenced inside
+the function (`42702 column reference "status" is ambiguous`), and separately, `job_snapshot_id`
+collided the same way inside the tier-2 `UPDATE`. Fixed by renaming the output column to
+`application_status` and explicitly table-aliasing every `public.applications` reference inside
+the function body (`app.status`, `app.job_snapshot_id`, `app.id`) — the more robust fix, since
+renaming only the first colliding name would have left the second latent. Reapplied and reverified
+live (31/31, then 33/33 after two additional assertions were added) before any TypeScript layer
+was written against the corrected signature.
+
+**Cleanup**: both test users' every row (`applications`, `application_events`, `jobs`,
+`job_snapshots`, `discovery_scoring_profiles`, `discovery_eligibility_profiles`,
+`user_job_match_scores`) confirmed at zero after deletion — no residue left in the linked project.
+
+**AI/provider audit**: zero references to `@career-os/ai`, Tavily, Claude, or embeddings anywhere
+in the D6 code path (`apps/web/app/(app)/discover/start-application-button.tsx`, `apps/web/app/api/
+discovery/[id]/start-application/**`, migration 0032) — confirmed by grep. Starting an application
+never triggers resume tailoring, company research, interview prep, or any other existing
+AI-assistance action; those remain the explicit, separate user actions they already were on
+`/applications/[id]`.
+
+## 52. D6 — consciously deferred
+
+No new preference/status/eligibility semantics were invented for UI convenience — every new field
+(`applications.job_catalog_id`, `application_events.metadata`/`DISCOVERY_HANDOFF`) maps to an
+existing table, and every value it carries is provenance, never authoritative application state.
+Explicitly not built, matching the spec: automatic application submission, AI-driven application
+priority/ranking, a second application/tracker system, automatic résumé tailoring triggered by the
+handoff, any change to D4's scoring formulas or D5A's default ranking policy or D5B's profile
+semantics, and any retroactive backfill matching historical (pre-D6) applications to catalog jobs
+— `job_catalog_id` stays `null` forever for every application that predates this phase, exactly as
+designed, never guessed from company+title or any other weak signal.

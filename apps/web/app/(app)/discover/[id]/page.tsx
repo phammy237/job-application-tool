@@ -5,6 +5,7 @@ import { notFound } from 'next/navigation';
 import { requireUser } from '../../../../lib/auth';
 import { createClient } from '../../../../lib/supabase/server';
 import { MatchCoverageEligibility } from '../match-coverage-eligibility';
+import { StartApplicationButton } from '../start-application-button';
 import { EligibilityChecks } from './eligibility-checks';
 import { MatchBreakdown } from './match-breakdown';
 
@@ -35,7 +36,7 @@ export default async function DiscoverJobDetailPage({
   if (!detail) {
     notFound();
   }
-  const { job, features, matchScore } = detail;
+  const { job, features, matchScore, trackedApplication } = detail;
 
   // Prefer the D4 canonical normalized values (features); job_catalog's own workplaceType/
   // employmentType are the raw, pre-normalization source values, used only as a fallback for the
@@ -67,20 +68,27 @@ export default async function DiscoverJobDetailPage({
         <p className="text-muted-foreground text-sm">
           {workplaceLabel} · {employmentLabel}
         </p>
-        {originalPostingUrl ? (
-          <a
-            href={originalPostingUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-primary inline-block text-sm hover:underline"
-          >
-            View original posting →
-          </a>
-        ) : (
-          <p className="text-muted-foreground text-sm">
-            No original posting link is available for this job.
-          </p>
-        )}
+        <div className="flex flex-wrap items-center gap-4">
+          {originalPostingUrl ? (
+            <a
+              href={originalPostingUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary inline-block text-sm hover:underline"
+            >
+              View original posting →
+            </a>
+          ) : (
+            <p className="text-muted-foreground text-sm">
+              No original posting link is available for this job.
+            </p>
+          )}
+          <StartApplicationButton
+            jobCatalogId={job.id}
+            trackedApplicationId={trackedApplication?.id ?? null}
+            trackedApplicationStatus={trackedApplication?.status ?? null}
+          />
+        </div>
       </div>
 
       {matchScore ? (

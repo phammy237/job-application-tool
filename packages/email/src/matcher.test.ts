@@ -24,6 +24,7 @@ function makeApplication(
     jobSnapshotId: null,
     submissionPacketId: null,
     workingResumeVersionId: null,
+    jobCatalogId: null,
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
     ...overrides,

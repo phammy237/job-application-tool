@@ -318,6 +318,10 @@ export interface Database {
           job_snapshot_id: string | null;
           submission_packet_id: string | null;
           working_resume_version_id: string | null;
+          /** Added in migration 0032 (D6) — durable provenance back to the global job_catalog
+           * row this application was started from, if any. Nullable; null for every non-discovery
+           * application. */
+          job_catalog_id: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -339,6 +343,8 @@ export interface Database {
           to_status: string | null;
           source: string;
           email_signal_id: string | null;
+          /** Added in migration 0032 (D6) — only ever populated on DISCOVERY_HANDOFF events. */
+          metadata: Json | null;
           reverted_at: string | null;
           created_at: string;
         };
@@ -999,6 +1005,43 @@ export interface Database {
           match_score: number;
           coverage: number;
           eligibility_status: string;
+          /** Added in migration 0032 (D6) — both null when the caller has no application linked
+           * to this catalog job. */
+          tracked_application_id: string | null;
+          tracked_application_status: string | null;
+        }[];
+      };
+      start_application_from_catalog_job: {
+        Args: {
+          p_user_id: string;
+          p_job_catalog_id: string;
+          p_snapshot_company: string;
+          p_snapshot_title: string;
+          p_snapshot_location: string | null;
+          p_snapshot_employment_type: string | null;
+          p_snapshot_source_url: string | null;
+          p_snapshot_description: string | null;
+          p_snapshot_required_qualifications: string[];
+          p_snapshot_preferred_qualifications: string[];
+          p_snapshot_responsibilities: string[];
+          p_snapshot_skills: string[];
+          p_snapshot_salary_min: number | null;
+          p_snapshot_salary_max: number | null;
+          p_snapshot_salary_currency: string | null;
+          p_snapshot_locations: string[];
+          p_snapshot_work_mode: string | null;
+          p_snapshot_source_type: string | null;
+          p_snapshot_content_fingerprint: string;
+          p_snapshot_content_truncated: boolean;
+          p_snapshot_truncated_fields: string[];
+          p_canonical_url: string | null;
+          p_event_metadata: Json | null;
+        };
+        Returns: {
+          application_id: string;
+          created: boolean;
+          application_status: string;
+          job_snapshot_id: string | null;
         }[];
       };
       list_discovery_location_tokens: {

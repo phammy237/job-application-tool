@@ -171,7 +171,7 @@ found" phases above. Full design record: `docs/JOB_DISCOVERY.md`.
 - [x] D5A — `/discover` feed: search, deterministic filters, default ranking, job details
 - [x] D5B — `/settings/discovery`: editable scoring/eligibility preferences UI + save/recompute
 - [ ] D5C — AI-generated explanations / semantic search on top of the deterministic D5A feed
-- [ ] D6 — Discovery → existing Career OS application handoff
+- [x] D6 — Discovery → existing Career OS application handoff
 - [ ] D7 — Generic company career-site crawler
 - [ ] D8 — Feedback-driven ranking
 
@@ -300,6 +300,52 @@ test user's own save left the first user's 1,371 rows completely unaffected (cro
 isolation, confirmed via an independent service-role read); both test users left zero residue
 after cleanup. See `docs/JOB_DISCOVERY.md` §40-44 for the full design, the independence proof, and
 what's deliberately deferred to D5C/D6.
+
+**D6 (migration `0032_discovery_application_handoff.sql`)**: connects `/discover` to the existing
+canonical application workflow as a pure handoff layer — never a second tracker, never a merge of
+`job_catalog` (global, mutable) and `applications` (per-user) into one concept. Adds a nullable
+`applications.job_catalog_id` FK (`on delete set null` — no existing code path ever hard-deletes a
+`job_catalog` row, but the application and its history survive regardless if one ever does), a
+`DISCOVERY_HANDOFF` `application_events` event type plus a bounded `metadata` jsonb column (durable
+Match/Coverage/Eligibility provenance only — never application state, never read back to drive any
+lifecycle decision), and one small additive widening (`job_snapshots.source_type` gains `ASHBY`,
+closing a real pre-existing gap between D1-D3's three real ATS adapters and this column's original
+four-value enum). One new database function, `start_application_from_catalog_job` — same
+`SECURITY INVOKER`, service-role-only trust boundary as `upsert_application_with_snapshot` (Phase
+5A), for the identical structural reason (`job_snapshots` has no `authenticated` INSERT policy).
+Idempotency is database-enforced via a new partial unique index
+(`applications_user_job_catalog_id_key`) plus a tiered lookup under row locking with a bounded
+`unique_violation` retry loop — the same shape `upsert_application_from_extension` already
+established — with tier 2 reusing the **pre-existing** `applications_user_canonical_url_key` index
+to converge with extension-created applications at the identical posting URL, giving extension
+interoperability in both directions without inventing any weak matching heuristic
+(company+title is never treated as identity). `status` is never a parameter to the new function at
+all — the structural guarantee that D6 cannot create `APPLIED`, independent of migration 0015's
+own trigger-level backstop. `POST /api/discovery/[id]/start-application` is the one canonical
+route; `apps/web/app/(app)/discover/start-application-button.tsx` is the one shared client
+component rendering "Start application"/"View application" (reusing the existing `StatusBadge` —
+no second status taxonomy) on both the `/discover` card and `/discover/[id]` detail page, with a
+small "Discovered through Career OS · View discovery details" provenance line added to
+`/applications/[id]` only when genuine catalog provenance exists. The `/discover` feed RPC
+(`list_own_discovery_feed`) gained a `LEFT JOIN` returning `tracked_application_id`/
+`tracked_application_status` per row — one indexed join, not an N+1 lookup per card — changing
+nothing about ranking, filtering, or pagination. Live-verified against the linked Supabase project
+through two disposable test users and real headless-browser sessions (Playwright, real
+password-authenticated cookies): full create → redirect → tracked-state → idempotent-repeat flow
+against a real Ashby-sourced job; 10 genuinely concurrent HTTP requests converging on exactly one
+application with exactly one `created: true`; live extension-interoperability convergence via a
+real `upsert_application_from_extension` call; cross-user isolation (two independent applications
+for the same catalog job, RLS-verified invisible to each other); zero residue after cleanup.
+pgTAP: `supabase/tests/database/0035_discovery_application_handoff.test.sql`, 33/33 assertions.
+Two genuine live-caught bugs, both fixed at the source with regression tests before this report:
+(1) `job_sources` has no `authenticated` SELECT policy at all (unlike `job_catalog`), so reading it
+via the session-scoped client silently returned no row — `sourceType` was always `null` in both
+the snapshot and event metadata until the read was moved to the admin client; (2) `plpgsql`
+auto-declares every `RETURNS TABLE` output column as a local variable, causing a genuine
+`42702 column reference is ambiguous` error the moment the function's embedded SQL referenced the
+real `applications.status`/`job_snapshot_id` columns — fixed by renaming the output column and
+explicitly table-aliasing every reference. See `docs/JOB_DISCOVERY.md` §45-52 for the full design,
+the domain-model/idempotency/interoperability rationale, and what's deliberately deferred.
 
 The whole Phase 5B line (5B.0 through 5B.4, plus the hardening pass) is complete. Phase 5C is now
 complete end to end — 5C.1 (deterministic next actions) through 5C.4 (polish and closure) — see

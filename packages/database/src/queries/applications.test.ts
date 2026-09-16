@@ -39,9 +39,11 @@ const {
   changeOwnApplicationStatus,
   clearOwnApplicationWorkingResumeVersion,
   createOwnApplication,
+  getOwnApplicationByCatalogJobId,
   getOwnApplicationByJobId,
   markOwnApplicationApplied,
   setOwnApplicationWorkingResumeVersion,
+  startApplicationFromCatalogJob,
   upsertApplicationFromExtension,
   upsertApplicationWithSnapshot,
 } = await import('./applications');
@@ -100,6 +102,38 @@ describe('getOwnApplicationByJobId', () => {
     const supabase = { from: vi.fn(() => chain) } as unknown as CareerOsSupabaseClient;
 
     const result = await getOwnApplicationByJobId(supabase, USER_ID, JOB_ID);
+    expect(result).toBeNull();
+  });
+});
+
+const JOB_CATALOG_ID = 'ffffffff-0000-4000-8000-000000000001';
+
+describe('getOwnApplicationByCatalogJobId', () => {
+  it('scopes the query by both user_id and job_catalog_id', async () => {
+    const eq = vi.fn().mockReturnThis();
+    const chain: Record<string, unknown> = {};
+    chain.select = vi.fn(() => chain);
+    chain.eq = eq.mockImplementation(() => chain);
+    chain.maybeSingle = vi
+      .fn()
+      .mockResolvedValue({ data: { ...BASE_ROW, job_catalog_id: JOB_CATALOG_ID }, error: null });
+    const supabase = { from: vi.fn(() => chain) } as unknown as CareerOsSupabaseClient;
+
+    const result = await getOwnApplicationByCatalogJobId(supabase, USER_ID, JOB_CATALOG_ID);
+
+    expect(eq).toHaveBeenCalledWith('user_id', USER_ID);
+    expect(eq).toHaveBeenCalledWith('job_catalog_id', JOB_CATALOG_ID);
+    expect(result?.jobCatalogId).toBe(JOB_CATALOG_ID);
+  });
+
+  it('returns null when this user has no application linked to the catalog job', async () => {
+    const chain: Record<string, unknown> = {};
+    chain.select = vi.fn(() => chain);
+    chain.eq = vi.fn(() => chain);
+    chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+    const supabase = { from: vi.fn(() => chain) } as unknown as CareerOsSupabaseClient;
+
+    const result = await getOwnApplicationByCatalogJobId(supabase, USER_ID, JOB_CATALOG_ID);
     expect(result).toBeNull();
   });
 });
@@ -329,6 +363,113 @@ describe('upsertApplicationWithSnapshot', () => {
 
     expect(result.snapshotFrozen).toBe(true);
     expect(result.jobSnapshotId).toBe(EXISTING_SNAPSHOT_ID);
+  });
+});
+
+describe('startApplicationFromCatalogJob', () => {
+  const BASE_EVENT_METADATA = {
+    jobCatalogId: JOB_CATALOG_ID,
+    sourceType: 'GREENHOUSE' as const,
+    matchScore: 78,
+    coverage: 65,
+    eligibilityStatus: 'ELIGIBLE' as const,
+    rankingVersion: 'd4-ranking-v1',
+    featureVersion: 'd4-features-v1',
+    eligibilityVersion: 'd4-eligibility-v1',
+  };
+
+  it('calls the server-only start_application_from_catalog_job RPC with the verified user id, never trusting any client-supplied id', async () => {
+    const rpc = vi.fn().mockReturnValue({
+      single: vi.fn().mockResolvedValue({
+        data: {
+          application_id: APPLICATION_ID,
+          created: true,
+          application_status: 'SAVED',
+          job_snapshot_id: SNAPSHOT_ID,
+        },
+        error: null,
+      }),
+    });
+    const supabase = { rpc } as unknown as CareerOsSupabaseClient;
+
+    const result = await startApplicationFromCatalogJob(supabase, USER_ID, {
+      jobCatalogId: JOB_CATALOG_ID,
+      snapshot: BASE_SNAPSHOT_CONTENT,
+      snapshotContentFingerprint: 'v1:abc123',
+      snapshotContentTruncated: false,
+      snapshotTruncatedFields: [],
+      canonicalUrl: 'https://boards.example.com/job/123',
+      eventMetadata: BASE_EVENT_METADATA,
+    });
+
+    expect(rpc).toHaveBeenCalledWith(
+      'start_application_from_catalog_job',
+      expect.objectContaining({
+        p_user_id: USER_ID,
+        p_job_catalog_id: JOB_CATALOG_ID,
+        p_snapshot_content_fingerprint: 'v1:abc123',
+        p_canonical_url: 'https://boards.example.com/job/123',
+      }),
+    );
+    expect(result).toEqual({
+      applicationId: APPLICATION_ID,
+      created: true,
+      status: 'SAVED',
+      jobSnapshotId: SNAPSHOT_ID,
+    });
+  });
+
+  it('reports created=false when an idempotent second call returns the existing application', async () => {
+    const rpc = vi.fn().mockReturnValue({
+      single: vi.fn().mockResolvedValue({
+        data: {
+          application_id: APPLICATION_ID,
+          created: false,
+          application_status: 'SAVED',
+          job_snapshot_id: SNAPSHOT_ID,
+        },
+        error: null,
+      }),
+    });
+    const supabase = { rpc } as unknown as CareerOsSupabaseClient;
+
+    const result = await startApplicationFromCatalogJob(supabase, USER_ID, {
+      jobCatalogId: JOB_CATALOG_ID,
+      snapshot: BASE_SNAPSHOT_CONTENT,
+      snapshotContentFingerprint: 'v1:abc123',
+      snapshotContentTruncated: false,
+      snapshotTruncatedFields: [],
+      canonicalUrl: null,
+      eventMetadata: BASE_EVENT_METADATA,
+    });
+
+    expect(result.created).toBe(false);
+    expect(result.applicationId).toBe(APPLICATION_ID);
+  });
+
+  it('passes the event metadata through to the RPC verbatim', async () => {
+    const rpc = vi.fn().mockReturnValue({
+      single: vi.fn().mockResolvedValue({
+        data: { application_id: APPLICATION_ID, created: true, application_status: 'SAVED', job_snapshot_id: SNAPSHOT_ID },
+        error: null,
+      }),
+    });
+    const supabase = { rpc } as unknown as CareerOsSupabaseClient;
+
+    await startApplicationFromCatalogJob(supabase, USER_ID, {
+      jobCatalogId: JOB_CATALOG_ID,
+      snapshot: BASE_SNAPSHOT_CONTENT,
+      snapshotContentFingerprint: 'v1:abc123',
+      snapshotContentTruncated: false,
+      snapshotTruncatedFields: [],
+      canonicalUrl: null,
+      eventMetadata: BASE_EVENT_METADATA,
+    });
+
+    expect(rpc).toHaveBeenCalledWith(
+      'start_application_from_catalog_job',
+      expect.objectContaining({ p_event_metadata: BASE_EVENT_METADATA }),
+    );
   });
 });
 

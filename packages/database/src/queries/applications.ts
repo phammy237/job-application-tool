@@ -8,6 +8,7 @@ import {
   type ApplicationInput,
   type ApplicationStatus,
   type AutofillSummary,
+  type DiscoveryHandoffEventMetadata,
   type SanitizedJobSnapshotContent,
   type SubmissionPacketAnswer,
   type UnresolvedFieldSummary,
@@ -95,6 +96,8 @@ function rowToApplication(row: Row): Application {
     // jobSnapshotId/submissionPacketId above.
     workingResumeVersionId:
       'working_resume_version_id' in row ? row.working_resume_version_id : null,
+    // Added in migration 0032 (D6) — same missing-key-on-an-unmigrated-database degrade.
+    jobCatalogId: 'job_catalog_id' in row ? row.job_catalog_id : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });
@@ -383,6 +386,26 @@ export async function getOwnApplicationByJobId(
   return data ? rowToApplication(data) : null;
 }
 
+/** D6's "is this discovery opportunity already tracked?" lookup — used by `/discover/[id]`'s
+ * detail page (a single-job read, not the list feed, which instead gets this joined directly into
+ * `list_own_discovery_feed` to avoid an N+1 — docs/JOB_DISCOVERY.md "Discovery list
+ * integration"). Relies on `applications_user_job_catalog_id_key` (migration 0032) guaranteeing
+ * at most one row per (user, job_catalog_id). */
+export async function getOwnApplicationByCatalogJobId(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+  jobCatalogId: string,
+): Promise<Application | null> {
+  const { data, error } = await supabase
+    .from('applications')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('job_catalog_id', jobCatalogId)
+    .maybeSingle();
+  assertNoError(error, 'getOwnApplicationByCatalogJobId');
+  return data ? rowToApplication(data) : null;
+}
+
 export interface UpsertApplicationFromExtensionInput {
   jobId: string;
   company: string;
@@ -534,6 +557,75 @@ export async function upsertApplicationWithSnapshot(
     previousStatus: row.previous_status as ApplicationStatus | null,
     jobSnapshotId: row.job_snapshot_id,
     snapshotFrozen: row.snapshot_frozen,
+  };
+}
+
+export interface StartApplicationFromCatalogJobInput {
+  jobCatalogId: string;
+  snapshot: SanitizedJobSnapshotContent;
+  snapshotContentFingerprint: string;
+  snapshotContentTruncated: boolean;
+  snapshotTruncatedFields: string[];
+  canonicalUrl: string | null;
+  eventMetadata: DiscoveryHandoffEventMetadata;
+}
+
+export interface StartApplicationFromCatalogJobResult {
+  applicationId: string;
+  created: boolean;
+  status: ApplicationStatus;
+  jobSnapshotId: string | null;
+}
+
+/**
+ * D6's one canonical handoff operation — wraps `start_application_from_catalog_job` (migration
+ * 0032; see that migration's own extensive doc comment for the full idempotency/atomicity/
+ * security design). Like `upsertApplicationWithSnapshot`, all the actual dedup/race-safety/
+ * APPLIED-exclusion logic lives in the database function, not here; this wrapper only maps
+ * params/results. `supabase` MUST be the service-role admin client — `job_snapshots` has no
+ * `authenticated` INSERT policy at all, so this call fails under a session-scoped client
+ * regardless of caller identity. `userId` must already be verified by the caller (e.g.
+ * `requireUser()`) before this is ever invoked — never accepted from request input.
+ */
+export async function startApplicationFromCatalogJob(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+  input: StartApplicationFromCatalogJobInput,
+): Promise<StartApplicationFromCatalogJobResult> {
+  const { snapshot } = input;
+  const { data, error } = await supabase
+    .rpc('start_application_from_catalog_job', {
+      p_user_id: userId,
+      p_job_catalog_id: input.jobCatalogId,
+      p_snapshot_company: snapshot.company,
+      p_snapshot_title: snapshot.title,
+      p_snapshot_location: snapshot.location,
+      p_snapshot_employment_type: snapshot.employmentType,
+      p_snapshot_source_url: snapshot.sourceUrl,
+      p_snapshot_description: snapshot.description,
+      p_snapshot_required_qualifications: snapshot.requiredQualifications,
+      p_snapshot_preferred_qualifications: snapshot.preferredQualifications,
+      p_snapshot_responsibilities: snapshot.responsibilities,
+      p_snapshot_skills: snapshot.skills,
+      p_snapshot_salary_min: snapshot.salaryMin,
+      p_snapshot_salary_max: snapshot.salaryMax,
+      p_snapshot_salary_currency: snapshot.salaryCurrency,
+      p_snapshot_locations: snapshot.locations,
+      p_snapshot_work_mode: snapshot.workMode,
+      p_snapshot_source_type: snapshot.sourceType,
+      p_snapshot_content_fingerprint: input.snapshotContentFingerprint,
+      p_snapshot_content_truncated: input.snapshotContentTruncated,
+      p_snapshot_truncated_fields: input.snapshotTruncatedFields,
+      p_canonical_url: input.canonicalUrl,
+      p_event_metadata: input.eventMetadata as unknown as Json,
+    })
+    .single();
+  const row = unwrapRow(data, error, 'startApplicationFromCatalogJob');
+  return {
+    applicationId: row.application_id,
+    created: row.created,
+    status: row.application_status as ApplicationStatus,
+    jobSnapshotId: row.job_snapshot_id,
   };
 }
 

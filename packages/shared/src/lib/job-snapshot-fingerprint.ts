@@ -40,7 +40,11 @@ export interface JobSnapshotSanitizableInput {
   workMode: 'REMOTE' | 'HYBRID' | 'ONSITE' | null;
   remoteLocationRestrictions: string | null;
   workAuthorizationLanguage: string | null;
-  sourceType: 'GENERIC' | 'GREENHOUSE' | 'LEVER' | 'WORKDAY' | null;
+  /** ASHBY added for D6 (docs/JOB_DISCOVERY.md "Discovery/application domain distinction") —
+   * discovery-originated snapshots are the first real writer of this field to see an
+   * Ashby-sourced job; every other existing writer (the extension) never produces it, so this is
+   * purely additive. */
+  sourceType: 'GENERIC' | 'GREENHOUSE' | 'LEVER' | 'WORKDAY' | 'ASHBY' | null;
 }
 
 export interface SanitizedJobSnapshotContent {
@@ -62,7 +66,11 @@ export interface SanitizedJobSnapshotContent {
   workMode: 'REMOTE' | 'HYBRID' | 'ONSITE' | null;
   remoteLocationRestrictions: string | null;
   workAuthorizationLanguage: string | null;
-  sourceType: 'GENERIC' | 'GREENHOUSE' | 'LEVER' | 'WORKDAY' | null;
+  /** ASHBY added for D6 (docs/JOB_DISCOVERY.md "Discovery/application domain distinction") —
+   * discovery-originated snapshots are the first real writer of this field to see an
+   * Ashby-sourced job; every other existing writer (the extension) never produces it, so this is
+   * purely additive. */
+  sourceType: 'GENERIC' | 'GREENHOUSE' | 'LEVER' | 'WORKDAY' | 'ASHBY' | null;
 }
 
 export interface JobSnapshotSanitizeResult {

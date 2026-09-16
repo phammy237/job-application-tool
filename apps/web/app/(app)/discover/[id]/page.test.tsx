@@ -18,7 +18,10 @@ vi.mock('@career-os/database', () => ({
 
 vi.mock('../../../../lib/auth', () => ({ requireUser: mocks.requireUser }));
 vi.mock('../../../../lib/supabase/server', () => ({ createClient: mocks.createClient }));
-vi.mock('next/navigation', () => ({ notFound: mocks.notFound }));
+vi.mock('next/navigation', () => ({
+  notFound: mocks.notFound,
+  useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
+}));
 
 const { default: DiscoverJobDetailPage } = await import('./page');
 
@@ -281,5 +284,51 @@ describe('DiscoverJobDetailPage', () => {
     });
     await renderPage();
     expect(screen.getByText('This posting appears closed')).toBeInTheDocument();
+  });
+
+  describe('D6 handoff integration', () => {
+    it('shows "Start application" for an untracked job', async () => {
+      mocks.getOwnDiscoveryFeedJobDetail.mockResolvedValue({
+        job: BASE_JOB,
+        features: BASE_FEATURES,
+        matchScore: BASE_MATCH_SCORE,
+        trackedApplication: null,
+      });
+      await renderPage();
+      expect(screen.getByRole('button', { name: 'Start application' })).toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: 'View application' })).not.toBeInTheDocument();
+    });
+
+    it('shows "View application" and the real status for a tracked job, never also "Start application"', async () => {
+      mocks.getOwnDiscoveryFeedJobDetail.mockResolvedValue({
+        job: BASE_JOB,
+        features: BASE_FEATURES,
+        matchScore: BASE_MATCH_SCORE,
+        trackedApplication: { id: 'app-1', status: 'IN_PROGRESS' },
+      });
+      await renderPage();
+      expect(screen.getByRole('link', { name: 'View application' })).toHaveAttribute(
+        'href',
+        '/applications/app-1',
+      );
+      expect(screen.getByText('In progress')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Start application' })).not.toBeInTheDocument();
+    });
+
+    it('opening "View original posting" alone never creates or changes tracked state', async () => {
+      mocks.getOwnDiscoveryFeedJobDetail.mockResolvedValue({
+        job: BASE_JOB,
+        features: BASE_FEATURES,
+        matchScore: BASE_MATCH_SCORE,
+        trackedApplication: null,
+      });
+      await renderPage();
+      // The link is a plain <a target="_blank"> to the external posting — no onClick handler, no
+      // fetch call wired to it at all; rendering the page (including this link) never itself
+      // calls the handoff endpoint.
+      const link = screen.getByRole('link', { name: 'View original posting →' });
+      expect(link.getAttribute('href')).not.toContain('/api/discovery');
+      expect(screen.getByRole('button', { name: 'Start application' })).toBeInTheDocument();
+    });
   });
 });

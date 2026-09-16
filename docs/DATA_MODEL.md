@@ -341,11 +341,14 @@ Indexes: `(user_id)`, `(user_id, source_url)`. RLS: standard.
 | `unresolved_fields`    | `jsonb`                                                                            | sanitized array of `{label, classification, status, reason}` — never a value, never a DOM locator, validated by `unresolvedFieldSummarySchema`                                                                                                                                                                                                                                       |
 | `job_snapshot_id`      | `uuid references job_snapshots(id) on delete set null (job_snapshot_id)`           | Phase 5A — points at the immutable posting content captured when this application was last saved; **frozen** (never repointed) once `status` moves past `SAVED`/`IN_PROGRESS`, see "Job snapshots" below                                                                                                                                                                             |
 | `submission_packet_id` | `uuid references submission_packets(id) on delete set null (submission_packet_id)` | Phase 5B.1 — set exactly once, atomically, the first time `status` becomes `APPLIED` through the canonical `mark_application_applied` function; never repointed afterward. `null` for an application that has never been APPLIED under this mechanism, **including a legacy application that was already `APPLIED` before this migration shipped** — see "Submission packets" below. |
+| `job_catalog_id`       | `uuid references job_catalog(id) on delete set null`                              | D6 (migration 0032) — durable provenance back to the global `job_catalog` row this application was started from via `/discover`, if any. `null` for every manually-created or extension-created application, and for every application that predates D6 (no retroactive backfill). `on delete set null` is defensive only — no existing code path ever hard-deletes a `job_catalog` row (see "job_catalog / job_catalog_features / user_job_match_scores" below); the application and its `job_snapshot_id` both survive regardless. |
 
 Indexes: `(user_id)`, `(user_id, status)`, `(user_id, company)`, `(user_id, applied_at desc)`,
-`(job_snapshot_id)`, `(submission_packet_id)`, unique partial `(user_id, canonical_url) where canonical_url is not null
+`(job_snapshot_id)`, `(submission_packet_id)`, `(job_catalog_id)`, unique partial `(user_id, canonical_url) where canonical_url is not null
 and external_id is null`, unique partial `(user_id, ats_provider, external_id) where
-external_id is not null`.
+external_id is not null`, unique partial `(user_id, job_catalog_id) where job_catalog_id is not
+null` (D6's actual database-enforced idempotency guarantee — at most one application per
+(user, catalog opportunity); see `docs/JOB_DISCOVERY.md` "Idempotency guarantee").
 RLS: standard.
 
 ### Extension-save duplicate prevention (`upsert_application_from_extension`, Phase 4C/4D)
@@ -405,12 +408,12 @@ application was based on could silently disappear or change out from under it.
 | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | `id`                                                                                                         | `uuid pk`                                                   |                                                                                                           |
 | `user_id`                                                                                                    | `uuid not null references auth.users(id) on delete cascade` |                                                                                                           |
-| `source_job_id`                                                                                              | `uuid not null`                                             | **not a foreign key, deliberately** — lineage only; see "Immutability" below                              |
+| `source_job_id`                                                                                              | `uuid not null`                                             | **not a foreign key, deliberately** — lineage only, "outlives the row it was captured from" by design; see "Immutability" below. D6 (migration 0032) reuses this same looseness to honestly hold a `job_catalog.id` for a discovery-originated snapshot, not only a `jobs.id` — no schema change needed for this, since the column was never FK-constrained to `jobs` in the first place. |
 | `company`, `title`                                                                                           | `text not null`                                             |                                                                                                           |
 | `location`, `employment_type`, `source_url`, `external_id`, `description`                                    | `text`                                                      |                                                                                                           |
 | `required_qualifications`, `preferred_qualifications`, `responsibilities`, `skills`, `locations`             | `text[]`                                                    |                                                                                                           |
 | `salary_min`, `salary_max`                                                                                   | `numeric`                                                   | nullable — not currently extracted, see "Field-source honesty" below                                      |
-| `salary_currency`, `work_mode`, `remote_location_restrictions`, `work_authorization_language`, `source_type` | `text`                                                      | all nullable, same reason                                                                                 |
+| `salary_currency`, `work_mode`, `remote_location_restrictions`, `work_authorization_language`, `source_type` | `text`                                                      | all nullable, same reason. `source_type` accepts `GENERIC, GREENHOUSE, LEVER, WORKDAY, ASHBY` (last one added D6, migration 0032 — the extension's own extraction never produced it before D6's own handoff became the first real writer for an Ashby-sourced catalog job) |
 | `content_fingerprint`                                                                                        | `text not null`                                             | `"v1:" + sha256hex` of the canonicalized content — see "Fingerprint" below                                |
 | `content_truncated`                                                                                          | `boolean not null default false`                            | true if any field was cut down to its storage cap                                                         |
 | `truncated_fields`                                                                                           | `text[] not null default '{}'`                              | which fields, so the UI can show an honest notice, never silently present a truncated posting as complete |
@@ -626,11 +629,12 @@ plus "undo for automated updates."
 | `id`              | `uuid pk`                                                     |                                                   |
 | `user_id`         | `uuid not null references auth.users(id) on delete cascade`   |                                                   |
 | `application_id`  | `uuid not null references applications(id) on delete cascade` |                                                   |
-| `event_type`      | `text not null`                                               | `STATUS_CHANGE, NOTE, EMAIL_MATCHED, MANUAL_EDIT` |
+| `event_type`      | `text not null`                                               | `STATUS_CHANGE, NOTE, EMAIL_MATCHED, MANUAL_EDIT, DISCOVERY_HANDOFF` (last one added D6, migration 0032) |
 | `from_status`     | `text`                                                        | nullable                                          |
 | `to_status`       | `text`                                                        | nullable                                          |
 | `source`          | `text not null`                                               | `USER, GMAIL_SYNC, SYSTEM`                        |
 | `email_signal_id` | `uuid references email_signals(id) on delete set null`        | nullable, set when `source = 'GMAIL_SYNC'`        |
+| `metadata`        | `jsonb`                                                       | D6 (migration 0032) — only ever populated on `DISCOVERY_HANDOFF` events: `{jobCatalogId, sourceType, matchScore, coverage, eligibilityStatus, rankingVersion, featureVersion, eligibilityVersion}`, a historical snapshot of what `/discover` showed at the moment of handoff — never live/authoritative, never drives any lifecycle behavior. Bounded to 4000 chars as text (`application_events_metadata_bounded` check) — never the posting description or any large payload. `null` for every other event type. |
 | `reverted_at`     | `timestamptz`                                                 | set when the user undoes an automated update      |
 
 Indexes: `(user_id)`, `(application_id, created_at)`. RLS: standard.
@@ -1087,3 +1091,41 @@ no score history, overwritten in place on recompute. Three independent version s
 (`feature_version`, `ranking_version`, `eligibility_version`) are stamped onto every computed row
 so a stale row is always identifiable and recomputable when extraction rules, scoring math, or
 eligibility rules change independently.
+
+## Discovery → Application Handoff (D6, migration 0032)
+
+Full design record: `docs/JOB_DISCOVERY.md` §45-51. No new tables — a nullable provenance column
+on the existing `applications` table (`job_catalog_id`, see "applications" above), a nullable
+`metadata` column plus a new `DISCOVERY_HANDOFF` event type on the existing `application_events`
+table (see "application_events" above), one small additive widening (`job_snapshots.source_type`
+gains `ASHBY`), and one new database function.
+
+**`start_application_from_catalog_job(...)`** — the one canonical handoff operation. Same trust
+boundary and structural pattern as `upsert_application_with_snapshot` (Phase 5A): `SECURITY
+INVOKER`, granted only to `service_role`, called via the admin client from
+`/api/discovery/[id]/start-application` after the route has already verified the session and
+passes the verified `userId` explicitly (never re-derived from `auth.uid()`, which is null under
+a service-role call anyway). Requires the admin client for exactly one structural reason:
+`job_snapshots` has no `authenticated` INSERT policy at all, so a session-scoped caller cannot
+write to it regardless of the calling function's own security label. `status` is never a
+parameter — the function's own signature makes constructing an `APPLIED` row through this path
+impossible, not merely rejected at runtime; migration 0015's `reject_direct_applied_transition`
+trigger is a second, independent backstop even though this function's own role already can't
+express the attempt.
+
+**Idempotency** is the real point of this function, not incidental: a new partial unique index,
+`applications_user_job_catalog_id_key` on `(user_id, job_catalog_id) where job_catalog_id is not
+null`, guarantees at most one application per (user, catalog opportunity) at the database level.
+The function does a tiered lookup under `for update` row locking, wrapped in a bounded
+`unique_violation` retry loop (identical shape to `upsert_application_from_extension`'s own
+tiering) — tier 1 matches on `job_catalog_id` (the primary, authoritative key); tier 2 matches on
+`canonical_url` (the **pre-existing** `applications_user_canonical_url_key` index) for an
+unlinked extension-created application at the identical posting URL, backfilling
+`job_catalog_id` onto it rather than creating a duplicate row for the same real-world posting.
+Concurrent calls converge on whichever row wins the race — proven live via 10 genuinely
+concurrent HTTP requests against the real linked database, all returning the same application id
+with exactly one reporting `created: true` (see `docs/JOB_DISCOVERY.md` §51).
+
+The snapshot itself reuses `job_snapshots`/`_upsert_job_snapshot` verbatim (see "job_snapshots"
+above) — `source_job_id` there is populated with the `job_catalog.id`, not a `jobs.id`, which the
+column's own pre-existing lack of a foreign key was always loose enough to allow honestly.
