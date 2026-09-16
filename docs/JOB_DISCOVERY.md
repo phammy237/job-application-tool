@@ -345,7 +345,9 @@ Lever, Ramp+Notion+Vanta+Linear/Ashby).
 `.github/workflows/job-discovery-sync.yml` — daily cron (`workflow_dispatch` also available for
 manual triggering), a `concurrency` group so two crawls never overlap, a 30-minute timeout, and
 only the two Supabase secrets in its environment (§11). Runs `npm run discovery:sync` as-is —
-the exact same script a developer runs locally.
+the exact same script a developer runs locally — and then, only if that step succeeds, `npm run
+discovery:rank` (no `--user-id`). See §53 for why the second step exists and what it does and
+does not change.
 
 ## 18. D4 — Deterministic feature extraction, user-configurable ranking, and eligibility
 
@@ -1419,3 +1421,42 @@ handoff, any change to D4's scoring formulas or D5A's default ranking policy or 
 semantics, and any retroactive backfill matching historical (pre-D6) applications to catalog jobs
 — `job_catalog_id` stays `null` forever for every application that predates this phase, exactly as
 designed, never guessed from company+title or any other weak signal.
+
+## 53. D6.5 — daily ranking automation (P1 fix)
+
+**The gap.** `list_own_discovery_feed` (§29) inner-joins `user_job_match_scores` — a job is
+invisible in `/discover` until a score row exists for that `(user, job)`. Before this fix, the
+scheduled workflow (§16) ran only `discovery:sync` (catalog ingestion); `user_job_match_scores`
+was populated only by a manual `discovery:rank` CLI run or by `/settings/discovery`'s save
+endpoint, and the latter only recomputes on an actual preference change, not on a no-op save.
+Net effect: after a user's first ranking, every subsequent day's newly-synced jobs stayed
+permanently invisible in their feed with no automated path to fix it — a real gap against this
+track's own purpose ("see new postings"), not a cosmetic one.
+
+**The fix.** `.github/workflows/job-discovery-sync.yml` now runs `npm run discovery:rank` (no
+`--user-id`) as a second step, immediately after `discovery:sync`, in the same job, on the same
+schedule. Ordinary GitHub Actions step sequencing means the rank step only runs if sync
+succeeds, and a rank failure fails the job visibly (no `continue-on-error`, no swallowed exit
+code) — nothing new was added to make either of those true. No second scheduler, no new API
+route, no change to `discovery:rank`/`rankJobsForUser`/`extractFeaturesForStaleJobs` themselves
+(§27–§29's Match/Coverage/eligibility math is untouched), no AI/search call introduced (`rank`
+was already, and remains, zero-Claude/Tavily/embedding). `discovery:rank` already ran feature
+extraction before scoring (§32), so nothing extra was added there either.
+
+**Live-verified, real linked project, disposable test user** (created and deleted via the
+Supabase Admin API for this check only, zero residue after): a fresh account with a scoring
+profile and zero `user_job_match_scores` rows went to 1,371 scored rows after one
+`discovery:rank` run, and those rows were immediately visible through a real password-authenticated
+session calling `list_own_discovery_feed` directly (not just present in the table via the admin
+client) — with no preference edit and no manual CLI invocation by the user. `discovery:rank`
+with no `--user-id` and zero scoring profiles in the project also confirmed exits `0` (`Ranking
+for 0 user(s).`), so the step is safe to add even before any user has a profile yet.
+
+**Deferred scalability note (do not build now).** Today, the scheduled job re-ranks *every* user
+with a scoring profile after each catalog sync — a full re-score of the whole catalog per user,
+every run. This is intentionally acceptable at personal-beta/current scale (one real user,
+~1,371 jobs, a few seconds of compute). It is **not** optimized here. If user volume ever grows
+enough that this becomes a real cost or duration problem, the future fix is per-user or
+incremental recomputation (e.g. only re-score users whose preferences changed, or only re-score
+jobs new/changed since the last run) — flagged as a future scaling concern only, not implemented
+now.

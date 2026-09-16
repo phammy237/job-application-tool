@@ -347,6 +347,19 @@ real `applications.status`/`job_snapshot_id` columns — fixed by renaming the o
 explicitly table-aliasing every reference. See `docs/JOB_DISCOVERY.md` §45-52 for the full design,
 the domain-model/idempotency/interoperability rationale, and what's deliberately deferred.
 
+**D6.5 (in progress) — release-candidate hardening**: not a new feature phase; auditing D1-D6 for
+"can this be used for real job applications today." First fix shipped: the daily
+`job-discovery-sync.yml` workflow ran only `discovery:sync`, never `discovery:rank`, so
+`list_own_discovery_feed`'s inner join against `user_job_match_scores` (§D4 above) meant every
+job synced after a user's first ranking stayed permanently invisible in `/discover` with no
+automated recovery — a P1, since it broke the track's actual daily-use purpose within a day.
+Fixed by adding `npm run discovery:rank` as a second step in the same existing scheduled
+workflow, run only after `discovery:sync` succeeds — no second scheduler, no new route, no
+change to ranking/eligibility semantics or to D4/D5's math. Live-verified against the linked
+Supabase project with a disposable test user: zero `user_job_match_scores` rows before, 1,371
+after one `discovery:rank` run, immediately visible through a real signed-in call to
+`list_own_discovery_feed`, no preference edit needed. See `docs/JOB_DISCOVERY.md` §53.
+
 The whole Phase 5B line (5B.0 through 5B.4, plus the hardening pass) is complete. Phase 5C is now
 complete end to end — 5C.1 (deterministic next actions) through 5C.4 (polish and closure) — see
 each phase's own section below for the full writeup. No 5C sub-phase remains unstarted.

@@ -33,3 +33,16 @@ jobs:
 
       - name: Run discovery sync
         run: npm run discovery:sync
+
+      # Runs only if sync succeeds (default GitHub Actions step behavior — a non-zero exit above
+      # stops the job before this step). `discovery:rank` re-extracts stale job_catalog_features
+      # first (idempotent, cheap) and then re-scores every user who has a Discovery Scoring
+      # Profile — see docs/JOB_DISCOVERY.md "Persistence, versioning, and recomputation" and
+      # scripts/discovery/rank.ts. This is what makes newly-synced jobs actually show up in
+      # /discover without a manual CLI run or an unrelated settings edit (D6.5 P1 fix — the daily
+      # sync alone never populated user_job_match_scores, so list_own_discovery_feed's inner join
+      # against it left new jobs invisible). No --user-id: ranks every user with a scoring
+      # profile, never a hardcoded id; exits cleanly (0 users ranked) if none exist yet. Zero
+      # Claude/Tavily/embedding calls, same as discovery:sync above.
+      - name: Recompute discovery rankings
+        run: npm run discovery:rank
