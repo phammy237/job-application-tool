@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   incrementOwnAiRequestUsage: vi.fn(),
+  decrementOwnAiRequestUsage: vi.fn(),
   getOwnJob: vi.fn(),
   listOwnApprovedFactsForGeneration: vi.fn(),
   createOwnGeneratedAnswer: vi.fn(),
@@ -12,6 +13,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@career-os/database', () => ({
   incrementOwnAiRequestUsage: mocks.incrementOwnAiRequestUsage,
+  decrementOwnAiRequestUsage: mocks.decrementOwnAiRequestUsage,
   getOwnJob: mocks.getOwnJob,
   listOwnApprovedFactsForGeneration: mocks.listOwnApprovedFactsForGeneration,
   createOwnGeneratedAnswer: mocks.createOwnGeneratedAnswer,
@@ -84,6 +86,7 @@ const BASE_PARAMS = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.decrementOwnAiRequestUsage.mockResolvedValue(undefined);
   mocks.incrementOwnAiRequestUsage.mockResolvedValue(ALLOWED_USAGE);
   mocks.getOwnJob.mockResolvedValue(JOB);
   mocks.listOwnApprovedFactsForGeneration.mockResolvedValue([RELEVANT_FACT]);
@@ -230,5 +233,29 @@ describe('generateSuggestion — rejection gate and retry-once', () => {
     expect(result).toEqual({ status: 'provider_error', message: 'network timeout' });
     expect(mocks.callClaudeForSuggestion).toHaveBeenCalledTimes(1);
     expect(mocks.createOwnGeneratedAnswer).not.toHaveBeenCalled();
+  });
+
+  it('refunds the reserved quota unit on a provider_error (real incident regression)', async () => {
+    mocks.callClaudeForSuggestion.mockResolvedValueOnce({
+      status: 'provider_error',
+      message: 'network timeout',
+    });
+
+    await generateSuggestion(FAKE_SUPABASE, USER_ID, BASE_PARAMS);
+
+    expect(mocks.decrementOwnAiRequestUsage).toHaveBeenCalledTimes(1);
+    expect(mocks.decrementOwnAiRequestUsage).toHaveBeenCalledWith(FAKE_SUPABASE, USER_ID);
+  });
+
+  it('never refunds quota for a real Claude response (accepted, rejected, or refusal)', async () => {
+    mocks.callClaudeForSuggestion.mockResolvedValueOnce({
+      status: 'ok',
+      rawText: validContractJson(),
+    });
+
+    const result = await generateSuggestion(FAKE_SUPABASE, USER_ID, BASE_PARAMS);
+
+    expect(result.status).toBe('generated');
+    expect(mocks.decrementOwnAiRequestUsage).not.toHaveBeenCalled();
   });
 });

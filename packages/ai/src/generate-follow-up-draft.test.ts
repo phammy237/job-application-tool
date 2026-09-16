@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   getOwnProfile: vi.fn(),
   listOwnEmailSignalsForApplication: vi.fn(),
   incrementOwnAiRequestUsage: vi.fn(),
+  decrementOwnAiRequestUsage: vi.fn(),
   recordAiUsageEvent: vi.fn(),
   callClaudeForFollowUpDraft: vi.fn(),
   // Phase 5C.4 application-state safety audit: every mutating query function this repo has for
@@ -29,6 +30,7 @@ vi.mock('@career-os/database', () => ({
   getOwnProfile: mocks.getOwnProfile,
   listOwnEmailSignalsForApplication: mocks.listOwnEmailSignalsForApplication,
   incrementOwnAiRequestUsage: mocks.incrementOwnAiRequestUsage,
+  decrementOwnAiRequestUsage: mocks.decrementOwnAiRequestUsage,
   recordAiUsageEvent: mocks.recordAiUsageEvent,
   changeOwnApplicationStatus: mocks.changeOwnApplicationStatus,
   markApplicationAppliedAtomic: mocks.markApplicationAppliedAtomic,
@@ -95,6 +97,7 @@ function draftJson(overrides: Record<string, unknown> = {}): string {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.decrementOwnAiRequestUsage.mockResolvedValue(undefined);
   mocks.getOwnApplication.mockResolvedValue(application());
   mocks.listOwnRelevantStatusChangeEventsForApplication.mockResolvedValue([]);
   mocks.getOwnJobSnapshot.mockResolvedValue(null);
@@ -293,6 +296,15 @@ describe('generateFollowUpDraft — fabricated-interaction rejection and retry',
 
     expect(result).toEqual({ status: 'provider_error', message: 'network timeout' });
     expect(mocks.callClaudeForFollowUpDraft).toHaveBeenCalledTimes(1);
+  });
+
+  it('refunds the reserved quota unit on a provider_error (real incident regression)', async () => {
+    mocks.callClaudeForFollowUpDraft.mockResolvedValueOnce({
+      status: 'provider_error',
+      message: 'network timeout',
+    });
+    await generateFollowUpDraft(FAKE_SUPABASE, USER_ID, PARAMS);
+    expect(mocks.decrementOwnAiRequestUsage).toHaveBeenCalledWith(FAKE_SUPABASE, USER_ID);
   });
 
   it('retries once on a refusal', async () => {

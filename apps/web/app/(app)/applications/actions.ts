@@ -10,7 +10,12 @@ import {
   deleteOwnApplication,
   getOwnApplication,
   getOwnProfile,
+  listOwnEducation,
+  listOwnExperiences,
+  listOwnProjects,
+  listOwnResumeVersionsForResume,
   listOwnResumes,
+  listOwnSkills,
   markOwnApplicationApplied,
   revertApplicationEvent,
   setOwnApplicationWorkingResumeVersion,
@@ -19,8 +24,10 @@ import {
 import {
   applicationInputSchema,
   applicationStatusSchema,
+  buildStructuredResumeFromProfile,
   buildTailoredResumeDisplayName,
   type ConsistencyFinding,
+  type StructuredResumeV1,
 } from '@career-os/shared';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
@@ -195,10 +202,20 @@ export type CreateTailoredResumeResult =
  * "Create resume for this application" (docs/IMPLEMENTATION_PLAN.md "Phase 7A" §21/"Phase 7B").
  * Creates a TAILORED resume named per the naming convention (the owner's real name, never a
  * hardcoded one — see `buildTailoredResumeDisplayName`'s own doc comment), descended from the
- * user's MASTER resume when one exists, with one initial METADATA_ONLY version so there is
- * immediately something real to select as this application's working résumé — never fabricated
- * content, just a real, dated, named identity. Selecting it as the working résumé happens in the
- * same action, closing the loop from one click.
+ * user's MASTER resume when one exists, and — this is the real-incident fix, previously this
+ * created an empty METADATA_ONLY version that Studio then showed as "no structured version yet,"
+ * even though the resume card looked fully usable — its one initial version is populated from a
+ * real source of truth, in this preference order, never fabricated, never AI-generated:
+ *   A. the user's MASTER resume's latest STRUCTURED_V1 version, cloned verbatim (never mutating
+ *      that original version — this only ever reads it);
+ *   B. otherwise, the user's approved candidate-profile data (`buildStructuredResumeFromProfile`
+ *      — the same canonical import helper Studio's own "Import from profile" button uses, never a
+ *      second, duplicated way of turning profile data into résumé content);
+ *   C. otherwise, a genuinely blank METADATA_ONLY version — Studio's existing "no structured
+ *      version yet — starting a new blank draft" copy already makes this explicit to the user, so
+ *      no separate messaging is needed here.
+ * Selecting the created version as this application's working résumé happens in the same action,
+ * closing the loop from one click.
  */
 export async function createTailoredResumeForApplication(
   applicationId: string,
@@ -221,6 +238,68 @@ export async function createTailoredResumeForApplication(
   const existingResumes = await listOwnResumes(supabase, user.id);
   const masterResume = existingResumes.find((r) => r.kind === 'MASTER') ?? null;
 
+  // Idempotency (real-incident fix — the real account ended up with two identically-named
+  // resumes from exactly this double-click race): a TAILORED resume with this exact
+  // deterministic name already means "this button was already used for this application," so
+  // reuse its latest version rather than creating a duplicate resume/version pair.
+  const alreadyCreated = existingResumes.find(
+    (r) => r.kind === 'TAILORED' && r.name === displayName,
+  );
+  if (alreadyCreated) {
+    const versions = await listOwnResumeVersionsForResume(supabase, user.id, alreadyCreated.id);
+    const latestVersion = versions[0] ?? null; // already ordered version_number desc
+    if (latestVersion) {
+      await setOwnApplicationWorkingResumeVersion(
+        supabase,
+        user.id,
+        applicationId,
+        latestVersion.id,
+      );
+      revalidatePath('/resumes');
+      revalidatePath(`/applications/${applicationId}`);
+      return { status: 'ok' };
+    }
+  }
+
+  // Source A: clone the MASTER resume's latest structured version, if one exists. Read-only —
+  // never mutates or re-saves the original version (immutable-version semantics preserved).
+  const masterStructuredContent = masterResume
+    ? await listOwnResumeVersionsForResume(supabase, user.id, masterResume.id).then(
+        (versions) =>
+          versions.find((v) => v.snapshotFormat === 'STRUCTURED_V1')?.snapshotPayload ?? null,
+      )
+    : null;
+
+  // Source B: the user's own approved profile data, via the one canonical import helper — never
+  // a second, parallel way of deriving résumé content from candidate-profile tables.
+  let profileStructuredContent: StructuredResumeV1 | null = null;
+  if (!masterStructuredContent) {
+    const [experiences, education, projects, skills] = await Promise.all([
+      listOwnExperiences(supabase, user.id),
+      listOwnEducation(supabase, user.id),
+      listOwnProjects(supabase, user.id),
+      listOwnSkills(supabase, user.id),
+    ]);
+    const imported = buildStructuredResumeFromProfile(
+      profile,
+      experiences,
+      education,
+      projects,
+      skills,
+    );
+    // Only actually a usable "source" if it carries real content beyond a bare header — an
+    // account with no approved facts yet gets Source C (an honest blank draft) instead of a
+    // document that merely *looks* populated.
+    const hasRealContent =
+      imported.education.length > 0 ||
+      imported.experience.length > 0 ||
+      imported.projects.length > 0 ||
+      imported.skills.length > 0;
+    profileStructuredContent = hasRealContent ? imported : null;
+  }
+
+  const sourceContent = masterStructuredContent ?? profileStructuredContent;
+
   const resume = await createOwnResume(supabase, user.id, {
     name: displayName,
     kind: 'TAILORED',
@@ -229,6 +308,9 @@ export async function createTailoredResumeForApplication(
   const version = await createOwnResumeVersion(admin, user.id, {
     resumeId: resume.id,
     displayName,
+    ...(sourceContent
+      ? { snapshotFormat: 'STRUCTURED_V1' as const, snapshotPayload: sourceContent }
+      : {}),
   });
   await setOwnApplicationWorkingResumeVersion(
     supabase,

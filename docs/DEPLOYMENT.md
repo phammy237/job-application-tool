@@ -60,6 +60,22 @@ Google OAuth client.
   from the Gmail OAuth verification timeline (`docs/EMAIL_INTEGRATION.md` §6) — they are
   independent review processes with independent timelines.
 
+**Real incident, fixed — read before building for distribution.** `npm run build --workspace=
+@career-os/extension` (`vite build`) loads `apps/extension/.env.local` in *every* Vite mode,
+including its default `production` mode — a developer's own local override for `vite dev`
+(`VITE_CAREER_OS_API_URL=http://localhost:3003`) silently survived into a "production" build
+with no warning, so the distributed extension's `Analyze Job` request never reached
+`apply.mypham.space` at all (a raw `TypeError: Failed to fetch`, not an HTTP error — the request
+target was `http://localhost:3003`, nothing listening). Fix: local dev overrides for this
+package belong in **`apps/extension/.env.development.local`** (Vite only loads that file in
+`development` mode), never plain `.env.local`. `npm run build` now also runs
+`scripts/verify-production-build.mjs` immediately after `vite build`, which fails the build
+loudly if the built bundle contains any `localhost`/`127.0.0.1` string, doesn't contain
+`https://apply.mypham.space`, or the manifest's `host_permissions`/`externally_connectable`/`key`
+don't match the required shape — so this exact class of bug can't ship silently again. Before
+loading a build unpacked for real use, confirm the build command printed
+`✅ Production build verified` and not a `❌` failure.
+
 ## 6. CI/CD (shape, not final tool choice)
 
 - Lint (ESLint/Prettier), typecheck, unit tests (Vitest), and build run on every PR.

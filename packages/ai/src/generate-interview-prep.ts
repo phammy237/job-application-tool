@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
+  decrementOwnAiRequestUsage,
   getCurrentOwnRequirementMappingRun,
   getOwnJobSnapshot,
   getOwnSubmissionPacketByApplicationId,
@@ -300,6 +301,9 @@ export async function generateInterviewPrep(
   });
 
   if (outcome.kind === 'provider_error') {
+    // Claude was never meaningfully reached — give back the unit reserved earlier
+    // (supabase/migrations/0033_ai_request_usage_accounting_fix.sql).
+    await decrementOwnAiRequestUsage(supabase, userId).catch(() => {});
     return { status: 'provider_error', message: outcome.message };
   }
   if (outcome.kind === 'rejected') {

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   createOwnGeneratedAnswer,
+  decrementOwnAiRequestUsage,
   getOwnJob,
   incrementOwnAiRequestUsage,
   listOwnApprovedFactsForGeneration,
@@ -147,6 +148,10 @@ export async function generateSuggestion(
 
   // Step 5 — final disposition.
   if (outcome.kind === 'provider_error') {
+    // The provider was never meaningfully reached (auth/network/5xx) — give back the unit
+    // Step 1 pre-emptively reserved rather than permanently spending the user's shared quota on
+    // a request that did no real work (supabase/migrations/0033_ai_request_usage_accounting_fix.sql).
+    await decrementOwnAiRequestUsage(supabase, userId).catch(() => {});
     return { status: 'provider_error', message: outcome.message };
   }
 

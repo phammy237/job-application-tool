@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   incrementOwnAiRequestUsage: vi.fn(),
+  decrementOwnAiRequestUsage: vi.fn(),
   listOwnGeneratedAnswersForApplication: vi.fn(),
   listOwnApprovedFactsForGeneration: vi.fn(),
   recordAiUsageEvent: vi.fn(),
@@ -11,6 +12,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@career-os/database', () => ({
   incrementOwnAiRequestUsage: mocks.incrementOwnAiRequestUsage,
+  decrementOwnAiRequestUsage: mocks.decrementOwnAiRequestUsage,
   listOwnGeneratedAnswersForApplication: mocks.listOwnGeneratedAnswersForApplication,
   listOwnApprovedFactsForGeneration: mocks.listOwnApprovedFactsForGeneration,
   recordAiUsageEvent: mocks.recordAiUsageEvent,
@@ -79,6 +81,7 @@ const PARAMS = { applicationId: APPLICATION_ID };
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.decrementOwnAiRequestUsage.mockResolvedValue(undefined);
   mocks.incrementOwnAiRequestUsage.mockResolvedValue(ALLOWED_USAGE);
   mocks.listOwnGeneratedAnswersForApplication.mockResolvedValue([GENERATED_ANSWER]);
   mocks.listOwnApprovedFactsForGeneration.mockResolvedValue([APPROVED_FACT]);
@@ -253,6 +256,15 @@ describe('generateUnsupportedClaimsCheck — contract validation and retry-once'
 
     expect(result).toEqual({ status: 'provider_error', message: 'network timeout' });
     expect(mocks.callClaudeForUnsupportedClaimCheck).toHaveBeenCalledTimes(1);
+  });
+
+  it('refunds the reserved quota unit on a provider_error (real incident regression)', async () => {
+    mocks.callClaudeForUnsupportedClaimCheck.mockResolvedValueOnce({
+      status: 'provider_error',
+      message: 'network timeout',
+    });
+    await generateUnsupportedClaimsCheck(FAKE_SUPABASE, USER_ID, PARAMS);
+    expect(mocks.decrementOwnAiRequestUsage).toHaveBeenCalledWith(FAKE_SUPABASE, USER_ID);
   });
 
   it('retries once on a refusal and succeeds if the retry passes', async () => {

@@ -3,12 +3,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   incrementOwnAiRequestUsage: vi.fn(),
+  decrementOwnAiRequestUsage: vi.fn(),
   recordAiUsageEvent: vi.fn(),
   callClaudeForEmailClassification: vi.fn(),
 }));
 
 vi.mock('@career-os/database', () => ({
   incrementOwnAiRequestUsage: mocks.incrementOwnAiRequestUsage,
+  decrementOwnAiRequestUsage: mocks.decrementOwnAiRequestUsage,
   recordAiUsageEvent: mocks.recordAiUsageEvent,
 }));
 
@@ -45,6 +47,7 @@ function validClassificationJson(overrides: Record<string, unknown> = {}): strin
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.decrementOwnAiRequestUsage.mockResolvedValue(undefined);
   mocks.incrementOwnAiRequestUsage.mockResolvedValue(ALLOWED_USAGE);
   mocks.recordAiUsageEvent.mockResolvedValue({});
 });
@@ -121,6 +124,17 @@ describe('classifyEmail — rejection gate and retry-once', () => {
 
     expect(result).toEqual({ status: 'provider_error', message: 'network timeout' });
     expect(mocks.callClaudeForEmailClassification).toHaveBeenCalledTimes(1);
+  });
+
+  it('refunds the reserved quota unit on a provider_error (real incident regression)', async () => {
+    mocks.callClaudeForEmailClassification.mockResolvedValueOnce({
+      status: 'provider_error',
+      message: 'network timeout',
+    });
+
+    await classifyEmail(FAKE_SUPABASE, USER_ID, PARAMS);
+
+    expect(mocks.decrementOwnAiRequestUsage).toHaveBeenCalledWith(FAKE_SUPABASE, USER_ID);
   });
 });
 

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   createCompanyResearchSnapshot,
+  decrementOwnAiRequestUsage,
   getCurrentOwnRequirementMappingRun,
   getOwnApplication,
   getOwnJobSnapshot,
@@ -112,6 +113,10 @@ export async function generateCompanyResearch(
     return { status: 'insufficient_source_evidence' };
   }
   if (discovery.status === 'provider_error') {
+    // The search provider was never meaningfully reached and no Claude call has happened yet —
+    // give back the unit Step 2 pre-emptively reserved
+    // (supabase/migrations/0033_ai_request_usage_accounting_fix.sql).
+    await decrementOwnAiRequestUsage(supabase, userId).catch(() => {});
     return { status: 'search_provider_error', message: discovery.message };
   }
 
@@ -238,6 +243,9 @@ export async function generateCompanyResearch(
   });
 
   if (outcome.kind === 'provider_error') {
+    // Claude was never meaningfully reached — give back the unit Step 2 pre-emptively reserved
+    // (supabase/migrations/0033_ai_request_usage_accounting_fix.sql).
+    await decrementOwnAiRequestUsage(supabase, userId).catch(() => {});
     return { status: 'ai_provider_unavailable', message: outcome.message };
   }
   if (outcome.kind === 'rejected') {

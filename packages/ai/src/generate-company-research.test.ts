@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   getCurrentOwnRequirementMappingRun: vi.fn(),
   listCurrentOwnRequirementMappings: vi.fn(),
   incrementOwnAiRequestUsage: vi.fn(),
+  decrementOwnAiRequestUsage: vi.fn(),
   recordAiUsageEvent: vi.fn(),
   createCompanyResearchSnapshot: vi.fn(),
   discoverAndExtractCompanyResearchSources: vi.fn(),
@@ -27,6 +28,7 @@ vi.mock('@career-os/database', () => ({
   getCurrentOwnRequirementMappingRun: mocks.getCurrentOwnRequirementMappingRun,
   listCurrentOwnRequirementMappings: mocks.listCurrentOwnRequirementMappings,
   incrementOwnAiRequestUsage: mocks.incrementOwnAiRequestUsage,
+  decrementOwnAiRequestUsage: mocks.decrementOwnAiRequestUsage,
   recordAiUsageEvent: mocks.recordAiUsageEvent,
   createCompanyResearchSnapshot: mocks.createCompanyResearchSnapshot,
   createOwnResumeVersion: mocks.createOwnResumeVersion,
@@ -84,6 +86,7 @@ function planJson(findings: unknown[] = []) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.decrementOwnAiRequestUsage.mockResolvedValue(undefined);
   mocks.getOwnApplication.mockResolvedValue(baseApplication());
   mocks.incrementOwnAiRequestUsage.mockResolvedValue({
     allowed: true,
@@ -164,6 +167,15 @@ describe('generateCompanyResearch — web retrieval outcomes (no AI call, no tel
     const result = await generateCompanyResearch(FAKE_SUPABASE, USER_ID, PARAMS);
     expect(result).toEqual({ status: 'search_provider_error', message: 'timeout' });
   });
+
+  it('refunds the reserved quota unit on a search-layer provider_error — no Claude call ever happened', async () => {
+    mocks.discoverAndExtractCompanyResearchSources.mockResolvedValue({
+      status: 'provider_error',
+      message: 'timeout',
+    });
+    await generateCompanyResearch(FAKE_SUPABASE, USER_ID, PARAMS);
+    expect(mocks.decrementOwnAiRequestUsage).toHaveBeenCalledWith(FAKE_SUPABASE, USER_ID);
+  });
 });
 
 describe('generateCompanyResearch — AI synthesis, validation, and retry', () => {
@@ -234,6 +246,15 @@ describe('generateCompanyResearch — AI synthesis, validation, and retry', () =
     const result = await generateCompanyResearch(FAKE_SUPABASE, USER_ID, PARAMS);
     expect(result).toEqual({ status: 'ai_provider_unavailable', message: 'down' });
     expect(mocks.callClaudeForCompanyResearch).toHaveBeenCalledTimes(1);
+  });
+
+  it('refunds the reserved quota unit on an AI-layer provider_error (real incident regression)', async () => {
+    mocks.callClaudeForCompanyResearch.mockResolvedValue({
+      status: 'provider_error',
+      message: 'down',
+    });
+    await generateCompanyResearch(FAKE_SUPABASE, USER_ID, PARAMS);
+    expect(mocks.decrementOwnAiRequestUsage).toHaveBeenCalledWith(FAKE_SUPABASE, USER_ID);
   });
 
   it('rejects a plan with zero findings and retries once', async () => {

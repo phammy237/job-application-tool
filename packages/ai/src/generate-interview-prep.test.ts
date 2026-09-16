@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   listOwnApprovedFactsForGeneration: vi.fn(),
   getOwnSubmissionPacketByApplicationId: vi.fn(),
   incrementOwnAiRequestUsage: vi.fn(),
+  decrementOwnAiRequestUsage: vi.fn(),
   recordAiUsageEvent: vi.fn(),
   callClaudeForInterviewPrep: vi.fn(),
   // Phase 5C.4 application-state safety audit — see generate-follow-up-draft.test.ts's identical
@@ -34,6 +35,7 @@ vi.mock('@career-os/database', () => ({
   listOwnApprovedFactsForGeneration: mocks.listOwnApprovedFactsForGeneration,
   getOwnSubmissionPacketByApplicationId: mocks.getOwnSubmissionPacketByApplicationId,
   incrementOwnAiRequestUsage: mocks.incrementOwnAiRequestUsage,
+  decrementOwnAiRequestUsage: mocks.decrementOwnAiRequestUsage,
   recordAiUsageEvent: mocks.recordAiUsageEvent,
   changeOwnApplicationStatus: mocks.changeOwnApplicationStatus,
   markApplicationAppliedAtomic: mocks.markApplicationAppliedAtomic,
@@ -168,6 +170,7 @@ function companyResearchSnapshot(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.decrementOwnAiRequestUsage.mockResolvedValue(undefined);
   mocks.getOwnApplication.mockResolvedValue(application());
   mocks.listOwnRelevantStatusChangeEventsForApplication.mockResolvedValue([]);
   mocks.getOwnJobSnapshot.mockResolvedValue(SNAPSHOT);
@@ -372,6 +375,15 @@ describe('generateInterviewPrep — citation allowlist enforcement', () => {
     const result = await generateInterviewPrep(FAKE_SUPABASE, USER_ID, PARAMS);
     expect(result).toEqual({ status: 'provider_error', message: 'network timeout' });
     expect(mocks.callClaudeForInterviewPrep).toHaveBeenCalledTimes(1);
+  });
+
+  it('refunds the reserved quota unit on a provider_error (real incident regression)', async () => {
+    mocks.callClaudeForInterviewPrep.mockResolvedValueOnce({
+      status: 'provider_error',
+      message: 'network timeout',
+    });
+    await generateInterviewPrep(FAKE_SUPABASE, USER_ID, PARAMS);
+    expect(mocks.decrementOwnAiRequestUsage).toHaveBeenCalledWith(FAKE_SUPABASE, USER_ID);
   });
 });
 

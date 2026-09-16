@@ -117,7 +117,9 @@ describe('buildStructuredResumeFromProfile', () => {
     });
   });
 
-  it('falls back to email, then a generic placeholder, when fullName is unset — never fabricates a real name', () => {
+  it('falls back to a generic placeholder — never the account email — when fullName is unset', () => {
+    // Real production incident: an unset profile name silently became "Full name:
+    // user@example.com" on a generated résumé. An email address is not a name.
     const noName = buildStructuredResumeFromProfile(
       { ...PROFILE, fullName: null },
       [],
@@ -125,7 +127,8 @@ describe('buildStructuredResumeFromProfile', () => {
       [],
       [],
     );
-    expect(noName.header.fullName).toBe('ada@example.com');
+    expect(noName.header.fullName).toBe('Your Name');
+    expect(noName.header.fullName).not.toBe(PROFILE.email);
 
     const noNameOrEmail = buildStructuredResumeFromProfile(
       { ...PROFILE, fullName: null, email: null },

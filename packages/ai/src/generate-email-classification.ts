@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
+  decrementOwnAiRequestUsage,
   incrementOwnAiRequestUsage,
   recordAiUsageEvent,
   type AiUsageCheck,
@@ -117,6 +118,11 @@ export async function classifyEmail(
   });
 
   if (outcome.kind === 'provider_error') {
+    // The provider was never meaningfully reached — give back the unit Step 1 pre-emptively
+    // reserved (supabase/migrations/0033_ai_request_usage_accounting_fix.sql) — this is the exact
+    // real incident this fixes: 50 consecutive Claude authentication failures from this path
+    // silently exhausted a real account's entire shared quota with zero legitimate AI usage.
+    await decrementOwnAiRequestUsage(supabase, userId).catch(() => {});
     return { status: 'provider_error', message: outcome.message };
   }
   if (outcome.kind === 'rejected') {

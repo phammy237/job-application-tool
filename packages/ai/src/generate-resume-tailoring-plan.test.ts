@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   listCurrentOwnRequirementMappings: vi.fn(),
   listOwnApprovedFactsForGeneration: vi.fn(),
   incrementOwnAiRequestUsage: vi.fn(),
+  decrementOwnAiRequestUsage: vi.fn(),
   recordAiUsageEvent: vi.fn(),
   callClaudeForResumeTailoring: vi.fn(),
   // Phase 7E application/résumé mutation-safety audit (§54) — none of these exist as call sites
@@ -36,6 +37,7 @@ vi.mock('@career-os/database', () => ({
   listCurrentOwnRequirementMappings: mocks.listCurrentOwnRequirementMappings,
   listOwnApprovedFactsForGeneration: mocks.listOwnApprovedFactsForGeneration,
   incrementOwnAiRequestUsage: mocks.incrementOwnAiRequestUsage,
+  decrementOwnAiRequestUsage: mocks.decrementOwnAiRequestUsage,
   recordAiUsageEvent: mocks.recordAiUsageEvent,
   changeOwnApplicationStatus: mocks.changeOwnApplicationStatus,
   markApplicationAppliedAtomic: mocks.markApplicationAppliedAtomic,
@@ -202,6 +204,7 @@ function companyResearchSnapshot(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.decrementOwnAiRequestUsage.mockResolvedValue(undefined);
   mocks.getOwnApplication.mockResolvedValue(application());
   mocks.getOwnResumeVersion.mockResolvedValue(resumeVersion());
   mocks.getOwnJobSnapshot.mockResolvedValue(SNAPSHOT);
@@ -421,6 +424,15 @@ describe('generateResumeTailoringPlan — grounding and allowlist enforcement', 
     const result = await generateResumeTailoringPlan(FAKE_SUPABASE, USER_ID, PARAMS);
     expect(result).toEqual({ status: 'provider_error', message: 'network timeout' });
     expect(mocks.callClaudeForResumeTailoring).toHaveBeenCalledTimes(1);
+  });
+
+  it('refunds the reserved quota unit on a provider_error (real incident regression)', async () => {
+    mocks.callClaudeForResumeTailoring.mockResolvedValueOnce({
+      status: 'provider_error',
+      message: 'network timeout',
+    });
+    await generateResumeTailoringPlan(FAKE_SUPABASE, USER_ID, PARAMS);
+    expect(mocks.decrementOwnAiRequestUsage).toHaveBeenCalledWith(FAKE_SUPABASE, USER_ID);
   });
 });
 

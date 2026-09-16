@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   incrementOwnAiRequestUsage: vi.fn(),
+  decrementOwnAiRequestUsage: vi.fn(),
   getOwnJobSnapshot: vi.fn(),
   listOwnApprovedFactsForGeneration: vi.fn(),
   createOwnPendingRequirementMappingRun: vi.fn(),
@@ -15,6 +16,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@career-os/database', () => ({
   incrementOwnAiRequestUsage: mocks.incrementOwnAiRequestUsage,
+  decrementOwnAiRequestUsage: mocks.decrementOwnAiRequestUsage,
   getOwnJobSnapshot: mocks.getOwnJobSnapshot,
   listOwnApprovedFactsForGeneration: mocks.listOwnApprovedFactsForGeneration,
   createOwnPendingRequirementMappingRun: mocks.createOwnPendingRequirementMappingRun,
@@ -103,6 +105,7 @@ const PARAMS = { jobSnapshotId: SNAPSHOT_ID };
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.decrementOwnAiRequestUsage.mockResolvedValue(undefined);
   mocks.incrementOwnAiRequestUsage.mockResolvedValue(ALLOWED_USAGE);
   mocks.getOwnJobSnapshot.mockResolvedValue(SNAPSHOT);
   mocks.listOwnApprovedFactsForGeneration.mockResolvedValue([RELEVANT_FACT]);
@@ -233,6 +236,15 @@ describe('generateRequirementMapping — rejection gate and retry-once', () => {
       RUN_ID,
       'provider_error',
     );
+  });
+
+  it('refunds the reserved quota unit on a provider_error (real incident regression)', async () => {
+    mocks.callClaudeForRequirementMapping.mockResolvedValueOnce({
+      status: 'provider_error',
+      message: 'network timeout',
+    });
+    await generateRequirementMapping(FAKE_SUPABASE, USER_ID, PARAMS);
+    expect(mocks.decrementOwnAiRequestUsage).toHaveBeenCalledWith(FAKE_SUPABASE, USER_ID);
   });
 
   it('treats a duplicate requirement fingerprint as a validation failure — the whole run is rejected, never partially promoted', async () => {

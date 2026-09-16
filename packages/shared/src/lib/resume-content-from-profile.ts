@@ -56,10 +56,14 @@ function isApproved(record: { userApproved: boolean; approvedForApplications: bo
 }
 
 /** `fullName` is required by `resumeHeaderSchema` (a résumé header always needs *some* name
- * label) — falls back to the profile's email, then a plainly-editable placeholder, rather than
- * ever leaving the studio with an invalid document. Never fabricates a real name. */
+ * label) — falls back to a plainly-editable placeholder when the profile has no real name set,
+ * rather than ever leaving the studio with an invalid document. Never uses the account's email
+ * address as a stand-in for the candidate's name (a real production bug: an unset name silently
+ * became "Full name: user@example.com" on a generated résumé) — an email is not a name, and
+ * presenting it as one is exactly the kind of misleading-content bug this file otherwise avoids
+ * by construction. Never fabricates a real name either way. */
 function buildHeaderFromProfile(profile: Profile | null): ResumeHeader {
-  const fullName = profile?.fullName?.trim() || profile?.email?.trim() || 'Your Name';
+  const fullName = profile?.fullName?.trim() || 'Your Name';
   return {
     fullName,
     email: profile?.email ?? null,

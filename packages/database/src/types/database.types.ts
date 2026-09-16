@@ -1060,6 +1060,12 @@ export interface Database {
           ai_request_period_started_at: string;
         }[];
       };
+      decrement_ai_request_usage: {
+        Args: {
+          p_user_id: string;
+        };
+        Returns: undefined;
+      };
       upsert_application_from_extension: {
         Args: {
           p_user_id: string;

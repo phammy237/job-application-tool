@@ -53,6 +53,14 @@ export async function ResumeSection({
           <p className="text-muted-foreground text-xs">
             Version {workingVersion.versionNumber} — {workingVersion.displayName}
           </p>
+          {/* The resume card must never look fully usable when it isn't — a real production bug
+              had this card show a version as if it were ready while Studio separately revealed it
+              had no structured content at all. */}
+          {workingVersion.snapshotFormat !== 'STRUCTURED_V1' ? (
+            <p className="text-amber-600 text-xs">
+              No structured content yet — Studio will start a blank draft.
+            </p>
+          ) : null}
           <div className="flex gap-3 pt-2">
             <Link
               href={`/resumes/${workingVersion.resumeId}`}

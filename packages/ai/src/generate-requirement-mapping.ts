@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   createOwnPendingRequirementMappingRun,
+  decrementOwnAiRequestUsage,
   getOwnJobSnapshot,
   incrementOwnAiRequestUsage,
   listOwnApprovedFactsForGeneration,
@@ -153,6 +154,9 @@ export async function generateRequirementMapping(
   });
 
   if (outcome.kind === 'provider_error') {
+    // Claude was never meaningfully reached — give back the unit Step 1 pre-emptively reserved
+    // (supabase/migrations/0033_ai_request_usage_accounting_fix.sql).
+    await decrementOwnAiRequestUsage(supabase, userId).catch(() => {});
     await markOwnRequirementMappingRunFailed(supabase, userId, runId, 'provider_error');
     return { status: 'provider_error', message: outcome.message };
   }

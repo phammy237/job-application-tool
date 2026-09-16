@@ -98,3 +98,25 @@ export async function incrementOwnAiRequestUsage(
     aiRequestPeriodStartedAt: row.ai_request_period_started_at,
   };
 }
+
+/**
+ * Gives back the one unit `incrementOwnAiRequestUsage` pre-emptively reserved
+ * (supabase/migrations/0033_ai_request_usage_accounting_fix.sql) — called by every
+ * packages/ai generator specifically and only when the provider call itself fails
+ * (`outcome.kind === 'provider_error'`: an auth/network/5xx failure, never a real model
+ * response), never on accepted/rejected/refusal. A provider_error means Claude was never
+ * meaningfully reached, so it shouldn't permanently spend the user's shared quota — this is
+ * the fix for the real incident where 50 consecutive authentication failures from the Gmail
+ * email-classification path silently exhausted a real account's entire quota with zero
+ * legitimate AI usage. Best-effort by design (never let a telemetry/refund step fail the
+ * caller's already-decided response) — every call site wraps this in `.catch()`. Floors at 0
+ * (never goes negative) so this is safe even if called more than once for the same reserved
+ * unit.
+ */
+export async function decrementOwnAiRequestUsage(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+): Promise<void> {
+  const { error } = await supabase.rpc('decrement_ai_request_usage', { p_user_id: userId });
+  assertNoError(error, 'decrementOwnAiRequestUsage');
+}
