@@ -5,3 +5,5 @@ export * from './adapters/lever';
 export * from './adapters/ashby';
 export * from './orchestrator/sync-source';
 export * from './orchestrator/run-sync';
+export * from './ranking/extract-features';
+export * from './ranking/rank-user';

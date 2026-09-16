@@ -1061,3 +1061,29 @@ in place as the provider's own listing changes; freshness/history is tracked via
 `first_seen_at`/`last_seen_at`/`content_updated_at`/`status`, not by versioning rows). Zero
 Claude/Tavily/embedding calls anywhere in this track — see `docs/JOB_DISCOVERY.md` §3/§11 for the
 full audit.
+
+## Job Discovery Ranking (D4, migration 0030)
+
+Full design record: `docs/JOB_DISCOVERY.md` §18-32. Four new tables, deterministic, zero AI.
+
+| table | key columns | RLS |
+| --- | --- | --- |
+| `job_catalog_features` | `job_catalog_id` unique, role/seniority/employment/workplace enums (each with an explicit `'UNKNOWN'` member, unlike `job_catalog`'s own `null` convention), `location_tokens text[]`, `extracted_competency_codes text[]`, `feature_version` | global, `authenticated` select-only, service-role write |
+| `discovery_scoring_profiles` | `user_id` unique, `criteria_weights`/`role_preferences`/`seniority_preferences`/`location_preferences`/`work_mode_preferences`/`employment_type_preferences` (all `jsonb`), `preset` | standard 4-policy (user-owned) |
+| `discovery_eligibility_profiles` | `user_id` unique, 7 nullable self-reported fields (`currently_authorized_to_work`, `requires_sponsorship_now`/`future`, `is_us_citizen`, `has_active_security_clearance`, `eligible_to_obtain_security_clearance`, `graduation_year`) | standard 4-policy (user-owned) |
+| `user_job_match_scores` | `(user_id, job_catalog_id)` unique, `match_score`/`coverage numeric(5,2)`, `eligibility_status`, `score_components`/`eligibility_checks jsonb`, three version strings | select-only scoped to caller (same posture as `job_snapshots`) — every write via the service-role `discovery:rank` CLI |
+
+`discovery_scoring_profiles`/`discovery_eligibility_profiles` deliberately use the *standard*
+four-policy RLS pattern (unlike `job_catalog`/`job_snapshots`'s select-only-plus-service-role
+posture) since a future D5 UI will let users write these directly through their own session —
+today's `scripts/discovery/set-profile.ts` dev CLI writes through the service-role admin client,
+which works identically under either RLS posture. `user_job_match_scores` instead follows the
+`job_snapshots` pattern (select-only) since a score is always the *output* of a batch
+recomputation (`scripts/discovery/rank.ts`), never a direct client write — an authenticated insert
+policy would let a client fabricate its own "Match: 100" row via PostgREST.
+
+`user_job_match_scores` keeps exactly one current row per `(user_id, job_catalog_id)` — V1 keeps
+no score history, overwritten in place on recompute. Three independent version strings
+(`feature_version`, `ranking_version`, `eligibility_version`) are stamped onto every computed row
+so a stale row is always identifiable and recomputable when extraction rules, scoring math, or
+eligibility rules change independently.

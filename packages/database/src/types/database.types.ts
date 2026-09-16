@@ -861,6 +861,112 @@ export interface Database {
         Update: Partial<Database['public']['Tables']['job_catalog']['Row']>;
         Relationships: [];
       };
+      job_catalog_features: {
+        Row: {
+          id: string;
+          job_catalog_id: string;
+          content_hash_at_extraction: string;
+          plain_text_description: string;
+          role_family: string;
+          seniority: string;
+          is_internship: boolean;
+          is_new_grad: boolean;
+          normalized_employment_type: string;
+          normalized_workplace_type: string;
+          location_tokens: string[];
+          extracted_competency_codes: string[];
+          required_years_min: number | null;
+          required_years_max: number | null;
+          graduation_year_min: number | null;
+          graduation_year_max: number | null;
+          sponsorship_signal: string;
+          citizenship_requirement: string;
+          clearance_requirement: string;
+          work_authorization_requirement: string;
+          evidence: Json;
+          feature_version: string;
+          computed_at: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['job_catalog_features']['Row']> & {
+          job_catalog_id: string;
+          content_hash_at_extraction: string;
+          feature_version: string;
+        };
+        Update: Partial<Database['public']['Tables']['job_catalog_features']['Row']>;
+        Relationships: [];
+      };
+      discovery_scoring_profiles: {
+        Row: {
+          id: string;
+          user_id: string;
+          profile_version: string;
+          preset: string;
+          criteria_weights: Json;
+          role_preferences: Json;
+          seniority_preferences: Json;
+          location_preferences: Json;
+          work_mode_preferences: Json;
+          employment_type_preferences: Json;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['discovery_scoring_profiles']['Row']> & {
+          user_id: string;
+        };
+        Update: Partial<Database['public']['Tables']['discovery_scoring_profiles']['Row']>;
+        Relationships: [];
+      };
+      discovery_eligibility_profiles: {
+        Row: {
+          id: string;
+          user_id: string;
+          currently_authorized_to_work: boolean | null;
+          requires_sponsorship_now: boolean | null;
+          requires_sponsorship_future: boolean | null;
+          is_us_citizen: boolean | null;
+          has_active_security_clearance: boolean | null;
+          eligible_to_obtain_security_clearance: boolean | null;
+          graduation_year: number | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['discovery_eligibility_profiles']['Row']> & {
+          user_id: string;
+        };
+        Update: Partial<Database['public']['Tables']['discovery_eligibility_profiles']['Row']>;
+        Relationships: [];
+      };
+      user_job_match_scores: {
+        Row: {
+          id: string;
+          user_id: string;
+          job_catalog_id: string;
+          match_score: number;
+          coverage: number;
+          eligibility_status: string;
+          score_components: Json;
+          eligibility_checks: Json;
+          ranking_version: string;
+          feature_version: string;
+          eligibility_version: string;
+          computed_at: string;
+          created_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['user_job_match_scores']['Row']> & {
+          user_id: string;
+          job_catalog_id: string;
+          match_score: number;
+          coverage: number;
+          eligibility_status: string;
+          ranking_version: string;
+          feature_version: string;
+          eligibility_version: string;
+        };
+        Update: Partial<Database['public']['Tables']['user_job_match_scores']['Row']>;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: {

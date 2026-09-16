@@ -38,6 +38,15 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
  * design, not by omission. Every write goes through the service-role admin client exclusively
  * (no authenticated write RLS policy on either table), which is the actual enforcement boundary
  * here, verified by supabase/tests/database/'s job-discovery pgTAP suite.
+ *
+ * job-catalog-features.ts (Job Discovery Track D4) is exempt for the same "deliberately global,
+ * no user_id column" reason as job-catalog.ts — `job_catalog_features` is derived, user-
+ * independent job data.
+ *
+ * candidate-competency-codes.ts (Job Discovery Track D4) is exempt for the same "no direct table
+ * query" reason as consistency.ts: it issues no query of its own — it composes
+ * listOwnSkills/listOwnExperiences/listOwnEducation/listOwnProjects/listOwnCandidateFacts, each
+ * already covered by this same test.
  */
 const EXEMPT_FILES = new Set([
   'feature-flags.ts',
@@ -45,6 +54,8 @@ const EXEMPT_FILES = new Set([
   'resume-tailoring-save.ts',
   'job-sources.ts',
   'job-catalog.ts',
+  'job-catalog-features.ts',
+  'candidate-competency-codes.ts',
 ]);
 
 describe('every user-scoped query filters by user_id explicitly', () => {

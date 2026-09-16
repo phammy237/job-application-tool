@@ -167,7 +167,7 @@ found" phases above. Full design record: `docs/JOB_DISCOVERY.md`.
 - [x] D1 — Global job catalog + source registry
 - [x] D2 — Greenhouse / Lever / Ashby ingestion
 - [x] D3 — Freshness, lifecycle, daily synchronization
-- [ ] D4 — Deterministic feature extraction + personalized ranking
+- [x] D4 — Deterministic feature extraction + personalized ranking + eligibility
 - [ ] D5 — /discover dashboard
 - [ ] D6 — Discovery → existing Career OS application handoff
 - [ ] D7 — Generic company career-site crawler
@@ -195,6 +195,35 @@ assertions), a real ingestion run against 7 real, hand-verified boards spanning 
 providers (1,371 real postings fetched and cataloged with zero rejects), and a forced second run
 proving idempotency (1,371/1,371 "unchanged," zero duplicates). See `docs/JOB_DISCOVERY.md` for
 the full design, including what's deliberately deferred to D4+.
+
+**D4 (migration `0030_job_discovery_ranking.sql`)**: answers three deliberately separate
+questions per (user, job) — Match (0-100, user-weighted), Eligibility (`ELIGIBLE`/`UNKNOWN`/
+`CONFLICT`, a standalone rules engine), and Coverage (0-100%, data availability, never conflated
+with statistical confidence) — never collapsed into one number. `job_catalog_features` (global,
+one row per job) holds deterministic title/description-derived classifications — role family and
+seniority from title only, employment/workplace type normalized from 8+ observed raw spellings
+down to 6 buckets, location tokens (a separate, additive module from D1-D3's own location
+parsing), competency concepts matched via a small alias registry against trusted approved
+candidate data only, and sponsorship/work-authorization/citizenship/clearance signals extracted
+via conservative sentence-scoped phrase rules. `discovery_scoring_profiles`/
+`discovery_eligibility_profiles` are user-owned (standard four-policy RLS, unlike the global
+tables above) — every criterion importance is a user-chosen 0-10 weight, normalized at scoring
+time; `0` disables a criterion entirely rather than scoring it as a mismatch, and UNKNOWN (missing
+job data *or* missing user preference for a known value) is excluded from the match-score ratio
+while still lowering Coverage. `user_job_match_scores` persists one current row per (user, job),
+versioned independently for feature/ranking/eligibility rules so any of the three can change
+without invalidating the others. Zero AI/Tavily/embedding calls anywhere in the path (a dedicated
+provider-fairness test suite plus a live-data decomposition both confirm no provider-identity bias
+in the scoring math). Live-verified against the linked Supabase project: pgTAP (`supabase/tests/
+database/0033_job_discovery_ranking.test.sql`, 28/28 assertions), and a full live run against all
+1,371 real catalog jobs for one representative test persona (1,326 scored, 45 excluded by an
+EXCLUDE location preference, 3 real eligibility conflicts correctly detected and evidenced,
+idempotent on a second run) — including one genuine bug caught and fixed by the live run itself
+(a `job_catalog` fetch missing pagination silently capped at 1,000 of 1,371 rows, and an oversized
+`.in()` filter chunk overflowing PostgREST's HTTP header limit) and one genuine extraction gap
+caught and fixed (a live Palantir clearance-eligibility phrasing the original phrase list missed).
+See `docs/JOB_DISCOVERY.md` §18-32 for the full design, the live numbers, and what's deliberately
+deferred to D5+.
 
 The whole Phase 5B line (5B.0 through 5B.4, plus the hardening pass) is complete. Phase 5C is now
 complete end to end — 5C.1 (deterministic next actions) through 5C.4 (polish and closure) — see

@@ -29,7 +29,8 @@ job-application-tool/
 │   ├── ai/                   # Server-only Claude integration (retrieval, prompting, validation)
 │   ├── email/                 # Server-only Gmail integration (OAuth, classification)
 │   ├── database/             # Supabase client + typed query layer (RLS-aware)
-│   └── discovery/             # Job Discovery Track (D1-D3): ATS adapters + ingestion orchestrator —
+│   └── discovery/             # Job Discovery Track: ATS adapters + ingestion orchestrator (D1-D3),
+│                               # deterministic feature extraction + ranking orchestration (D4) —
 │                               # zero AI, zero dependency on packages/ai (docs/JOB_DISCOVERY.md)
 ├── scripts/
 │   └── discovery/             # Manual CLI entry points: discovery:sync, discovery:import-sources

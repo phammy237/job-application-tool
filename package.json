@@ -17,7 +17,10 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "discovery:sync": "vite-node scripts/discovery/sync.ts",
-    "discovery:import-sources": "vite-node scripts/discovery/import-sources.ts"
+    "discovery:import-sources": "vite-node scripts/discovery/import-sources.ts",
+    "discovery:extract-features": "vite-node scripts/discovery/extract-features.ts",
+    "discovery:rank": "vite-node scripts/discovery/rank.ts",
+    "discovery:set-profile": "vite-node scripts/discovery/set-profile.ts"
   },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^8.18.0",

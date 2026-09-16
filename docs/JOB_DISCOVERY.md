@@ -347,21 +347,405 @@ manual triggering), a `concurrency` group so two crawls never overlap, a 30-minu
 only the two Supabase secrets in its environment (§11). Runs `npm run discovery:sync` as-is —
 the exact same script a developer runs locally.
 
-## 17. Future phases (explicitly deferred, not built here)
+## 18. D4 — Deterministic feature extraction, user-configurable ranking, and eligibility
+
+D4 answers three deliberately separate questions about a (user, job) pair — never collapsed into
+one number (a non-negotiable product decision):
+
+| Question | Output | Notes |
+| --- | --- | --- |
+| **Match** — "how well does this fit what the user wants and can credibly bring?" | 0–100, user-weighted | `computeMatchScore` |
+| **Eligibility** — "does the posting conflict with the user's self-reported eligibility?" | `ELIGIBLE` / `UNKNOWN` / `CONFLICT` | a separate rules engine, never folded into Match |
+| **Coverage** — "how much of the user's enabled scoring model could we actually evaluate?" | 0–100%, data coverage | NOT statistical confidence |
+
+Zero AI: no Claude/Tavily/embedding call anywhere in D4 (§25 below is the audit). Career OS owns
+the supported criteria/checks; users choose importance and preferences within them, never
+arbitrary executable rules.
+
+## 19. Job feature model (`job_catalog_features`, one row per `job_catalog` row)
+
+Global, user-independent, deterministic — computed once per job (per `feature_version`), reused
+for every user's scoring. Every classification field uses an explicit `'UNKNOWN'` enum member
+(unlike `job_catalog` itself, which uses `null`) since this table exists specifically to represent
+"what could Career OS determine" as a first-class value. Computed by
+`extractJobCatalogFeatures` (`packages/shared/src/lib/extract-job-catalog-features.ts`), which
+combines every extractor below — pure, synchronous, no I/O.
+
+- `plainTextDescription` — `htmlToPlainText(job_catalog.description)` (§20).
+- `roleFamily`, `seniority` — title-only classification (§21).
+- `isInternship`, `isNewGrad` — derived from `normalizedEmploymentType` OR title patterns, so
+  Greenhouse (which never supplies `employment_type`) still gets a correct internship flag from
+  the title alone.
+- `normalizedEmploymentType`, `normalizedWorkplaceType` (§22).
+- `locationTokens` (§23).
+- `extractedCompetencyCodes` (§24).
+- `requiredYearsMin`/`Max`, `graduationYearMin`/`Max` — conservative regex extraction from
+  `plainTextDescription`, guarded against confusing a graduation year/company age/revenue figure
+  with years of experience (only inside a sentence mentioning both "experience" and "year(s)").
+- `sponsorshipSignal`, `citizenshipRequirement`, `clearanceRequirement`,
+  `workAuthorizationRequirement`, `evidence` — §26.
+- `contentHashAtExtraction`, `featureVersion` — staleness detection (§29).
+
+## 20. HTML → plain text (`packages/shared/src/lib/html-to-plain-text.ts`)
+
+Regex-based (no `DOMParser` dependency — this package runs in Node and the extension content-
+script/service-worker, neither guaranteed to have one). `<script>`/`<style>` blocks are removed
+entirely, including their content. Block-level tags' *closing* tag (and `<br>`) becomes a line
+break; the matching opening tag is stripped silently, so two adjacent blocks produce exactly one
+line break, not two. Entities are decoded (reuses `decodeHtmlEntities`). Whitespace is collapsed
+within a line; runs of blank lines collapse to one. The raw `description` column is never
+modified — every extractor downstream (role/seniority/competency/experience/graduation/
+sponsorship/citizenship/clearance) runs on the derived plain text, never the HTML.
+
+## 21. Role family / seniority extraction
+
+Both are **title-only** in V1 (no description fallback) — job-description keyword scanning is
+noisy (boilerplate, "nice to have" lists) and a wrong guess is worse than UNKNOWN.
+
+**Role family** (`extract-role-family.ts`): `PRODUCT_MANAGEMENT`, `TECHNICAL_PROGRAM_MANAGEMENT`,
+`PRODUCT_ANALYTICS`, `DATA_ANALYTICS`, `DATA_SCIENCE`, `SOFTWARE_ENGINEERING`,
+`BUSINESS_ANALYTICS`, `STRATEGY_OPERATIONS`, `CONSULTING`, `UNKNOWN`. An ordered, phrase-matched
+rule list, most-specific first (`"technical program manager"` before any generic manager rule) —
+no company-specific branches (a genuinely ambiguous, company-specific title like Palantir's
+"Deployment Strategist" is honestly `UNKNOWN`, not force-fit).
+
+**Seniority** (`extract-seniority.ts`): `INTERN`, `NEW_GRAD`, `ENTRY`, `MID`, `SENIOR`, `STAFF`,
+`PRINCIPAL`, `MANAGER`, `DIRECTOR_PLUS`, `UNKNOWN`. Only the explicit signals the design spec
+named are used — there is deliberately no rule for `ENTRY`/`MID` (a plain "Software Engineer"
+title stays `UNKNOWN`, never guessed as `MID`). A dedicated wrinkle: many titles legitimately
+contain "manager" as a *functional* label (Product Manager, Program Manager, Technical Program
+Manager, Account Manager) without indicating a people-management level — a denylist of those
+phrases is checked before the generic `MANAGER` rule, so "Product Manager" is `UNKNOWN` seniority
+(correct — it says nothing about level), while "Engineering Manager" is `MANAGER`.
+
+Phrase matching (`phrase-matcher.ts`) uses lookaround (`(?<![A-Za-z0-9])...(?![A-Za-z0-9])`), not
+plain regex `\b`, so it correctly matches phrases that themselves end in punctuation ("C++",
+"Sr.") — plain `\b` never matches at the boundary between two non-word characters (e.g. "+" then
+a space), which would otherwise silently break those specific phrases.
+
+## 22. Employment type / workplace type normalization
+
+**Employment type** (`normalize-employment-type.ts`): raw `job_catalog.employment_type` → `FULL_TIME`
+/ `PART_TIME` / `CONTRACT` / `INTERNSHIP` / `TEMPORARY` / `UNKNOWN`. Live data showed 8+ distinct
+raw spellings for ~5 categories, including within one provider (Lever: "Full Time" vs
+"Full-time") — normalization strips whitespace/punctuation/case before matching. `null` (100% of
+Greenhouse) always maps to `UNKNOWN`, never a guessed default.
+
+**Workplace type** (`normalize-workplace-type.ts`): prefers the structured `job_catalog.workplace_type`
+value; only when that's `null` does it fall back to a conservative phrase scan of `location_text`
+ALONE (never the full description — too noisy). ONSITE is never inferred from the mere absence of
+a "remote"/"hybrid" phrase.
+
+## 23. Location tokens (`extract-location-tokens.ts`)
+
+A *separate, additive* module from D1-D3's `parseLocation` — `job_catalog`'s own `city`/
+`state_region`/`country` columns are untouched. No geocoding: a small deterministic alias table
+sufficient for preference *matching*. Multi-location postings are preserved as multiple tokens
+(split on the unambiguous `;` separator, confirmed live e.g. `"New York, NY; San Francisco, CA"`)
+— comma-only multi-city strings (`"Seattle, San Francisco, New York City"`) stay unparsed, the
+same conservative call D1-D3 already made. Equivalent raw strings normalize to the same token:
+`"New York, NY (HQ)"`, `"New York, NY"`, and `"New York, New York"` all produce `NEW_YORK_NY`
+(trailing parenthetical stripped; both 2-letter state codes and full state names recognized).
+`"UK"` and `"United Kingdom"` both produce `UNITED_KINGDOM`. An empty array means UNKNOWN — never
+a guessed "primary" location.
+
+## 24. Competency / skill fit
+
+A small, explicit, alias-based concept registry (`competency-registry.ts`) — not a naive keyword
+count, not a speculative ontology. Concepts are justified by observed candidate vocabulary,
+observed catalog vocabulary, and the target role families (technical: SQL, Python, JavaScript/
+TypeScript, C++/C#, data analysis, machine learning; product/business: product strategy, product
+analytics, experimentation, customer research, roadmap, stakeholder management, cross-functional
+collaboration, project/program management, B2B, technical fluency). Every match is word/phrase-
+boundary safe (§21's lookaround technique) — bare single-letter language names ("R", "C", "Go")
+are deliberately excluded as too ambiguous; "C++"/"C#" are included since they're unambiguous. A
+concept is counted once regardless of repetition in the source text.
+
+Candidate-side evidence (`deriveOwnCandidateCompetencyCodes`, `packages/database`) comes
+**exclusively** from trusted, approved profile data — `skills.name` (matched directly, already a
+high-trust structured label), `experiences`/`projects` descriptions, and `candidate_facts.normalizedValue`,
+every one gated on `userApproved && approvedForApplications` (the same grounding rule
+`docs/AI_GROUNDING.md` defines for `packages/ai`, applied here even with zero AI). `education` is
+inspected but contributes nothing (school/degree/GPA text carries no competency vocabulary).
+
+`COMPETENCY_FIT` = `|job concepts ∩ candidate concepts| / |job concepts|` — `null` (UNKNOWN) when
+the job has zero extracted concepts (nothing to evaluate against), never when the candidate
+simply matches none of them (that's a real, known `0` fit, not UNKNOWN — see §27).
+
+## 25. Sponsorship / work-authorization / citizenship / clearance extraction
+
+All in `packages/shared/src/lib/extract-{sponsorship-signal,work-authorization-requirement,
+citizenship-requirement,clearance-requirement}.ts` — explicit phrase rules, sentence-scoped,
+each returning a bounded (300-char) evidence snippet alongside the classification. Silence always
+means `UNKNOWN`, never a guess.
+
+- **Sponsorship**: `AVAILABLE` / `NOT_AVAILABLE` / `UNKNOWN`. Negative phrases checked first
+  ("unable to sponsor", "no sponsorship", "must not require sponsorship now or in the future",
+  "without sponsorship"); positive phrases second ("sponsorship available", "we sponsor H-1B",
+  "OPT/CPT candidates welcome").
+- **Work authorization**: a *narrower*, separate signal from sponsorship — "must be authorized to
+  work" style language, but explicitly excluding any sentence that also mentions "sponsor" (that
+  sentence belongs to the sponsorship extractor; the same statement is never double-counted into
+  two checks).
+- **Citizenship**: V1 covers only the dominant explicit US-market pattern ("US citizens only",
+  "must be a US citizen") — not a general nationality parser.
+- **Clearance**: distinguishes `ACTIVE_CLEARANCE_REQUIRED` (already-held) from
+  `CLEARANCE_ELIGIBILITY_REQUIRED` (merely eligible to obtain) — not interchangeable. Live-data
+  fix: a real Palantir phrase, *"Active clearance or an ability to obtain an active clearance in
+  the country the job is advertised"*, is explicitly classified `CLEARANCE_ELIGIBILITY_REQUIRED`
+  (the posting itself offers the more permissive bar as an alternative), not the stricter
+  category — caught by the live ranking run against the real catalog (§31) and fixed by widening
+  the extractor with an "eligibility qualifier" check, not by touching the eligibility rules
+  engine itself.
+
+None of these extractors ever infer from company identity, size, industry, location, or silence
+— and D4 makes no web search of any kind.
+
+## 26. Discovery Scoring Profile (`discovery_scoring_profiles`, user-owned)
+
+One row per user (`getOrCreateOwnScoringProfile`, same get-or-create safe-fallback pattern as
+`getOrCreateOwnUserSettings`), created with DB-column BALANCED-preset defaults on first access.
+Fields:
+
+- `preset` — `BALANCED` / `CAREER_FIT_FIRST` / `LOCATION_FIRST` / `CUSTOM`. **One scoring engine**
+  — a preset only pre-populates the same editable fields below; it never forks the algorithm.
+- `criteriaWeights` — `{criterion: 0-10}` for the seven V1 criteria (`ROLE_FIT`, `COMPETENCY_FIT`,
+  `SENIORITY_FIT`, `LOCATION_FIT`, `WORK_MODE_FIT`, `EMPLOYMENT_TYPE_FIT`, `OBSERVED_FRESHNESS`).
+  `0` disables a criterion — excluded entirely from scoring and coverage, not scored as
+  zero-fit. Values do **not** need to sum to 100; normalization happens at scoring time (§27).
+  Deliberately excludes salary, ATS provider, company popularity/prestige, applicant counts,
+  employer size, and raw provider `posted_at` — see §31 for why each was left out.
+- `rolePreferences`, `seniorityPreferences` — `{value: 0-10}` maps. A value the job has but the
+  user never rated is `UNKNOWN` for that criterion (see §27's missing-data symmetry), not an
+  implicit 0 — a deliberate interpretation this document flags explicitly since the design spec
+  didn't literally say what to do with an *unrated* known value.
+- `locationPreferences` — `{locationToken: 'PREFERRED'|'ACCEPTABLE'|'AVOID'|'EXCLUDE'}`.
+  `PREFERRED`=1.0, `ACCEPTABLE`=0.7, `AVOID`=0.2 fit constants. `EXCLUDE` is a **hard personal
+  filter**, not a score — a job with any `EXCLUDE`-matching location token is removed from
+  consideration entirely (no `user_job_match_scores` row is written for it at all), never merely
+  scored 0. This is a *discovery preference*, structurally distinct from Eligibility (§28) — never
+  labeled a "conflict."
+- `workModePreferences`, `employmentTypePreferences` — `{value: 0-10}` maps, same symmetry rule.
+
+RLS: standard four-policy pattern (`docs/DATA_MODEL.md` "RLS policy pattern") — a user can read/
+update only their own row, same as `profiles`/`candidate_facts`. Chosen over the "select-only,
+service-role-write" posture (`job_snapshots`' pattern) specifically because D5 will let users edit
+this directly through their own session; D4's CLI (`scripts/discovery/set-profile.ts`) writes
+through the service-role admin client today, which works identically either way.
+
+## 27. Match-score math / UNKNOWN handling / Coverage
+
+```
+matchScore = Σ(weight·fit) / Σ(weight for KNOWN enabled criteria) × 100
+coverage   = Σ(weight for KNOWN enabled)  / Σ(weight for ALL enabled)  × 100
+```
+
+(`computeMatchScore`, `packages/shared/src/lib/match-score.ts`) — reproduces the design spec's
+own worked example exactly (weights Role 10/Competency 9/Seniority 8/Location 7/WorkMode 4/
+Freshness 2, one UNKNOWN criterion → 87.78 match, 90% coverage).
+
+- A criterion with weight `0` is **disabled** — excluded from both sums entirely (not "missing
+  data", the user turned it off).
+- A criterion with weight `> 0` but `fit: null` (UNKNOWN) is excluded from the match-score
+  numerator/denominator but **does** count toward the coverage denominator — that's what makes
+  Coverage fall when provider data is sparse or the user hasn't rated a value the job has.
+- Never divides by zero: if nothing is both enabled and known, `matchScore = 0` (not thrown) — a
+  job Career OS can say nothing about defaults to the bottom of a ranked list, never the top. If
+  nothing is enabled at all, `coverage = 0`.
+- `evaluateCriteria` (`evaluate-criteria.ts`) is the per-criterion fit layer that feeds this —
+  every "missing data never penalizes" rule lives there, applied **symmetrically** to missing job
+  data (extractor returned UNKNOWN) and missing user data (job has a known value the user never
+  rated).
+
+**A load-bearing finding from the live run (§31)**: sorting purely by `matchScore` surfaces a real
+pathology — jobs where almost every criterion is UNKNOWN except one lucky `OBSERVED_FRESHNESS=1.0`
+(a job discovered in the last two days) land at `matchScore: 100` with `coverage` as low as 4%.
+The math is correct (100% of what little was knowable was a perfect fit) but the result is
+uninformative. **D5 must never rank by `matchScore` alone** — pairing it with a coverage
+floor/weighting is necessary for a useful list. This is a UX/ranking-composition finding for D5 to
+own, not a D4 engine defect (confirmed: filtering the same live results to `coverage >= 60%`
+produces a highly sensible, preference-aligned top list — see §31).
+
+## 28. Eligibility architecture
+
+A **separate rules engine** (`packages/shared/src/lib/evaluate-eligibility.ts` +
+`eligibility-aggregation.ts`) — never `+N`/`-N` points folded into Match.
+
+**Profile** (`discovery_eligibility_profiles`, user-owned, standard four-policy RLS, same
+get-or-create pattern as the scoring profile): `currentlyAuthorizedToWork`,
+`requiresSponsorshipNow`, `requiresSponsorshipFuture`, `isUsCitizen`, `hasActiveSecurityClearance`,
+`eligibleToObtainSecurityClearance`, `graduationYear` — every field nullable, defaulting to `null`
+("hasn't told us"), never inferred. `currentlyAuthorizedToWork` and the two sponsorship fields are
+deliberately three separate fields, never collapsed — an F-1/OPT-style candidate is commonly
+*currently* authorized (via OPT) while also genuinely *requiring future* sponsorship (e.g. H-1B);
+conflating those would misrepresent a very common real situation. CPT/OPT status is never assumed
+to satisfy an employer's stated requirement — only the user's own explicit answers are read.
+
+**Check types**: `SPONSORSHIP`, `WORK_AUTHORIZATION`, `CITIZENSHIP`, `SECURITY_CLEARANCE`,
+`GRADUATION_WINDOW`. Deliberately excludes years-of-experience and skill mismatch — those stay
+Match-only (a JD's "3+ years" is routinely wishlist language, not a hard legal bar).
+
+**Per-check relevance**: each of the five evaluators returns `null` (meaning: omit this check
+entirely from the result) whenever it isn't *applicable* — the user never answered the relevant
+question, or the posting never made the relevant statement. There is no fourth "not applicable"
+status; omission from the `checks[]` array *is* the "not applicable" signal. Example: `SPONSORSHIP`
+is only ever produced when the user has said `requiresSponsorshipNow` or `requiresSponsorshipFuture`
+is `true` — a user who doesn't need sponsorship gets no `SPONSORSHIP` check at all, even against a
+posting with restrictive language (never muddied into a false conflict).
+
+**Aggregation** (`aggregateEligibility`): any `CONFLICT` → overall `CONFLICT`; else any `UNKNOWN`
+→ overall `UNKNOWN`; else (including zero applicable checks) → `ELIGIBLE`. **Documented semantics,
+deliberately precise**: `"ELIGIBLE"` means *"Career OS found no conflict among the explicit
+eligibility requirements it could evaluate from this posting and the user's self-reported
+profile"* — it is **not** *"the employer will accept this applicant."* A user with an entirely
+empty eligibility profile gets `ELIGIBLE` on every job (vacuously — there's nothing to conflict
+with); D5's copy should account for this rather than implying a stronger guarantee.
+
+Each check carries a stable `reasonCode`, a template-generated (never AI-generated) `explanation`,
+a bounded `evidenceText` when the conclusion came from posting text, and a `sourceField`.
+
+## 29. Persistence, versioning, and recomputation
+
+Four tables (migration `0030_job_discovery_ranking.sql`):
+
+| Table | Ownership | RLS | Written by |
+| --- | --- | --- | --- |
+| `job_catalog_features` | global | `authenticated` select-only (like `job_catalog`) | `scripts/discovery/extract-features.ts` (service-role) |
+| `discovery_scoring_profiles` | user | standard 4-policy | the user's own session (future D5), or the dev CLI (service-role) |
+| `discovery_eligibility_profiles` | user | standard 4-policy | same as above |
+| `user_job_match_scores` | user | select-only, scoped to caller (like `job_snapshots`) | `scripts/discovery/rank.ts` (service-role) only |
+
+`user_job_match_scores` keeps **exactly one current row per `(user_id, job_catalog_id)`**
+(`unique` constraint, upserted in place) — V1 deliberately keeps no score history.
+
+Three independent version strings, each stamped onto every `job_catalog_features`/
+`user_job_match_scores` row at compute time: `featureVersion` (`d4-features-v2` — bumped once
+already, live, after the clearance-extractor fix in §25/§31), `rankingVersion` (`d4-ranking-v1`,
+the Match/Coverage math), `eligibilityVersion` (`d4-eligibility-v1`, the eligibility rules).
+Recomputation is explicit, not a queue: `listJobCatalogRowsNeedingFeatureRecompute` finds every
+job whose `content_hash_at_extraction` or `feature_version` no longer matches current reality;
+`scripts/discovery/rank.ts` always runs feature extraction first, then re-scores every user with a
+scoring profile. Both are idempotent — confirmed live (§31): a second `extract-features` run finds
+0 candidates, a second `rank` run reproduces identical counts.
+
+**A real bug this recomputation path caught live** (§31): the first "fetch every `job_catalog`
+row" implementation used a plain `.select()` with no pagination and a 500-UUID `.in()` chunk size.
+Against the real 1,371-row catalog this (a) silently returned only PostgREST's default 1,000-row
+page, and (b) overflowed the ~16KB HTTP header limit on the `.in()` filter
+(`HeadersOverflowError`), confirmed via the exact live error. Fixed in
+`packages/database/src/queries/job-catalog-features.ts`: every "fetch all rows" query now pages
+explicitly in chunks of 1,000, and the `.in()` id-lookup chunk size was reduced from 500 to 150.
+Both fixes are covered by unit tests and reverified against the live 1,371-job catalog afterward.
+
+## 30. Provider bias audit
+
+Dedicated test suite: `packages/discovery/src/ranking/provider-fairness.test.ts` — three
+`RawDiscoveredJob` fixtures shaped exactly as each real adapter would produce them (Greenhouse:
+`employmentType`/`workplaceType` always `null`; Lever: `employmentType` known, `workplaceType`
+often `null`; Ashby: both known), identical title/location/description/company otherwise. Proves,
+as executable tests: (1) criteria available equally across providers (role/competency/seniority/
+location/freshness) produce identical Match Score and Coverage regardless of provider; (2) a
+provider's structurally-missing fields lower Coverage but never the Match Score itself (UNKNOWN is
+excluded from the numerator/denominator, not averaged toward zero); (3) an UNKNOWN criterion is
+never mathematically equivalent to a real, known mismatch (0% vs 100% coverage distinguishes
+them); (4) salary/provider/`posted_at` are not inputs to Match at all — they aren't in the
+criterion registry.
+
+**Live decomposition** (§31 has the full numbers): the real run showed Greenhouse/Stripe's average
+Match Score notably lower than Lever/Ashby's for one test persona. Decomposed before concluding
+anything: Greenhouse's own `ROLE_FIT`-when-known average (0.465) is actually *higher* than
+Lever's (0.238) — ruling out an anti-Greenhouse scoring bias. The real driver: Stripe (this
+catalog's one Greenhouse source) posts proportionally more `SOFTWARE_ENGINEERING`-classified
+roles, which this specific test persona rated `2/10`, *and* Greenhouse's structural data gaps mean
+there are fewer other known criteria available to offset that one low, correctly-known fit. This
+is the ranking system correctly reflecting a genuine difference in the underlying job mix — not a
+provider-identity bug — verified both by the isolated unit tests and by this live-data
+decomposition.
+
+## 31. Live ranking analysis (real 1,371-job catalog)
+
+Run against every real Greenhouse/Lever/Ashby job ingested by D1-D3, with one representative
+test scoring/eligibility profile (a PM/TPM/analytics-leaning persona, an F-1/OPT-style candidate
+currently authorized but requiring future sponsorship) applied via a disposable test `auth.users`
+account (created and deleted via the Supabase Admin API for this verification only — never a
+hardcoded id in code).
+
+```
+Jobs considered (ACTIVE):         1,371
+Jobs scored:                      1,326
+Excluded by EXCLUDE preference:      45   (all matched the test profile's SINGAPORE = EXCLUDE)
+
+Role family (global):    UNKNOWN 885 · SOFTWARE_ENGINEERING 340 · PRODUCT_MANAGEMENT 40 ·
+                          CONSULTING 41 · STRATEGY_OPERATIONS 23 · DATA_SCIENCE 12 ·
+                          TECHNICAL_PROGRAM_MANAGEMENT 20 · DATA_ANALYTICS 9 · PRODUCT_ANALYTICS 1
+Seniority (global):      UNKNOWN 875 · MANAGER 217 · SENIOR 72 · STAFF 58 · INTERN 51 ·
+                          NEW_GRAD 48 · DIRECTOR_PLUS 39 · PRINCIPAL 11
+
+Eligibility distribution: UNKNOWN 1,322 · CONFLICT 3 · ELIGIBLE 1
+  - All 3 CONFLICTs: GRADUATION_WINDOW_MISMATCH (Notion internships requiring a 2027 grad
+    class; the test profile's graduationYear was 2026) — correctly detected and evidenced.
+  - SPONSORSHIP: 1,325 UNKNOWN / 1 ELIGIBLE / 0 CONFLICT — almost no posting in this catalog
+    states an explicit sponsorship policy (matches D1-D3's own text-mining findings).
+  - WORK_AUTHORIZATION: 24 ELIGIBLE (0 UNKNOWN/CONFLICT — always resolvable once applicable).
+  - CITIZENSHIP / SECURITY_CLEARANCE: 0 postings in the whole 1,371-job catalog contain
+    explicit citizenship-only language; exactly 1 contains explicit clearance language (the
+    live-data fix in §25/§29).
+
+Coverage:  min 4.35% · p25 23.9% · median 43.5% · p75 60.9% · max 100% · avg 44.2%
+Match:     min 18.18 · median 52.11 · avg 52.5 · max 100.00
+
+Average Match by provider:  ASHBY 61.7 (cov 58.0) · LEVER 67.8 (cov 52.1) ·
+                             GREENHOUSE 38.0 (cov 30.5) — see §30 for the fairness decomposition.
+
+UNKNOWN rate by criterion:  SENIORITY_FIT 87.3% · LOCATION_FIT 67.6% · ROLE_FIT 64.0% ·
+                            WORK_MODE_FIT 48.9% · EMPLOYMENT_TYPE_FIT 45.0% ·
+                            COMPETENCY_FIT 32.4% · OBSERVED_FRESHNESS 0.0% (always known)
+```
+
+**Idempotency, confirmed live**: `extract-features` run twice → 1,371 then 0 candidates. `rank`
+run twice → identical `1371 considered / 1326 scored / 45 excluded` both times.
+
+**Top 25 by coverage-filtered Match** (`coverage >= 60%` — see §27 for why unfiltered `matchScore`
+alone is misleading) is dominated by exactly the roles this test persona's preferences predict:
+Technical Program Manager (Palantir, 92.4/85.2), Product Manager (Ramp/Linear/Vanta, 69.7-73.2),
+Forward Deployed Software Engineer/TPM roles (Palantir). **Bottom 25** is entirely Stripe generalist
+roles (sales, recruiting, operations, various "Manager" functional titles) the persona rated low —
+confirming the engine's output is preference-driven, not arbitrary.
+
+## 32. Manual CLI (D4 additions)
+
+```bash
+npm run discovery:extract-features                       # recompute stale job_catalog_features
+npm run discovery:rank -- [--user-id <uuid>]              # recompute user_job_match_scores;
+                                                           # no --user-id ranks every user with
+                                                           # a scoring profile (never a hardcoded id)
+npm run discovery:set-profile -- --user-id <uuid> <file>  # dev-only profile configuration,
+                                                           # Zod-validated, D5 will replace this
+                                                           # with a real settings UI
+```
+
+`discovery:rank` always runs feature extraction first (cheap, idempotent) so scoring never runs
+against stale features.
+
+## 33. Future phases (explicitly deferred, not built here)
 
 ```
 [x] D1 — Global job catalog + source registry
 [x] D2 — Greenhouse / Lever / Ashby ingestion
 [x] D3 — Freshness, lifecycle, daily synchronization
-[ ] D4 — Deterministic feature extraction + personalized ranking
-[ ] D5 — /discover dashboard
+[x] D4 — Deterministic feature extraction + personalized ranking + eligibility
+[ ] D5 — /discover dashboard + preference/settings UI
 [ ] D6 — Discovery → existing Career OS application handoff
 [ ] D7 — Generic company career-site crawler
 [ ] D8 — Feedback-driven ranking
 ```
 
-Not built in this track, on purpose: personalized ranking/match scores, role taxonomy, BM25/
-TF-IDF/embeddings, `/discover` UI, saved/hidden jobs, discovery events, the catalog→application
-handoff, generic HTML crawling, Workday/LinkedIn/Indeed/ZipRecruiter support, any extension
-change, résumé/PDF changes. Real résumé PDF compilation/preview/download is a separate,
-later Career OS delivery feature and is not part of this track at all.
+Not built in D4, on purpose: `/discover` UI, job cards, "See details" modal, preference/settings
+UI (D5's job — D4's backend output is explicitly shaped so D5 can render `Match: 91 · Eligibility:
+Eligible · Coverage: 84%` plus a full component/check breakdown without recomputation), arbitrary
+user-created executable criteria, formula scripting, AI ranking, embeddings, behavioral learning,
+automatic hidden weight adjustments, application/interview/offer probability, salary ranking,
+company prestige scoring, the catalog→application handoff, generic HTML crawling, Workday/
+LinkedIn/Indeed/ZipRecruiter support, any extension change, résumé/PDF changes. A future D8
+behavioral-learning phase should *suggest* preference changes, never silently change a user's
+explicitly-chosen weights — user control is a product principle, not a D4-only rule.

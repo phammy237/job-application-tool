@@ -23,7 +23,10 @@ export function normalizeLocationText(locationText: string): string {
 // reading, since "City, ST" for a two-letter *country* code is not a convention any of the three
 // supported ATS providers actually use in free-text location strings. Never applied to anything
 // but the strict two-part "City, XX" shape.
-const US_STATE_CODES = new Set([
+// Exported so the D4 location-token extractor (extract-location-tokens.ts) can reuse the exact
+// same recognized-state set rather than duplicating it — purely additive visibility change, no
+// behavior here changes.
+export const US_STATE_CODES = new Set([
   'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA', 'HI', 'ID', 'IL', 'IN', 'IA', 'KS',
   'KY', 'LA', 'ME', 'MD', 'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ', 'NM', 'NY',
   'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV',
