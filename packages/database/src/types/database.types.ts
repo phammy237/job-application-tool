@@ -953,6 +953,9 @@ export interface Database {
           eligibility_version: string;
           computed_at: string;
           created_at: string;
+          /** Generated column (migration 0031) — 0=HIGH/1=MODERATE/2=LOW coverage tier, mirroring
+           * packages/shared's getCoverageBucket. Read-only; never set on insert/update. */
+          coverage_bucket: number;
         };
         Insert: Partial<Database['public']['Tables']['user_job_match_scores']['Row']> & {
           user_id: string;
@@ -970,6 +973,38 @@ export interface Database {
     };
     Views: Record<string, never>;
     Functions: {
+      list_own_discovery_feed: {
+        Args: {
+          p_search?: string | null;
+          p_role_families?: string[] | null;
+          p_location_token?: string | null;
+          p_workplace_types?: string[] | null;
+          p_employment_types?: string[] | null;
+          p_eligibility_statuses?: string[] | null;
+          p_min_match?: number | null;
+          p_min_coverage?: number | null;
+          p_freshness_days?: number | null;
+          p_limit?: number;
+          p_offset?: number;
+        };
+        Returns: {
+          job_catalog_id: string;
+          title: string;
+          company_name: string;
+          location_text: string | null;
+          normalized_workplace_type: string;
+          normalized_employment_type: string;
+          role_family: string;
+          first_seen_at: string;
+          match_score: number;
+          coverage: number;
+          eligibility_status: string;
+        }[];
+      };
+      list_discovery_location_tokens: {
+        Args: Record<string, never>;
+        Returns: { location_token: string }[];
+      };
       increment_ai_request_usage: {
         Args: {
           p_user_id: string;

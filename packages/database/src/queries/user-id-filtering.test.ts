@@ -47,6 +47,29 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
  * query" reason as consistency.ts: it issues no query of its own — it composes
  * listOwnSkills/listOwnExperiences/listOwnEducation/listOwnProjects/listOwnCandidateFacts, each
  * already covered by this same test.
+ *
+ * discovery-feed.ts (Job Discovery Track D5A) is exempt for a combination of the above reasons:
+ * `listOwnDiscoveryFeed`/`listDiscoveryLocationTokens` call `SECURITY INVOKER` RPCs
+ * (`list_own_discovery_feed`, `list_discovery_location_tokens` — migration 0031) that scope
+ * themselves via `auth.uid()` inside the function body, the same "ownership enforced inside the
+ * database function, not by a PostgREST filter this file could add" shape as
+ * resume-tailoring-save.ts (proven by this migration's pgTAP cross-user tests, not by a literal
+ * pattern here); `getOwnDiscoveryFeedJobDetail` issues no direct table query of its own — it
+ * composes `getJobCatalogEntryById`/`getJobCatalogFeatures` (exempt, global job data) and
+ * `getOwnMatchScore` (already covered by this same test), the same "pure composer" shape as
+ * consistency.ts.
+ *
+ * A whole-file exemption is a wider trust boundary than any other entry above (resume-tailoring-
+ * save.ts and consistency.ts each have exactly one function to reason about; this file has three,
+ * and two different bypass shapes — an unsafe `.rpc()` call, or a reintroduced direct `.from()`
+ * query). The "discovery-feed.ts RPC/composition allow-list" suite directly below closes that gap
+ * with a narrower, positively-enumerated check specific to this file: every `.rpc()` call site
+ * must name one of the two RPCs actually verified for auth.uid() scoping (pgTAP,
+ * supabase/tests/database/0034_job_discovery_feed.test.sql), and the file must contain zero
+ * `.from()` calls at all. A future edit that adds a new RPC call, or any direct table query, to
+ * this file fails one of those two assertions immediately — the file being in EXEMPT_FILES above
+ * no longer means "trust it silently," it means "trust it only within what the allow-list below
+ * still enforces."
  */
 const EXEMPT_FILES = new Set([
   'feature-flags.ts',
@@ -56,6 +79,7 @@ const EXEMPT_FILES = new Set([
   'job-catalog.ts',
   'job-catalog-features.ts',
   'candidate-competency-codes.ts',
+  'discovery-feed.ts',
 ]);
 
 describe('every user-scoped query filters by user_id explicitly', () => {
@@ -74,4 +98,36 @@ describe('every user-scoped query filters by user_id explicitly', () => {
       expect(source).toMatch(/\.eq\('user_id',/);
     });
   }
+});
+
+/**
+ * Narrows the discovery-feed.ts whole-file exemption above: this file's own ownership boundary
+ * is enforced by RLS + the two RPCs' own `auth.uid()` scoping (pgTAP-verified), not by a
+ * `.eq('user_id', ...)` filter the generic scan above can look for — but that's exactly the kind
+ * of claim that must stay checked, not just asserted in a comment. These two assertions are the
+ * concrete bypass vectors: a new `.rpc()` call naming something other than the two RPCs already
+ * verified for auth.uid() scoping, or a reintroduced direct `.from()` table query that would skip
+ * both RLS's usual per-row filter *and* this file's own user_id-filter convention. Either one
+ * failing here means discovery-feed.ts changed in a way its EXEMPT_FILES entry no longer covers.
+ */
+describe('discovery-feed.ts RPC/composition allow-list', () => {
+  const source = readFileSync(join(__dirname, 'discovery-feed.ts'), 'utf-8');
+
+  // The only two RPCs this file is allowed to call — both SECURITY INVOKER, both scoped via
+  // auth.uid() inside the function body (migration 0031), both proven cross-user-isolated by
+  // supabase/tests/database/0034_job_discovery_feed.test.sql. Adding a new RPC call here requires
+  // adding it to this list *and* to that pgTAP suite's own cross-user assertions first.
+  const RPC_ALLOW_LIST = new Set(['list_own_discovery_feed', 'list_discovery_location_tokens']);
+
+  it('calls no .from() table query directly — every read goes through an RLS-scoped RPC or an already-scoped composed function', () => {
+    expect(source).not.toMatch(/\.from\(/);
+  });
+
+  it('every .rpc() call site names an RPC already verified for auth.uid() scoping', () => {
+    const rpcCalls = [...source.matchAll(/\.rpc\(\s*['"]([a-zA-Z0-9_]+)['"]/g)].map((m) => m[1]);
+    expect(rpcCalls.length).toBeGreaterThan(0); // the test itself must exercise a real call site
+    for (const name of rpcCalls) {
+      expect(RPC_ALLOW_LIST.has(name as string)).toBe(true);
+    }
+  });
 });

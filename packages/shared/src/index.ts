@@ -106,3 +106,6 @@ export * from './lib/evaluate-eligibility';
 export * from './lib/evaluate-criteria';
 export * from './lib/extract-job-catalog-features';
 export * from './lib/default-scoring-profile';
+export * from './lib/default-discovery-order';
+export * from './schemas/discovery-feed-query';
+export * from './schemas/discovery-feed-result';

@@ -168,7 +168,9 @@ found" phases above. Full design record: `docs/JOB_DISCOVERY.md`.
 - [x] D2 — Greenhouse / Lever / Ashby ingestion
 - [x] D3 — Freshness, lifecycle, daily synchronization
 - [x] D4 — Deterministic feature extraction + personalized ranking + eligibility
-- [ ] D5 — /discover dashboard
+- [x] D5A — `/discover` feed: search, deterministic filters, default ranking, job details
+- [ ] D5B — Editable scoring/eligibility preferences UI (currently CLI-only via `discovery:set-profile`)
+- [ ] D5C — AI-generated explanations / semantic search on top of the deterministic D5A feed
 - [ ] D6 — Discovery → existing Career OS application handoff
 - [ ] D7 — Generic company career-site crawler
 - [ ] D8 — Feedback-driven ranking
@@ -224,6 +226,41 @@ idempotent on a second run) — including one genuine bug caught and fixed by th
 caught and fixed (a live Palantir clearance-eligibility phrasing the original phrase list missed).
 See `docs/JOB_DISCOVERY.md` §18-32 for the full design, the live numbers, and what's deliberately
 deferred to D5+.
+
+**D5A (migration `0031_job_discovery_feed.sql`)**: the first user-facing Job Discovery Track
+surface — `/discover` (list) and `/discover/[id]` (detail), built entirely on top of D4's already-
+persisted output, never recomputing Match/Coverage/Eligibility in a React component. Default order
+is deliberately NOT `ORDER BY match_score DESC` (the D4 live audit's own finding that this
+surfaces low-Coverage noise at the top, e.g. a real Stripe posting at match 100 / coverage 4.35% in
+this build's own live verification) — instead a two-level, documented, unit-tested rule (coverage
+tier first, Match within the tier second; `packages/shared/src/lib/default-discovery-order.ts`,
+mirrored as a generated+indexed SQL column, `user_job_match_scores.coverage_bucket`). Server-side
+deterministic search (`pg_trgm` GIN indexes, plain `ILIKE`, no AI/fuzzy/embeddings) plus six
+filters (role family, location, workplace type, employment type, eligibility result, min Match/
+Coverage, freshness) all live in one `SECURITY INVOKER` Postgres RPC
+(`list_own_discovery_feed`) — a genuine 3-table join with a computed sort key PostgREST's
+embedded-resource filtering can't express in one indexed round trip; a second RPC
+(`list_discovery_location_tokens`) serves the location filter's options. Pagination fetches
+`pageSize + 1` rows and slices client-side rather than a `count(*) over()` total (no sane answer
+for a page requested past the end of the result set) — the same "no full-catalog fetch, no
+recurrence of D4's 1,000-row cap / oversized `.in()` header overflow" discipline D4 established.
+Match, Coverage, and Eligibility are structurally kept apart everywhere in the UI (three separate
+labeled values, never a composite score, never color-only pass/fail styling); a result below the
+same LOW-coverage threshold the default order itself uses shows a "Limited job data" notice
+without claiming the score is inaccurate. The detail page renders the persisted
+`score_components`/`eligibility_checks` arrays verbatim (a disabled, `weight: 0` criterion is
+omitted rather than shown as a fake 0% fit; an inapplicable eligibility check was never added to
+the array in the first place — no synthetic "N/A" status), highlights a CONFLICT distinctly, and
+carries an explicit "Career OS cannot determine the employer's actual hiring decision" disclaimer.
+Live-verified against the linked Supabase project: pgTAP (`supabase/tests/database/
+0034_job_discovery_feed.test.sql`, 26/26 assertions, including cross-user isolation through the
+RPC itself), and a full live run through the real TypeScript query layer (a genuine
+password-authenticated session, not a service-role bypass) against all 1,371 real catalog jobs —
+including one genuine bug the live run itself caught and fixed (Supabase grants `anon` direct
+EXECUTE on every `public` function by platform default; `revoke ... from public` alone left both
+new RPCs callable by an anonymous request, so both migration 0031 and the pgTAP suite now
+explicitly `revoke ... from anon` too). See `docs/JOB_DISCOVERY.md` §34-39 for the full design and
+what's deliberately deferred to D5B/D5C.
 
 The whole Phase 5B line (5B.0 through 5B.4, plus the hardening pass) is complete. Phase 5C is now
 complete end to end — 5C.1 (deterministic next actions) through 5C.4 (polish and closure) — see

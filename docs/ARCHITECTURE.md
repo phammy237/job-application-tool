@@ -21,14 +21,17 @@ share a domain suffix and an owner.
 ```
 job-application-tool/
 ├── apps/
-│   ├── web/                 # Next.js App Router — dashboard + public landing page
+│   ├── web/                 # Next.js App Router — dashboard + public landing page +
+│   │                         # /discover, the first user-facing Job Discovery Track surface (D5A)
 │   └── extension/           # Chrome MV3 extension — React + Vite
 ├── packages/
 │   ├── shared/               # Zod schemas + TS types shared by web and extension
 │   ├── ui/                   # shadcn/ui component library + design tokens
 │   ├── ai/                   # Server-only Claude integration (retrieval, prompting, validation)
 │   ├── email/                 # Server-only Gmail integration (OAuth, classification)
-│   ├── database/             # Supabase client + typed query layer (RLS-aware)
+│   ├── database/             # Supabase client + typed query layer (RLS-aware), including D5A's
+│   │                         # /discover feed/detail queries (packages/database/src/queries/
+│   │                         # discovery-feed.ts) — no scoring recomputation, reads D4 output only
 │   └── discovery/             # Job Discovery Track: ATS adapters + ingestion orchestrator (D1-D3),
 │                               # deterministic feature extraction + ranking orchestration (D4) —
 │                               # zero AI, zero dependency on packages/ai (docs/JOB_DISCOVERY.md)

@@ -734,7 +734,9 @@ against stale features.
 [x] D2 — Greenhouse / Lever / Ashby ingestion
 [x] D3 — Freshness, lifecycle, daily synchronization
 [x] D4 — Deterministic feature extraction + personalized ranking + eligibility
-[ ] D5 — /discover dashboard + preference/settings UI
+[x] D5A — /discover feed: search, deterministic filters, default ranking, job details
+[ ] D5B — Editable scoring/eligibility preferences UI (currently CLI-only, see §32)
+[ ] D5C — AI-generated explanations / semantic search on top of the deterministic D5A feed
 [ ] D6 — Discovery → existing Career OS application handoff
 [ ] D7 — Generic company career-site crawler
 [ ] D8 — Feedback-driven ranking
@@ -749,3 +751,205 @@ company prestige scoring, the catalog→application handoff, generic HTML crawli
 LinkedIn/Indeed/ZipRecruiter support, any extension change, résumé/PDF changes. A future D8
 behavioral-learning phase should *suggest* preference changes, never silently change a user's
 explicitly-chosen weights — user control is a product principle, not a D4-only rule.
+
+**Update, D5A**: the `/discover` UI and job details described above as "D5's job" are now built —
+see §34-39. Still explicitly not built: the preference/settings UI itself (D5B — `/discover`
+reads whatever scoring/eligibility profile already exists via the D4 CLI, it does not let a user
+create or edit one), AI-generated explanations or semantic search (D5C), and every other item in
+the "not built" list above (still true verbatim for D5A — no AI ranking, no embeddings, no
+behavioral learning, no application handoff).
+
+## 34. D5A — `/discover` feed and detail pages
+
+The first user-facing surface over D4's output: `apps/web/app/(app)/discover/page.tsx` (list) and
+`apps/web/app/(app)/discover/[id]/page.tsx` (detail), following the same server-component +
+`<form method="get">` + dedicated-detail-route pattern already established by `/applications` and
+`/network` — no drawer/sheet component exists anywhere in `packages/ui`, so a dedicated route was
+the correct architectural choice per that precedent, not a new one invented for this feature.
+Both pages read exclusively through `packages/database/src/queries/discovery-feed.ts`
+(`listOwnDiscoveryFeed`, `listDiscoveryLocationTokens`, `getOwnDiscoveryFeedJobDetail`) — every
+number a user sees is a value D4 already persisted in `user_job_match_scores`/
+`job_catalog_features`/`job_catalog`; nothing is recomputed in React. Auth/RLS: both pages call
+`requireUser()` for the auth gate and a session-scoped `createClient()` (never the service-role
+admin client) for every read, exactly the pattern every other `apps/web` page already uses; the
+feed/location RPCs are additionally scoped by their own `auth.uid()` binding (§36).
+
+Nav: `{ href: '/discover', label: 'Discover' }` added to `NAV_ITEMS` in
+`apps/web/app/(app)/layout.tsx`, positioned right after Dashboard — no new shell, header, or nav
+pattern.
+
+## 35. Default discovery order
+
+The D4 live audit (§31) found that a naive `ORDER BY match_score DESC` surfaces low-Coverage
+noise at the top — a job where almost every criterion is UNKNOWN except one lucky
+`OBSERVED_FRESHNESS: 1.0` can hit `match_score: 100` with `coverage` as low as ~4%; this build's
+own live verification (§39) reproduced exactly that shape on a real Stripe posting. The fix is
+explicitly not a composite score (Match × Coverage is never computed anywhere in this product) —
+it is a two-level, documented sort: **coverage tier first, Match within the tier second.**
+
+Single source of truth, pure and unit-tested: `packages/shared/src/lib/default-discovery-order.ts`
+— `getCoverageBucket(coverage)` classifies `HIGH` (coverage >= 60), `MODERATE` (30-59), or `LOW`
+(< 30); `compareForDefaultDiscoveryOrder` sorts bucket ascending, then `matchScore` descending,
+then `jobCatalogId` ascending as a final deterministic tiebreaker (never provider identity, never
+insertion order — a dedicated test documents this guarantee). The 60%/30% thresholds are not
+arbitrary: they're the D4 live audit's own measured 75th (60.9%) and 25th (23.9%) coverage
+percentiles (§31) — HIGH starts where coverage is comfortably informative, LOW ends where it's
+comfortably uninformative.
+
+This rule is mirrored, never re-derived, as a `GENERATED ALWAYS ... STORED` SQL column
+(`user_job_match_scores.coverage_bucket`, migration `0031_job_discovery_feed.sql`) so it can be
+indexed and sorted on directly — Postgres cannot use an index for an `ORDER BY` over an ad-hoc
+`CASE` expression computed at query time. `isLowCoverage(coverage)` (same file) is the exact LOW-
+bucket check the UI's "Limited job data" notice uses (§38), so the visual warning and the ranking
+behavior can never drift apart from each other.
+
+## 36. Search and filters
+
+`list_own_discovery_feed` (migration `0031_job_discovery_feed.sql`) is the one query the feed
+issues — a `SECURITY INVOKER` Postgres RPC, not a service-role function: it grants no privilege
+the calling `authenticated` user doesn't already have via RLS (`job_catalog`/
+`job_catalog_features` are already authenticated-select-all; `user_job_match_scores`' own RLS
+already restricts a caller to their own rows), it just does a genuine 3-table join with several
+optional filters and a computed-column-first sort in one indexed round trip — something
+PostgREST's embedded-resource filtering cannot express, and that would otherwise mean fetching
+unbounded intermediate result sets to join/sort/paginate in application code (the exact
+"fetch the whole catalog into memory" anti-pattern D4's own live-verification bugs, §39, warn
+against repeating). The explicit `ujms.user_id = auth.uid()` filter inside the function body is
+redundant with RLS by design — defense-in-depth, and it lets the query planner use the covering
+index directly.
+
+Search is deterministic substring matching only — `ILIKE '%term%'` across title/company/location,
+backed by `pg_trgm` GIN indexes (`job_catalog_title_trgm_idx`, `job_catalog_company_name_trgm_idx`)
+so it doesn't degrade to a sequential scan as the catalog grows. No AI, no fuzzy matching, no
+embeddings — a standard, well-understood Postgres extension, not a new external dependency.
+
+Filters, all optional and combinable: role family, location (a single token from
+`list_discovery_location_tokens`, matched via `location_tokens @> array[token]`), workplace type,
+employment type, eligibility result (the only one of the four enum filters that includes `UNKNOWN`
+as a valid target — role/workplace/employment's own `UNKNOWN` member is excluded from the filter
+UI, since "filter to unknown role" isn't a meaningful positive intent the way "show me jobs I
+can't yet evaluate eligibility for" is), min Match, min Coverage, and freshness (days since
+`first_seen_at`). Every filter's parsing lives in one place —
+`packages/shared/src/schemas/discovery-feed-query.ts`'s `parseDiscoveryFeedQuery` — a Zod
+`safeParse` that never throws: an unrecognized enum value is silently dropped (a stale bookmarked
+URL degrades to "no filter," not an error page), numeric filters are clamped to sane ranges, and a
+malformed `page` defaults to 1. The `/discover` filter UI itself exposes single-value dropdowns
+(one role, one workplace type, etc. at a time) — the parser's own array support exists for
+forward-compatible deep-linking, not because the current UI offers multi-select; a future
+iteration could add checkbox groups without any query-layer change.
+
+`list_discovery_location_tokens` is a second small RPC serving the location filter's own options
+— `job_catalog_features.location_tokens` is an array column PostgREST cannot `unnest`/`distinct`
+in a plain `select()`, and flattening every row's array in application code just to populate a
+dropdown is wasteful; `unnest`+`distinct`+`limit 200` server-side is the correct-sized tool here.
+
+Both RPCs are granted to `authenticated` only — **and explicitly revoked from `anon`, not just
+`public`**, a real bug this build's own live verification caught (§39): Supabase's platform-level
+default privileges grant `anon`/`authenticated`/`service_role` EXECUTE on every function in
+`public` directly, so `revoke ... from public` alone left both functions callable by an anonymous
+request with zero error. Fixed at the source (migration 0031 itself, before it shipped) and now
+covered by a pgTAP assertion (`supabase/tests/database/0034_job_discovery_feed.test.sql`) so a
+future RPC in this codebase that repeats the "revoke from public only" mistake would need to
+consciously break this same assertion pattern to go unnoticed.
+
+## 37. Pagination strategy
+
+`listOwnDiscoveryFeed` (`packages/database/src/queries/discovery-feed.ts`) requests `pageSize + 1`
+rows from the RPC and slices the extra one off in application code to derive `hasNextPage`,
+deliberately instead of a `count(*) over()` total-row count: that approach has no sane answer for
+a page requested past the end of the result set, and computing an exact total row count on every
+request is extra work the UI doesn't actually need (`/discover` shows "Page N" plus Previous/Next,
+never "showing N of TOTAL"). This is the same discipline behind D4's own two live-caught bugs
+(§39 and the D4 entry in `docs/IMPLEMENTATION_PLAN.md`) — PostgREST's default 1,000-row cap on an
+unbounded `select()`, and an oversized `.in()` filter chunk overflowing the ~16KB HTTP header
+limit — neither of which this query shape can reproduce: it is always exactly one indexed,
+server-side `LIMIT`/`OFFSET` round trip, never a client-side fetch-everything-then-filter.
+
+URL state: `q, role, location, workplace, employment, eligibility, minMatch, minCoverage,
+freshness, page` are the only query params `/discover` reads, all parsed by the same
+`parseDiscoveryFeedQuery` described in §36. Prev/Next links rebuild the full query string with
+only `page` replaced (`buildPageHref` in `apps/web/app/(app)/discover/page.tsx`) so paging never
+silently drops an active filter; changing a filter via the form naturally resets to page 1 (the
+form has no `page` field).
+
+## 38. Match/Coverage/Eligibility presentation, low-coverage treatment, and eligibility UI
+
+Enforced structurally, not just by convention: `MatchCoverageEligibility`
+(`apps/web/app/(app)/discover/match-coverage-eligibility.tsx`) is the one place Match, Coverage,
+and Eligibility are laid out together, reused by both the feed's job cards and the detail page's
+summary header — three separate labeled values (`Match 78%` / `Coverage 65%` / an eligibility
+badge), never combined into one number, never a star rating, never "Perfect match"/"Bad match"
+language, never a red/green pass-fail color scheme. `EligibilityBadge`
+(`apps/web/app/(app)/discover/eligibility-badge.tsx`) maps the three real statuses to calm,
+always-text-labeled variants — `ELIGIBLE` → "No conflicts found" (not "Eligible," which would
+overclaim an employer decision Career OS cannot make), `UNKNOWN` → "Eligibility unknown",
+`CONFLICT` → "Possible conflict" (the only variant that reads as an alert, since a real conflict
+between the posting and the user's profile deserves visibility).
+
+A result in the LOW coverage bucket (§35's `isLowCoverage`) shows a subtle "Limited job data"
+notice under its Match/Coverage row — never hidden by default, never claiming the score is
+"inaccurate," never inventing a numeric confidence figure D4 never computed. Low-coverage results
+are still shown (just ranked lower by §35's default order); nothing in D5A filters them out
+unless the user explicitly sets a min-Coverage filter.
+
+The detail page's Match breakdown (`apps/web/app/(app)/discover/[id]/match-breakdown.tsx`) renders
+the persisted `score_components` array exactly as `computeMatchScore` produced it
+(`packages/shared/src/lib/match-score.ts`) — a criterion with `weight: 0` (the user's own scoring
+profile turned it off) is omitted entirely rather than shown as "0% fit"; a criterion with
+`weight > 0` but `known: false` shows "Not evaluated for this posting," never a fabricated
+percentage. The detail page's eligibility section
+(`apps/web/app/(app)/discover/[id]/eligibility-checks.tsx`) renders the persisted
+`eligibility_checks` array verbatim — each check's `type`, its already-deterministic `explanation`
+(template text naming both the posting's requirement and the user's own profile fact, produced by
+`evaluateEligibility`, §28 — never re-derived or paraphrased here), and its `evidenceText` when
+present; a CONFLICT check gets a visually distinct destructive-tinted border, and the section
+always carries an explicit disclaimer: "Career OS cannot determine the employer's actual hiring
+decision." A check that doesn't apply to this user/posting combination was never added to the
+array by `evaluateEligibility` in the first place (§28's "omission, not a fourth status" rule) —
+D5A renders that as "None of the eligibility checks Career OS runs... applied to this posting,"
+never a synthetic "N/A" row. "View original posting" links through the existing
+`isSafeExternalUrl` validator (`packages/shared/src/lib/is-safe-external-url.ts`, unchanged),
+preferring `job_catalog.sourceUrl` and falling back to `canonicalApplyUrl`/`applyUrl` (the latter
+is non-nullable, so a link is always available when at least one candidate URL passes the safety
+check).
+
+## 39. D5A live verification (real 1,371-job catalog)
+
+pgTAP: `supabase/tests/database/0034_job_discovery_feed.test.sql`, 26/26 assertions — the
+generated `coverage_bucket` column's three thresholds, `list_own_discovery_feed`'s default order
+and every filter (role/workplace/employment/eligibility/min-Match/min-Coverage/search/location/
+freshness) against hand-built fixtures, exact-count pagination including past-the-end, cross-user
+isolation through the RPC itself (a second user's own row on the *same* job never appears in, or
+leaks its value into, the first user's result), `list_discovery_location_tokens`'s exact distinct
+set, and the `anon`-cannot-call fix described in §36.
+
+Live run: a disposable test `auth.users` account (created via the Supabase Admin API, password
+sign-in used to mint a real session — not a service-role bypass — deleted afterward, never a
+hardcoded id in code) configured with a software-engineering-leaning `CUSTOM` profile
+(`requiresSponsorshipNow: true`, `isUsCitizen: false`, `graduationYear: 2026`) and ranked via
+`discovery:rank` against the full real catalog (1,371 jobs considered, 1,371 scored).
+
+```
+Top-25 default order: HIGH-coverage (65-74%) Software/Security Engineer roles at Vanta, Linear,
+  Stripe, Ramp — match_score strictly non-increasing within each coverage tier, confirmed.
+Eligibility distribution (this profile): UNKNOWN 200+ · CONFLICT 3 · ELIGIBLE 1 — all 3 CONFLICTs
+  are real GRADUATION_WINDOW_MISMATCH cases (Notion internships requiring a 2027 grad class vs.
+  this profile's 2026), each rendering the full explanation + evidence text correctly through the
+  real `getOwnDiscoveryFeedJobDetail` composer.
+Low-coverage/high-match reproduction: 5 real Stripe postings at coverage 5.71% / match_score
+  100.00 (coverage_bucket = 2/LOW) — exactly the D4-audit pattern §35's default order exists to
+  push down, and exactly what triggers the "Limited job data" notice; confirmed both jobs sort
+  after every HIGH/MODERATE result and are never hidden.
+Filters against real data: workplace=REMOTE → 200+ results (capped by the verification query's own
+  limit, not the RPC); employment=INTERNSHIP → 41; search="engineer" → 200+ (capped); pagination
+  offset 20/limit 20 boundary confirmed non-overlapping and contiguous with offset 0.
+```
+
+**AI/search-provider audit**: zero references to `@career-os/ai`, Tavily, Claude, or embeddings
+anywhere in the D5A code path (`apps/web/app/(app)/discover/**`, `packages/database/src/queries/
+discovery-feed.ts`, `packages/shared`'s new discovery-feed files, migration 0031) — confirmed by
+grep, not just by construction.
+
+Cleanup: the disposable test user and every row it produced (`user_job_match_scores`,
+`discovery_scoring_profiles`, `discovery_eligibility_profiles`) were deleted/cascade-deleted and
+confirmed at zero afterward — no residue left in the linked project.

@@ -42,6 +42,7 @@ export * from './queries/job-catalog-features';
 export * from './queries/discovery-scoring-profiles';
 export * from './queries/discovery-eligibility-profiles';
 export * from './queries/user-job-match-scores';
+export * from './queries/discovery-feed';
 export * from './queries/candidate-competency-codes';
 export * from './crypto/extension-token';
 export * from './crypto/token-encryption';

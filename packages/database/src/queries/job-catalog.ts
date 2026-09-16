@@ -78,6 +78,23 @@ export async function getJobCatalogEntry(
   return data ? rowToJobCatalogEntry(data) : null;
 }
 
+/** Lookup by the table's own primary key — added for D5A's `/discover/[id]` detail page, which
+ * only ever has the `job_catalog.id` (from the feed RPC), never the `(source_id, source_job_id)`
+ * pair `getJobCatalogEntry` above was built for. Purely additive; that function's own behavior
+ * and every existing call site are unchanged. */
+export async function getJobCatalogEntryById(
+  supabase: CareerOsSupabaseClient,
+  id: string,
+): Promise<JobCatalogEntry | null> {
+  const { data, error } = await supabase
+    .from('job_catalog')
+    .select('*')
+    .eq('id', id)
+    .maybeSingle();
+  assertNoError(error, 'getJobCatalogEntryById');
+  return data ? rowToJobCatalogEntry(data) : null;
+}
+
 function normalizedJobToRow(
   sourceId: string,
   job: NormalizedDiscoveredJob,
