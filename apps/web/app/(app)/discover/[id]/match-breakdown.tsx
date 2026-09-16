@@ -1,14 +1,5 @@
 import type { ScoreComponent } from '@career-os/shared';
-
-const CRITERION_LABELS: Record<string, string> = {
-  ROLE_FIT: 'Role fit',
-  COMPETENCY_FIT: 'Skills & competencies',
-  SENIORITY_FIT: 'Seniority fit',
-  LOCATION_FIT: 'Location fit',
-  WORK_MODE_FIT: 'Work mode fit',
-  EMPLOYMENT_TYPE_FIT: 'Employment type fit',
-  OBSERVED_FRESHNESS: 'Posting freshness',
-};
+import { CRITERION_LABELS } from '../discovery-display-labels';
 
 /**
  * Renders the persisted `score_components` array exactly as computed by `computeMatchScore`

@@ -169,7 +169,7 @@ found" phases above. Full design record: `docs/JOB_DISCOVERY.md`.
 - [x] D3 — Freshness, lifecycle, daily synchronization
 - [x] D4 — Deterministic feature extraction + personalized ranking + eligibility
 - [x] D5A — `/discover` feed: search, deterministic filters, default ranking, job details
-- [ ] D5B — Editable scoring/eligibility preferences UI (currently CLI-only via `discovery:set-profile`)
+- [x] D5B — `/settings/discovery`: editable scoring/eligibility preferences UI + save/recompute
 - [ ] D5C — AI-generated explanations / semantic search on top of the deterministic D5A feed
 - [ ] D6 — Discovery → existing Career OS application handoff
 - [ ] D7 — Generic company career-site crawler
@@ -261,6 +261,45 @@ EXECUTE on every `public` function by platform default; `revoke ... from public`
 new RPCs callable by an anonymous request, so both migration 0031 and the pgTAP suite now
 explicitly `revoke ... from anon` too). See `docs/JOB_DISCOVERY.md` §34-39 for the full design and
 what's deliberately deferred to D5B/D5C.
+
+**D5B (`/settings/discovery`, no new migration)**: replaces the developer/CLI-only profile
+workflow (`scripts/discovery/set-profile.ts`) with a real authenticated settings page — same
+`discovery_scoring_profiles`/`discovery_eligibility_profiles` tables, same standard 4-policy RLS
+(already user-writable via a session client since migration 0030), same `rankJobsForUser`
+recompute path, zero AI. "What matters to you" renders all seven D4 scoring criteria (enable
+toggle + 0-10 weight) plus role/seniority/location/work-mode/employment-type preference editors
+built from `packages/ui`'s existing controls (no tag-input library); a separate Eligibility
+section renders the seven D4 profile fields as tri-state Yes/No/Unknown selects, never forcing an
+answer. `POST /api/discovery/settings` derives `userId` only from the verified session, diffs the
+submission against the persisted profiles via a plain order-independent deep-equality comparison
+(`computeDiscoverySettingsChanges`, `packages/shared` — deliberately not a new hash/version
+scheme, since neither `profile_version` nor `rankingVersion`/`featureVersion`/
+`eligibilityVersion` answers "did this user's specific save change anything"), skips both the
+write and the recompute entirely on a true no-op, and otherwise writes only the profile(s) that
+actually changed before calling `rankJobsForUser` through the service-role admin client (the one
+step that needs it — `user_job_match_scores` stays select-only for `authenticated`, same posture
+as `deleteAccount()`'s use of the admin client elsewhere in this codebase). Failure semantics are
+explicit at every step (malformed payload -> 400 untouched; a profile write failure -> 500,
+recompute never attempted; a persisted-but-recompute-failed outcome -> 502, reported honestly,
+never claiming jobs were re-ranked when they weren't) — no queue system, synchronous
+request/response only, matching `/api/gmail/sync`'s own `maxDuration` precedent. Two direct
+regression tests against the real `rankJobsForUser` orchestrator (`packages/discovery/src/
+ranking/rank-user.test.ts`, "D5B independence invariants") prove the spec's core invariant in both
+directions — an eligibility-only change leaves `matchScore`/`coverage` `toBe`-identical; a
+scoring-only change leaves `eligibilityStatus` and the full `eligibilityChecks` array `toEqual`-
+identical — both then reproduced live (below). Live-verified against the linked Supabase project
+through two disposable test users and real headless-browser sessions (Playwright, real
+password-authenticated cookies, never a service-role-only fake path): a real scoring-weight edit
+through the actual UI changed 289/1,371 `match_score` values and all 1,371 `coverage` values while
+leaving every `eligibility_status`/`eligibility_checks` value byte-for-byte identical; a real
+eligibility-field edit flipped 5 jobs' `eligibility_status` (both `UNKNOWN→CONFLICT` and
+`CONFLICT→UNKNOWN`, non-vacuous) while leaving all 1,371 `match_score`/`coverage` values
+byte-for-byte identical; a no-op resubmit left every profile's `updated_at` and every match
+score's `computed_at` completely untouched (confirmed via direct database timestamps); a second
+test user's own save left the first user's 1,371 rows completely unaffected (cross-user
+isolation, confirmed via an independent service-role read); both test users left zero residue
+after cleanup. See `docs/JOB_DISCOVERY.md` §40-44 for the full design, the independence proof, and
+what's deliberately deferred to D5C/D6.
 
 The whole Phase 5B line (5B.0 through 5B.4, plus the hardening pass) is complete. Phase 5C is now
 complete end to end — 5C.1 (deterministic next actions) through 5C.4 (polish and closure) — see

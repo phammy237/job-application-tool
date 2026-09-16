@@ -72,6 +72,14 @@ describe('DiscoverPage', () => {
     expect(screen.getByText('No jobs match your search and filters.')).toBeInTheDocument();
   });
 
+  it('links to the D5B settings page via an "Edit preferences" entry', async () => {
+    await renderPage();
+    expect(screen.getByRole('link', { name: 'Edit preferences' })).toHaveAttribute(
+      'href',
+      '/settings/discovery',
+    );
+  });
+
   it('renders a job card linking to its detail page', async () => {
     mocks.listOwnDiscoveryFeed.mockResolvedValue({ items: [job()], hasNextPage: false });
     await renderPage();

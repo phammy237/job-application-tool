@@ -8,6 +8,7 @@ const nextConfig = {
     '@career-os/ui',
     '@career-os/ai',
     '@career-os/email',
+    '@career-os/discovery',
   ],
 };
 

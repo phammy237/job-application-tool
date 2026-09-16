@@ -953,3 +953,205 @@ grep, not just by construction.
 Cleanup: the disposable test user and every row it produced (`user_job_match_scores`,
 `discovery_scoring_profiles`, `discovery_eligibility_profiles`) were deleted/cascade-deleted and
 confirmed at zero afterward — no residue left in the linked project.
+
+## 40. D5B — `/settings/discovery`: user-facing scoring/eligibility preferences
+
+The developer/CLI-only path (`scripts/discovery/set-profile.ts`) is now also a real authenticated
+UI: `apps/web/app/(app)/settings/discovery/page.tsx` loads the caller's own
+`discovery_scoring_profiles`/`discovery_eligibility_profiles` rows via the exact same
+`getOrCreateOwnScoringProfile`/`getOrCreateOwnEligibilityProfile` functions the CLI already used
+(never a separate frontend default — a fresh user gets the same DB-column BALANCED-preset/all-
+null defaults either way, migration 0030), and a client form
+(`discovery-settings-form.tsx`) lets the user edit every field D4 already persists. No new
+migration, no new table, no new RPC — `discovery_scoring_profiles`/`discovery_eligibility_profiles`
+already use standard 4-policy RLS (§26/§28), so reading/writing them through the caller's own
+session was already possible; D5B only adds the UI and the one new save/recompute endpoint below.
+Reachable from `/discover` via an "Edit preferences" link in the page header; a successful save
+offers "View updated jobs" back to `/discover`.
+
+**Scoring section ("What matters to you")**: renders `ALL_SCORING_CRITERIA` (the same closed,
+seven-member D4 registry, §26/§27) — each with an enable/disable checkbox and a 0-10 numeric
+input, never a slider (per the spec's own "allow precise 0-10 values" requirement, a plain
+`<input type=number>` gives that for free without extra keyboard-accessibility work a custom
+slider would need). Disabled (`weight: 0`) is visually and textually distinct from "enabled but
+this job's evidence was UNKNOWN" — the settings page has no per-job data to show the latter at
+all, so it never renders that state; the section intro explicitly tells the user the two are
+different concepts, pointing at `/discover/[id]`'s "Not evaluated for this posting" as where the
+UNKNOWN case actually shows up. Preference maps (role family, seniority, work mode, employment
+type) share one small `PreferenceWeightEditor` — an add/remove list built from `packages/ui`'s
+existing `Select`/`Input`/`Button`, no tag-input library. Removing a rated value deletes the map
+key entirely (back to UNKNOWN for that user, §26/§27's "missing user data" case) rather than
+setting it to `0` (which would mean something different: an explicit "I rated this a zero," §27's
+disabled-equivalent case for a *preference value* rather than a criterion). Location preferences
+get their own `LocationPreferenceEditor` (category picker: Preferred/Acceptable/Avoid/Exclude
+entirely) since they're category-based, not a 0-10 weight — its copy calls out that "Exclude
+entirely" is a hard personal filter, not part of Match (§26). Competency: the settings page never
+lets a user manually enter skills/competencies here — only a weight for how much competency
+alignment matters — with a direct link to `/profile` next to that row, since
+`deriveOwnCandidateCompetencyCodes` (§24) already derives the actual competency set from approved
+profile data exclusively; duplicating that as editable text here would create a second, divergent
+source of truth, which this UI deliberately does not do.
+
+**Eligibility section**: the same seven `discovery_eligibility_profiles` fields (§28) as tri-state
+Yes/No/Unknown selects (`EligibilityBooleanField`) plus a plain numeric graduation-year field —
+never a checkbox, since a checkbox has no clean third state and every one of these fields is
+genuinely nullable (`null` = "hasn't told us," never inferred, never defaulted to No). No field is
+required; leaving everything at Unknown is a fully valid, save-able state. Copy matches the spec's
+required semantics exactly ("Eligibility settings are used to identify stated conflicts... They do
+not affect your Match score" / "Career OS detects conflicts with requirements explicitly stated in
+a posting. It cannot determine whether an employer will make an exception or ultimately consider a
+candidate.") — no "you qualify"/"you can work here" language anywhere on the page (a dedicated
+regression test asserts this).
+
+## 41. Save/recompute lifecycle and no-op detection
+
+`POST /api/discovery/settings` (not a server action — like `/api/gmail/sync`, it needs to return a
+rich result a plain action doesn't model as naturally): `userId` comes only from `getCurrentUser()`
+(the verified session), never the request body. Validates the payload against
+`discoverySettingsRequestSchema` (`packages/shared`, composed via `.omit()` from the *existing*
+`discoveryScoringProfileSchema`/`discoveryEligibilityProfileSchema` — never a redefined shape that
+could drift), then compares it against the currently-persisted profiles via
+`computeDiscoverySettingsChanges` before writing anything.
+
+**No-op detection is a plain, order-independent deep-equality comparison, not a new hash/version
+system** — deliberately: `discovery_scoring_profiles.profile_version` is a *schema-shape* version
+(bumped when the row's own columns change), not a content hash of one user's chosen values, and
+`rankingVersion`/`featureVersion`/`eligibilityVersion` version the *engine's rules*, not a user's
+preference data; neither answers "did this specific save actually change anything," so reusing
+either would have been reusing the wrong tool. `computeDiscoverySettingsChanges`
+(`packages/shared/src/lib/discovery-settings-diff.ts`) key-sorts every `jsonb` preference map
+before comparing (`{A,B}` and `{B,A}` are the same map, never a false "changed") and trims the
+current persisted profile down to exactly the request's own field shape via the same Zod schema
+(so a resubmit with a stale `updatedAt` is still correctly recognized as a no-op). A true no-op
+writes nothing and never calls `rankJobsForUser` at all — live-verified (§43): a resubmit of the
+exact persisted state left `discovery_scoring_profiles.updated_at`/
+`discovery_eligibility_profiles.updated_at`/every `user_job_match_scores.computed_at` completely
+unchanged.
+
+**Which profile changed determines both what gets written and what the user is told** — this is
+the one place D5B distinguishes "scoring changed" from "eligibility changed" per the spec's
+required copy:
+
+```
+both unchanged  -> no writes, no recompute, "No changes to save."
+scoring only    -> write scoring profile only, recompute, "Your job matches have been updated."
+eligibility only-> write eligibility profile only, recompute, "Your eligibility results have been updated."
+both changed    -> write both, recompute, "Your discovery results have been updated."
+```
+
+**Recompute itself is never split into a "scoring-only" or "eligibility-only" pass** —
+`rankJobsForUser` (`packages/discovery`, unchanged, §29) always evaluates Match+Coverage+
+Eligibility together for every job in one pass; there is no finer-grained recompute mode in the
+engine, and D5B does not add one (that would mean forking or duplicating the scoring engine, which
+the spec explicitly forbids). The honest framing is: no-op detection avoids recomputing when
+*nothing* changed; once *anything* changed, the existing single recompute path runs exactly once,
+and the message shown reflects which profile the user actually edited, not which parts of the
+recompute pass happened to touch which numbers.
+
+**Failure semantics — no misleading partial state**: a malformed payload -> `400`, nothing
+touched. A profile-persistence failure -> `500`, reports exactly which profile(s) didn't save,
+recompute never attempted (recomputing against a possibly-inconsistent partial write would be
+worse than not recomputing). Both profile writes succeed but `rankJobsForUser` itself throws ->
+`502`, `recompute: { attempted: true, succeeded: false }` — the saved preferences are real and
+will be used the next time ranking runs (a retried save, or the next scheduled `discovery:rank`),
+but the response never claims jobs were re-ranked when they weren't; the UI shows the server's own
+honest error text and never renders "View updated jobs" in that case. Synchronous request/
+response by design, same posture as `/api/gmail/sync`'s own `maxDuration = 60` — no queue system
+added solely for this: a save only ever happens while the user has the page open and clicks Save.
+
+**Recompute needs the service-role admin client** for exactly the write step
+(`user_job_match_scores` stays select-only for `authenticated`, §29) — the same posture as
+`deleteAccount()` in `settings/actions.ts`, the one other place this codebase already needed the
+admin client for an operation RLS structurally can't grant an authenticated user directly, with
+the id still taken only from the verified session. Reading/writing the two profile rows themselves
+uses the ordinary session-scoped client throughout; the admin client is never used for those.
+
+## 42. Scoring/Eligibility independence — proof, not just policy
+
+The spec's core invariant — a scoring change never touches Eligibility, an eligibility change
+never touches Match/Coverage — already followed structurally from `rankJobsForUser`'s own code
+(`computeMatchScore`/`evaluateCriteria` read only the scoring profile + job features;
+`evaluateEligibility` reads only the eligibility profile + job features; neither function's
+inputs or outputs cross into the other, §27/§28). D5B adds two direct regression tests proving
+this against the real orchestrator (`packages/discovery/src/ranking/rank-user.test.ts`, "D5B
+independence invariants"), not a UI-level or API-route-level mock:
+
+- **Invariant A**: holding the job/features/scoring-profile fixed, running `rankJobsForUser` once
+  per eligibility profile (one with no sponsorship requirement, one requiring sponsorship against
+  a job that states none is available — a real, non-vacuous `CONFLICT`) asserts `matchScore` and
+  `coverage` are `toBe`-identical (not merely close) across the two runs.
+- **Invariant B**: holding the job/features/eligibility-profile fixed, running `rankJobsForUser`
+  once per scoring profile (`ROLE_FIT` rated 10 vs. rated 2, producing `matchScore: 100` vs. `20`
+  — a real, non-trivial difference) asserts `eligibilityStatus` **and the entire `eligibilityChecks`
+  array** (`toEqual`, not just the aggregate status) are identical across the two runs.
+
+Both were then reproduced live against the real 1,371-job catalog (§43) — a real scoring-weight
+edit through the actual `/settings/discovery` UI changed 289 jobs' `match_score` and all 1,371
+`coverage` values while leaving every single `eligibility_status`/`eligibility_checks` value
+byte-for-byte identical; a real eligibility-field edit (graduation year) flipped 5 jobs'
+`eligibility_status` (a mix of `UNKNOWN` → `CONFLICT` and `CONFLICT` → `UNKNOWN`, non-vacuous)
+while leaving all 1,371 `match_score`/`coverage` values byte-for-byte identical.
+
+## 43. D5B live verification (real 1,371-job catalog)
+
+Two disposable test `auth.users` accounts (created via the Supabase Admin API, password sign-in
+used to mint real sessions, deleted afterward, never hardcoded ids in code). User A got a `CUSTOM`
+scoring profile + a sponsorship/graduation-year eligibility profile via the existing CLI, then
+`discovery:rank` (1,371/1,371 scored) to establish a real baseline. Every step below was driven
+through the actual running `/settings/discovery` page and `/discover` page in a real headless
+Chromium session (Playwright), not a service-role-only fake path:
+
+```
+1. /settings/discovery loaded the persisted CUSTOM profile exactly (Role fit weight: 8,
+   "Software Engineering" role preference visible) — confirmed live.
+2-4. Edited Role fit 8 -> 9 in the real UI, clicked Save. Response: scoringChanged=true,
+   eligibilityChanged=false, recompute.succeeded=true, jobsScored=1371. UI showed "Your job
+   matches have been updated. 1371 jobs re-ranked..." with a working "View updated jobs" link.
+5-6. /discover's top result changed after the save (confirmed live); a full-catalog diff showed
+   289 match_score changes and 1371 coverage changes (weights affect the coverage denominator
+   too), 0 eligibility_status/eligibility_checks changes — Invariant A held on real data.
+7. Restored the original scoring profile via the CLI; a full-catalog diff against the pre-change
+   baseline showed 0 changes anywhere — exact restoration confirmed.
+8-10. Edited Graduation year 2026 -> 2027 in the real UI, clicked Save. Response:
+   scoringChanged=false, eligibilityChanged=true, recompute.succeeded=true. UI showed "Your
+   eligibility results have been updated." and never showed the scoring-change message.
+11. Full-catalog diff: 5 real eligibility_status changes (UNKNOWN<->CONFLICT, both directions —
+   non-vacuous), 7 eligibility_checks changes, 0 match_score changes, 0 coverage changes —
+   Invariant B held on real data, byte-for-byte.
+12. Restored the original eligibility profile via the CLI; a full-catalog diff showed 0 changes
+   anywhere.
+```
+
+Also verified live: a true no-op resubmit (the exact persisted scoring+eligibility shape) returned
+`scoringChanged: false, eligibilityChanged: false, recompute: { attempted: false }`, and a direct
+database check confirmed `discovery_scoring_profiles.updated_at`, `discovery_eligibility_profiles.
+updated_at`, and a sampled `user_job_match_scores.computed_at` were all still stamped from the
+prior CLI restore — completely untouched by the no-op request. A malformed payload (`preset:
+"NOT_REAL"`) returned `400` with per-field Zod errors. An unauthenticated `POST` returned `401`;
+an unauthenticated `GET /settings/discovery` redirected to `/login`. A second disposable user (User
+B) loading `/settings/discovery` saw their own fresh BALANCED-default profile (Role fit weight: 7,
+the migration's own default) — never User A's `CUSTOM` profile or role preference — and User B's
+own save (`scoringChanged: true`, 1,371 jobs scored) left every one of User A's 1,371 rows
+byte-for-byte unchanged, confirmed via an independent service-role read. Both test users' every
+row (`discovery_scoring_profiles`, `discovery_eligibility_profiles`, `user_job_match_scores`) was
+confirmed at zero after deletion — no residue left in the linked project.
+
+**Snapshot methodology note**: every live full-catalog comparison paged `user_job_match_scores` in
+chunks of 1,000 (never a bare `.select()`) — the exact PostgREST default-row-cap pitfall §29/§39
+already document; a plain unbounded fetch against this 1,371-row table would have silently
+truncated the verification itself.
+
+**AI/provider audit**: zero references to `@career-os/ai`, Tavily, Claude, or embeddings anywhere
+in the D5B code path (`apps/web/app/(app)/settings/discovery/**`, `apps/web/app/api/discovery/**`,
+`packages/shared`'s new discovery-settings files) — confirmed by grep.
+
+## 44. D5B — consciously deferred
+
+No new preference semantics were added for UI convenience — every field in the settings form maps
+1:1 to an existing `discovery_scoring_profiles`/`discovery_eligibility_profiles` column, and the
+preset picker itself was deliberately left out of the UI (a preset only pre-populates the same
+editable fields, §26 — there is nothing a preset selector would do that editing the fields
+directly doesn't already do more precisely). Explicitly not built, matching the spec: AI
+recommendations/explanations, semantic search, embeddings, behavioral learning, automatic weight
+tuning, the D6 application handoff, résumé/Gmail changes, and a second scoring system. D5A's
+default `/discover` ranking rule (§35) was not touched.

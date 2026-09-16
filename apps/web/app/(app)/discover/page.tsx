@@ -12,33 +12,13 @@ import { Button, Input, Label, Select } from '@career-os/ui';
 import Link from 'next/link';
 import { requireUser } from '../../../lib/auth';
 import { createClient } from '../../../lib/supabase/server';
+import {
+  EMPLOYMENT_LABELS,
+  ROLE_FAMILY_LABELS,
+  WORKPLACE_LABELS,
+  formatLocationTokenLabel,
+} from './discovery-display-labels';
 import { JobCard } from './job-card';
-
-const ROLE_FAMILY_LABELS: Record<string, string> = {
-  PRODUCT_MANAGEMENT: 'Product Management',
-  TECHNICAL_PROGRAM_MANAGEMENT: 'Technical Program Management',
-  PRODUCT_ANALYTICS: 'Product Analytics',
-  DATA_ANALYTICS: 'Data Analytics',
-  DATA_SCIENCE: 'Data Science',
-  SOFTWARE_ENGINEERING: 'Software Engineering',
-  BUSINESS_ANALYTICS: 'Business Analytics',
-  STRATEGY_OPERATIONS: 'Strategy & Operations',
-  CONSULTING: 'Consulting',
-};
-
-const WORKPLACE_LABELS: Record<string, string> = {
-  REMOTE: 'Remote',
-  HYBRID: 'Hybrid',
-  ONSITE: 'On-site',
-};
-
-const EMPLOYMENT_LABELS: Record<string, string> = {
-  FULL_TIME: 'Full-time',
-  PART_TIME: 'Part-time',
-  CONTRACT: 'Contract',
-  INTERNSHIP: 'Internship',
-  TEMPORARY: 'Temporary',
-};
 
 const ELIGIBILITY_FILTER_LABELS: Record<string, string> = {
   ELIGIBLE: 'No conflicts found',
@@ -53,16 +33,6 @@ const FRESHNESS_OPTIONS = [
   { value: '14', label: 'Past 2 weeks' },
   { value: '30', label: 'Past month' },
 ];
-
-/** `NEW_YORK_NY` -> `New York NY`, `UNITED_STATES` -> `United States` — purely cosmetic; the
- * value actually submitted is always the raw token from `list_discovery_location_tokens`, never
- * this label. */
-function formatLocationTokenLabel(token: string): string {
-  return token
-    .split('_')
-    .map((part) => (part.length <= 2 ? part : part[0] + part.slice(1).toLowerCase()))
-    .join(' ');
-}
 
 type RawSearchParams = Record<string, string | string[] | undefined>;
 
@@ -113,13 +83,21 @@ export default async function DiscoverPage({
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Discover</h1>
-        <p className="text-muted-foreground mt-1 text-sm">
-          Jobs ranked against your scoring and eligibility profile. Match and Coverage are always
-          shown separately — Coverage reflects how much of Match a posting gave Career OS enough
-          information to evaluate, not how good the job is.
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Discover</h1>
+          <p className="text-muted-foreground mt-1 text-sm">
+            Jobs ranked against your scoring and eligibility profile. Match and Coverage are
+            always shown separately — Coverage reflects how much of Match a posting gave Career OS
+            enough information to evaluate, not how good the job is.
+          </p>
+        </div>
+        <Link
+          href="/settings/discovery"
+          className="text-muted-foreground shrink-0 text-sm whitespace-nowrap hover:underline"
+        >
+          Edit preferences
+        </Link>
       </div>
 
       <form className="flex flex-wrap items-end gap-3" method="get">

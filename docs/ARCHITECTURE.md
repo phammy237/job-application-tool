@@ -23,6 +23,7 @@ job-application-tool/
 ├── apps/
 │   ├── web/                 # Next.js App Router — dashboard + public landing page +
 │   │                         # /discover, the first user-facing Job Discovery Track surface (D5A)
+│   │                         # + /settings/discovery, its preferences UI (D5B)
 │   └── extension/           # Chrome MV3 extension — React + Vite
 ├── packages/
 │   ├── shared/               # Zod schemas + TS types shared by web and extension
@@ -34,7 +35,11 @@ job-application-tool/
 │   │                         # discovery-feed.ts) — no scoring recomputation, reads D4 output only
 │   └── discovery/             # Job Discovery Track: ATS adapters + ingestion orchestrator (D1-D3),
 │                               # deterministic feature extraction + ranking orchestration (D4) —
-│                               # zero AI, zero dependency on packages/ai (docs/JOB_DISCOVERY.md)
+│                               # zero AI, zero dependency on packages/ai (docs/JOB_DISCOVERY.md).
+│                               # rankJobsForUser is also called directly from apps/web (D5B's
+│                               # /api/discovery/settings save-and-recompute route), so this
+│                               # package is now also a runtime dependency of @career-os/web, not
+│                               # only of scripts/discovery/'s CLI entry points.
 ├── scripts/
 │   └── discovery/             # Manual CLI entry points: discovery:sync, discovery:import-sources
 ├── supabase/
