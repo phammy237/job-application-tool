@@ -1,9 +1,14 @@
-import { countOwnResumeVersionsForResumes, listOwnResumes } from '@career-os/database';
+import {
+  countOwnResumeVersionsForResumes,
+  listOwnResumeVersionsForResume,
+  listOwnResumes,
+} from '@career-os/database';
 import { Button, Input, Label } from '@career-os/ui';
 import Link from 'next/link';
 import { requireUser } from '../../../lib/auth';
 import { createClient } from '../../../lib/supabase/server';
 import { createMasterResume, createTailoredResume } from './actions';
+import { CreateMasterVersionButton } from './create-master-version-button';
 
 export default async function ResumesPage() {
   const user = await requireUser();
@@ -18,6 +23,14 @@ export default async function ResumesPage() {
 
   const master = resumes.find((r) => r.kind === 'MASTER') ?? null;
   const tailored = resumes.filter((r) => r.kind === 'TAILORED');
+
+  // Phase C: does the MASTER already have a structured version? Drives which label/action
+  // Create-master-version offers ("Create structured master resume" vs "Create new master
+  // version from profile") — never mutating whichever version already exists either way.
+  const masterVersions = master
+    ? await listOwnResumeVersionsForResume(supabase, user.id, master.id)
+    : [];
+  const masterHasStructuredVersion = masterVersions.some((v) => v.snapshotFormat === 'STRUCTURED_V1');
 
   return (
     <div className="max-w-2xl space-y-8">
@@ -53,6 +66,20 @@ export default async function ResumesPage() {
             </Button>
           </form>
         )}
+
+        <div className="flex flex-wrap items-center gap-3">
+          <CreateMasterVersionButton hasStructuredVersion={masterHasStructuredVersion} />
+          {!masterHasStructuredVersion ? (
+            <p className="text-muted-foreground text-xs">
+              Already have a résumé?{' '}
+              <Link href="/settings/resume-import" className="underline underline-offset-2">
+                Import it
+              </Link>{' '}
+              to populate your Candidate Profile first, or use your approved profile data
+              directly with the button above.
+            </p>
+          ) : null}
+        </div>
       </section>
 
       <section className="space-y-3">

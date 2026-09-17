@@ -3,11 +3,13 @@ import { isoDateTimeSchema, uuidSchema } from './common';
 
 /**
  * The `resume_uploads` table (renamed from `resumes` in migration 0020 — see that migration's
- * own comment for why) — an uploaded résumé *file* awaiting a future Claude extraction pipeline
- * into `candidate_facts` (docs/USER_FLOWS.md §1). This is a distinct concept from
- * `@career-os/shared`'s `Resume`/`ResumeVersion` (Phase 7A's logical résumé identity + immutable
- * version history) — this table has no writer anywhere in this codebase yet; upload UI and
- * extraction still land in a later phase.
+ * own comment for why) — an uploaded résumé *file*, extracted for review by the Resume Import
+ * pipeline (migration 0034, Phase B of the onboarding-path hardening pass). This is a distinct
+ * concept from `@career-os/shared`'s `Resume`/`ResumeVersion` (Phase 7A's logical résumé
+ * identity + immutable version history) — this table only ever tracks the uploaded file itself,
+ * never structured candidate content (that's extracted fresh into client state for review, then
+ * written straight into the existing Candidate Profile tables on confirmation — never a second
+ * "resume facts" data model).
  */
 export const resumeExtractionStatusSchema = z.enum([
   'PENDING',
@@ -26,6 +28,13 @@ export const resumeUploadSchema = z.object({
   isPrimary: z.boolean().default(false),
   extractionStatus: resumeExtractionStatusSchema.default('PENDING'),
   extractedAt: isoDateTimeSchema.nullable(),
+  /** Added in migration 0034 (Phase B) — same missing-key-on-an-unmigrated-database reasoning
+   * the rest of this codebase's later-added columns already use (see applicationSchema's
+   * jobCatalogId for the canonical example). Null for the handful of rows created before this
+   * column existed (none in any real environment — this table had zero writers until now). */
+  contentHash: z.string().nullable().default(null),
+  contentType: z.string().nullable().default(null),
+  fileSizeBytes: z.number().int().positive().nullable().default(null),
   createdAt: isoDateTimeSchema,
   updatedAt: isoDateTimeSchema,
 });

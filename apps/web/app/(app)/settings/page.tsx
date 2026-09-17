@@ -104,6 +104,21 @@ export default async function SettingsPage({
 
       <Card>
         <CardHeader>
+          <CardTitle>Resume &amp; Profile</CardTitle>
+          <CardDescription>
+            Already have a resume? Upload it and Career OS can extract your experience,
+            education, projects, skills, and contact details for review — nothing is added to
+            your profile until you approve it.{' '}
+            <Link href="/settings/resume-import" className="underline underline-offset-2">
+              Import resume
+            </Link>
+            .
+          </CardDescription>
+        </CardHeader>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>Gmail</CardTitle>
           <CardDescription>
             {gmailGloballyEnabled

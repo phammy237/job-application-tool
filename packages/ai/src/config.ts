@@ -159,3 +159,19 @@ export const RESEARCH_TAILORING_MAX_FINDINGS = 10;
  * degrading to JOB_ONLY (§4). Bounded rather than "check every snapshot ever researched for this
  * application" so this resolution step stays a small, fixed number of reads. */
 export const RESEARCH_TAILORING_AUTO_RESOLVE_CANDIDATE_LIMIT = 3;
+
+/**
+ * Resume Import (migration 0034, Phase B of the onboarding-path hardening pass,
+ * packages/ai/src/generate-resume-extraction.ts) — the model only ever SEGMENTS/STRUCTURES
+ * already-extracted résumé text into the existing Experience/Education/Project/Skill/Profile
+ * shapes; it never generates new content. `RESUME_EXTRACTION_TEXT_CHAR_CAP` bounds worst-case
+ * injected content volume from the uploaded file's own extracted text — same rationale as every
+ * other *_CHAR_CAP above; a résumé's selectable text virtually never approaches this in practice.
+ * Every bullet/company/title/school/project name the model returns is independently verified
+ * against the original extracted text after the call (verbatim-substring grounding, packages/
+ * ai/src/contract/validate-resume-extraction-contract.ts) — this cap bounds the prompt, the
+ * grounding check is what actually prevents fabrication.
+ */
+export const RESUME_EXTRACTION_MAX_OUTPUT_TOKENS = 8192;
+export const RESUME_EXTRACTION_PROMPT_VERSION = 'resume-extraction-v1';
+export const RESUME_EXTRACTION_TEXT_CHAR_CAP = 15_000;

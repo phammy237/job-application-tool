@@ -46,5 +46,7 @@ export type {
   GenerateCompanyResearchParams,
   GenerateCompanyResearchResult,
 } from './generate-company-research';
+export { generateResumeExtraction } from './generate-resume-extraction';
+export type { GenerateResumeExtractionResult } from './generate-resume-extraction';
 export { deriveEligibleNextAction } from './derive-eligible-next-action';
 export { NEVER_SUGGEST_CLASSIFICATIONS } from './config';

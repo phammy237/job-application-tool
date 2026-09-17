@@ -1,5 +1,5 @@
 import { resumeUploadSchema, type ResumeUpload } from '@career-os/shared';
-import { assertNoError } from '../errors';
+import { assertNoError, unwrapRow } from '../errors';
 import type { Database } from '../types/database.types';
 import type { CareerOsSupabaseClient } from '../types/client';
 
@@ -15,18 +15,17 @@ function rowToResumeUpload(row: Row): ResumeUpload {
     isPrimary: row.is_primary,
     extractionStatus: row.extraction_status,
     extractedAt: row.extracted_at,
+    contentHash: 'content_hash' in row ? row.content_hash : null,
+    contentType: 'content_type' in row ? row.content_type : null,
+    fileSizeBytes: 'file_size_bytes' in row ? row.file_size_bytes : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });
 }
 
 /**
- * Query layer only — résumé upload UI and extraction pipeline are out of scope for this phase
- * (see docs/IMPLEMENTATION_PLAN.md). Kept here so the table has a typed access path as soon as
- * it's needed, and so legacy `applications.resume_id`/`candidate_facts.source_resume_id` values
- * can be resolved to a label. Renamed from `resumes`/`listOwnResumes` in migration 0020 (Phase
- * 7A) to free that name for the new logical résumé-identity model — see `./resumes.ts` and
- * `./resume-versions.ts` for that.
+ * Query layer for the `resume_uploads` table (migration 0020, Phase 7A; extended by migration
+ * 0034, Phase B, for Resume Import — see that migration's own comment for the full history).
  */
 export async function listOwnResumeUploads(
   supabase: CareerOsSupabaseClient,
@@ -39,4 +38,76 @@ export async function listOwnResumeUploads(
     .order('created_at', { ascending: false });
   assertNoError(error, 'listOwnResumeUploads');
   return (data ?? []).map(rowToResumeUpload);
+}
+
+/**
+ * Dedup lookup (migration 0034's `resume_uploads_user_content_hash_key` partial unique index) —
+ * a repeat upload of the identical file resolves to this existing row instead of writing a
+ * duplicate file/row.
+ */
+export async function getOwnResumeUploadByContentHash(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+  contentHash: string,
+): Promise<ResumeUpload | null> {
+  const { data, error } = await supabase
+    .from('resume_uploads')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('content_hash', contentHash)
+    .maybeSingle();
+  assertNoError(error, 'getOwnResumeUploadByContentHash');
+  return data ? rowToResumeUpload(data) : null;
+}
+
+export interface CreateResumeUploadInput {
+  filePath: string;
+  fileName: string;
+  contentType: string;
+  fileSizeBytes: number;
+  contentHash: string;
+}
+
+/**
+ * Creates the audit/dedup row for an uploaded file — never the extracted content itself
+ * (docs/SECURITY_AND_PRIVACY.md "no raw resume text logging" — this table only ever tracks file
+ * metadata). `extraction_status` starts PENDING; the analyze route updates it to COMPLETE/FAILED
+ * once extraction actually runs, via `updateOwnResumeUploadExtractionStatus` below.
+ */
+export async function createOwnResumeUpload(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+  input: CreateResumeUploadInput,
+): Promise<ResumeUpload> {
+  const { data, error } = await supabase
+    .from('resume_uploads')
+    .insert({
+      user_id: userId,
+      file_path: input.filePath,
+      file_name: input.fileName,
+      content_type: input.contentType,
+      file_size_bytes: input.fileSizeBytes,
+      content_hash: input.contentHash,
+      extraction_status: 'PENDING',
+    })
+    .select('*')
+    .single();
+  return rowToResumeUpload(unwrapRow(data, error, 'createOwnResumeUpload'));
+}
+
+export async function updateOwnResumeUploadExtractionStatus(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+  id: string,
+  status: 'PROCESSING' | 'COMPLETE' | 'FAILED',
+): Promise<void> {
+  const { error } = await supabase
+    .from('resume_uploads')
+    .update({
+      extraction_status: status,
+      extracted_at: status === 'COMPLETE' ? new Date().toISOString() : null,
+    })
+    .eq('id', id)
+    .eq('user_id', userId);
+  assertNoError(error, 'updateOwnResumeUploadExtractionStatus');
 }

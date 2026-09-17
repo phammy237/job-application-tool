@@ -6,6 +6,7 @@ import {
   MAX_OUTPUT_TOKENS,
   MODEL_ID,
   REQUIREMENT_MAPPING_MAX_OUTPUT_TOKENS,
+  RESUME_EXTRACTION_MAX_OUTPUT_TOKENS,
   RESUME_TAILORING_MAX_OUTPUT_TOKENS,
   UNSUPPORTED_CLAIM_CHECK_MAX_OUTPUT_TOKENS,
 } from '../config';
@@ -647,6 +648,109 @@ export async function callClaudeForEmailClassification(
       messages: [{ role: 'user', content: userText }],
       output_config: {
         format: { type: 'json_schema', schema: EMAIL_CLASSIFICATION_JSON_SCHEMA },
+      },
+    });
+
+    if (response.stop_reason === 'refusal') {
+      return { status: 'refusal', category: response.stop_details?.category ?? null };
+    }
+
+    const textBlock = response.content.find((block) => block.type === 'text');
+    if (!textBlock || textBlock.type !== 'text') {
+      return { status: 'provider_error', message: 'No text content in Claude response' };
+    }
+    return { status: 'ok', rawText: textBlock.text };
+  } catch (error) {
+    return {
+      status: 'provider_error',
+      message: error instanceof Error ? error.message : 'Unknown Anthropic API error',
+    };
+  }
+}
+
+/** Mirrors resumeExtractionContractSchema (packages/shared) — see GENERATED_ANSWER_JSON_SCHEMA's
+ * own doc comment for why this is hand-written rather than derived from the Zod schema. */
+const RESUME_EXTRACTION_JSON_SCHEMA = {
+  type: 'object',
+  properties: {
+    experience: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          company: { type: 'string' },
+          title: { type: 'string' },
+          location: { type: ['string', 'null'] },
+          dateRangeText: { type: ['string', 'null'] },
+          bullets: { type: 'array', items: { type: 'string' } },
+          uncertain: { type: 'boolean' },
+        },
+        required: ['company', 'title', 'location', 'dateRangeText', 'bullets', 'uncertain'],
+        additionalProperties: false,
+      },
+    },
+    education: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          school: { type: 'string' },
+          degree: { type: ['string', 'null'] },
+          fieldOfStudy: { type: ['string', 'null'] },
+          dateRangeText: { type: ['string', 'null'] },
+          gpa: { type: ['string', 'null'] },
+          uncertain: { type: 'boolean' },
+        },
+        required: ['school', 'degree', 'fieldOfStudy', 'dateRangeText', 'gpa', 'uncertain'],
+        additionalProperties: false,
+      },
+    },
+    projects: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          role: { type: ['string', 'null'] },
+          dateRangeText: { type: ['string', 'null'] },
+          url: { type: ['string', 'null'] },
+          bullets: { type: 'array', items: { type: 'string' } },
+          uncertain: { type: 'boolean' },
+        },
+        required: ['name', 'role', 'dateRangeText', 'url', 'bullets', 'uncertain'],
+        additionalProperties: false,
+      },
+    },
+    skills: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          category: { type: ['string', 'null'] },
+        },
+        required: ['name', 'category'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['experience', 'education', 'projects', 'skills'],
+  additionalProperties: false,
+} as const;
+
+export async function callClaudeForResumeExtraction(
+  systemPrompt: string,
+  userText: string,
+): Promise<CallClaudeResult> {
+  try {
+    const response = await getAnthropicClient().messages.create({
+      model: MODEL_ID,
+      max_tokens: RESUME_EXTRACTION_MAX_OUTPUT_TOKENS,
+      thinking: { type: 'disabled' },
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userText }],
+      output_config: {
+        format: { type: 'json_schema', schema: RESUME_EXTRACTION_JSON_SCHEMA },
       },
     });
 

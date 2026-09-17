@@ -192,6 +192,11 @@ export interface Database {
           is_primary: boolean;
           extraction_status: string;
           extracted_at: string | null;
+          // Added in migration 0034 (Phase B, Resume Import) — nullable; absent on any row that
+          // predates this migration (none in any real environment — see that migration's comment).
+          content_hash: string | null;
+          content_type: string | null;
+          file_size_bytes: number | null;
           created_at: string;
           updated_at: string;
         };

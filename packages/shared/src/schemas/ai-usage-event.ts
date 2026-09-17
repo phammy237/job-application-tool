@@ -76,6 +76,9 @@ export const aiUsageEventTaskTypeSchema = z.enum([
   'interview_prep',
   'resume_tailoring',
   'company_research',
+  // Resume Import (migration 0035, Phase B of the onboarding-path hardening pass) —
+  // packages/ai/src/generate-resume-extraction.ts.
+  'resume_extraction',
 ]);
 export type AiUsageEventTaskType = z.infer<typeof aiUsageEventTaskTypeSchema>;
 
