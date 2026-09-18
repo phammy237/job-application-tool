@@ -39,6 +39,15 @@ function pdfFile(bytes: number, name = 'resume.pdf'): File {
   return new File([new Uint8Array(bytes)], name, { type: 'application/pdf' });
 }
 
+function requestWithText(text: string | null): Request {
+  const formData = new FormData();
+  if (text !== null) formData.set('text', text);
+  return new Request('http://localhost/api/profile/resume-import/analyze', {
+    method: 'POST',
+    body: formData,
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.getCurrentUser.mockResolvedValue({ id: USER_ID });
@@ -156,6 +165,79 @@ describe('POST /api/profile/resume-import/analyze', () => {
     // function the moment any test in this file ran, not just this one; (b) the route's actual
     // source text contains none of those identifiers, checked directly so this stays true even if
     // a future edit added a call site the existing tests happened not to exercise.
+    const source = readFileSync(new URL('./route.ts', import.meta.url), 'utf8');
+    for (const forbidden of [
+      'createOwnExperience',
+      'createOwnEducation',
+      'createOwnProject',
+      'createOwnSkill',
+      'upsertOwnProfile',
+    ]) {
+      expect(source).not.toContain(forbidden);
+    }
+  });
+});
+
+describe('POST /api/profile/resume-import/analyze — pasted resume text (shares the same pipeline as an uploaded file)', () => {
+  it('4. rejects empty pasted text', async () => {
+    const res = await POST(requestWithText(''));
+    expect(res.status).toBe(400);
+    expect(mocks.generateResumeExtraction).not.toHaveBeenCalled();
+  });
+
+  it('rejects whitespace-only pasted text the same as empty', async () => {
+    const res = await POST(requestWithText('   \n  '));
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects too-short pasted text with a distinct message from "empty"', async () => {
+    const res = await POST(requestWithText('too short'));
+    const body = (await res.json()) as { error: string };
+    expect(res.status).toBe(400);
+    expect(body.error).toMatch(/enough résumé text/i);
+  });
+
+  it('rejects pasted text over the max length', async () => {
+    const res = await POST(requestWithText('a'.repeat(20_001)));
+    expect(res.status).toBe(400);
+    expect(mocks.generateResumeExtraction).not.toHaveBeenCalled();
+  });
+
+  it('rejects a request with neither a file nor text', async () => {
+    const res = await POST(requestWithText(null));
+    expect(res.status).toBe(400);
+  });
+
+  it('runs the exact same extraction pipeline as an upload — parses contact info and calls generateResumeExtraction with the pasted text, never creating a resume_uploads row', async () => {
+    const text = ('Jane Doe\njane@example.com\nEXPERIENCE\nEngineer, Acme\n').repeat(3);
+    mocks.generateResumeExtraction.mockResolvedValue({
+      status: 'ok',
+      result: { experience: [], education: [], projects: [], skills: [] },
+      droppedCount: 0,
+    });
+
+    const res = await POST(requestWithText(text));
+    const body = (await res.json()) as { personal: { email: string | null } };
+
+    expect(res.status).toBe(200);
+    expect(body.personal.email).toBe('jane@example.com');
+    expect(mocks.generateResumeExtraction).toHaveBeenCalledWith(expect.anything(), USER_ID, text.trim());
+    expect(mocks.createOwnResumeUpload).not.toHaveBeenCalled();
+    expect(mocks.updateOwnResumeUploadExtractionStatus).not.toHaveBeenCalled();
+  });
+
+  it('surfaces AI rate-limiting for pasted text the same as for an upload', async () => {
+    const text = 'Jane Doe\nEXPERIENCE\nEngineer, Acme\n'.repeat(5);
+    mocks.generateResumeExtraction.mockResolvedValue({
+      status: 'rate_limited',
+      usage: { allowed: false, aiRequestsThisPeriod: 150, aiRequestLimit: 150, aiRequestPeriodStartedAt: '2026-01-01' },
+    });
+
+    const res = await POST(requestWithText(text));
+    expect(res.status).toBe(429);
+  });
+
+  it('never writes to profile tables for pasted text either (same structural guarantee as upload)', async () => {
     const source = readFileSync(new URL('./route.ts', import.meta.url), 'utf8');
     for (const forbidden of [
       'createOwnExperience',

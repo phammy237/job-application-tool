@@ -2,12 +2,24 @@
 
 import type { Education } from '@career-os/shared';
 import { Button, Input, Label } from '@career-os/ui';
-import { useActionState } from 'react';
+import { useActionState, useState } from 'react';
+import { PendingImportCard } from '../../../lib/resume-import/pending-import-card';
+import type { PendingEducation } from '../../../lib/resume-import/pending-types';
 import { ApprovalCheckboxes } from './approval-checkboxes';
 import { addEducation, deleteEducation, updateEducationApproval } from './actions';
 import { INITIAL_PROFILE_ACTION_STATE } from './profile-action-state';
 
-export function EducationSection({ education }: { education: Education[] }) {
+export function EducationSection({
+  education,
+  pendingItems = [],
+  onPendingChange,
+  onPendingRemove,
+}: {
+  education: Education[];
+  pendingItems?: PendingEducation[];
+  onPendingChange?: (key: string, next: PendingEducation) => void;
+  onPendingRemove?: (key: string) => void;
+}) {
   const [addState, addFormAction, addPending] = useActionState(
     addEducation,
     INITIAL_PROFILE_ACTION_STATE,
@@ -18,10 +30,18 @@ export function EducationSection({ education }: { education: Education[] }) {
       <h2 className="text-lg font-semibold">Education</h2>
 
       <div className="space-y-3">
+        {pendingItems.map((item) => (
+          <PendingEducationCard
+            key={item.key}
+            item={item}
+            onChange={(next) => onPendingChange?.(item.key, next)}
+            onRemove={() => onPendingRemove?.(item.key)}
+          />
+        ))}
         {education.map((item) => (
           <EducationRow key={item.id} item={item} />
         ))}
-        {education.length === 0 ? (
+        {education.length === 0 && pendingItems.length === 0 ? (
           <p className="text-muted-foreground text-sm">No education added yet.</p>
         ) : null}
       </div>
@@ -114,5 +134,65 @@ function EducationRow({ item }: { item: Education }) {
         <p className="text-destructive mt-1 text-xs">{approvalState.error}</p>
       ) : null}
     </div>
+  );
+}
+
+/** See experience-section.tsx's `PendingExperienceCard` doc comment — identical approval-event
+ * reasoning applies here. */
+function PendingEducationCard({
+  item,
+  onChange,
+  onRemove,
+}: {
+  item: PendingEducation;
+  onChange: (next: PendingEducation) => void;
+  onRemove: () => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSave() {
+    if (saving) return; // duplicate-click guard
+    setSaving(true);
+    setError(null);
+    const fd = new FormData();
+    fd.set('school', item.school);
+    fd.set('degree', item.degree ?? '');
+    fd.set('fieldOfStudy', item.fieldOfStudy ?? '');
+    fd.set('gpa', item.gpa ?? '');
+    fd.set('startDate', '');
+    fd.set('graduationDate', '');
+    fd.set('userApproved', 'on');
+    fd.set('approvedForApplications', 'on');
+    const result = await addEducation(INITIAL_PROFILE_ACTION_STATE, fd);
+    if (result.error) {
+      setError(result.error);
+      setSaving(false);
+      return;
+    }
+    onRemove();
+  }
+
+  return (
+    <PendingImportCard
+      saving={saving}
+      error={error}
+      onSave={() => void handleSave()}
+      onDiscard={onRemove}
+      fields={[
+        { label: 'School', value: item.school, onChange: (v) => onChange({ ...item, school: v }) },
+        {
+          label: 'Degree',
+          value: item.degree ?? '',
+          onChange: (v) => onChange({ ...item, degree: v || null }),
+        },
+        {
+          label: 'Field of study',
+          value: item.fieldOfStudy ?? '',
+          onChange: (v) => onChange({ ...item, fieldOfStudy: v || null }),
+        },
+        { label: 'GPA', value: item.gpa ?? '', onChange: (v) => onChange({ ...item, gpa: v || null }) },
+      ]}
+    />
   );
 }

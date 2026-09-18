@@ -2,12 +2,24 @@
 
 import type { Project } from '@career-os/shared';
 import { Button, Input, Label, Textarea } from '@career-os/ui';
-import { useActionState } from 'react';
+import { useActionState, useState } from 'react';
+import { PendingImportCard } from '../../../lib/resume-import/pending-import-card';
+import type { PendingProject } from '../../../lib/resume-import/pending-types';
 import { ApprovalCheckboxes } from './approval-checkboxes';
 import { addProject, deleteProject, updateProjectApproval } from './actions';
 import { INITIAL_PROFILE_ACTION_STATE } from './profile-action-state';
 
-export function ProjectSection({ projects }: { projects: Project[] }) {
+export function ProjectSection({
+  projects,
+  pendingItems = [],
+  onPendingChange,
+  onPendingRemove,
+}: {
+  projects: Project[];
+  pendingItems?: PendingProject[];
+  onPendingChange?: (key: string, next: PendingProject) => void;
+  onPendingRemove?: (key: string) => void;
+}) {
   const [addState, addFormAction, addPending] = useActionState(
     addProject,
     INITIAL_PROFILE_ACTION_STATE,
@@ -18,10 +30,18 @@ export function ProjectSection({ projects }: { projects: Project[] }) {
       <h2 className="text-lg font-semibold">Projects</h2>
 
       <div className="space-y-3">
+        {pendingItems.map((item) => (
+          <PendingProjectCard
+            key={item.key}
+            item={item}
+            onChange={(next) => onPendingChange?.(item.key, next)}
+            onRemove={() => onPendingRemove?.(item.key)}
+          />
+        ))}
         {projects.map((project) => (
           <ProjectRow key={project.id} project={project} />
         ))}
-        {projects.length === 0 ? (
+        {projects.length === 0 && pendingItems.length === 0 ? (
           <p className="text-muted-foreground text-sm">No projects added yet.</p>
         ) : null}
       </div>
@@ -106,5 +126,60 @@ function ProjectRow({ project }: { project: Project }) {
         <p className="text-destructive mt-1 text-xs">{approvalState.error}</p>
       ) : null}
     </div>
+  );
+}
+
+/** See experience-section.tsx's `PendingExperienceCard` doc comment — identical approval-event
+ * reasoning applies here. */
+function PendingProjectCard({
+  item,
+  onChange,
+  onRemove,
+}: {
+  item: PendingProject;
+  onChange: (next: PendingProject) => void;
+  onRemove: () => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSave() {
+    if (saving) return; // duplicate-click guard
+    setSaving(true);
+    setError(null);
+    const fd = new FormData();
+    fd.set('name', item.name);
+    fd.set('role', item.role ?? '');
+    fd.set('url', item.url ?? '');
+    fd.set('description', item.description ?? '');
+    fd.set('userApproved', 'on');
+    fd.set('approvedForApplications', 'on');
+    const result = await addProject(INITIAL_PROFILE_ACTION_STATE, fd);
+    if (result.error) {
+      setError(result.error);
+      setSaving(false);
+      return;
+    }
+    onRemove();
+  }
+
+  return (
+    <PendingImportCard
+      saving={saving}
+      error={error}
+      onSave={() => void handleSave()}
+      onDiscard={onRemove}
+      fields={[
+        { label: 'Name', value: item.name, onChange: (v) => onChange({ ...item, name: v }) },
+        { label: 'Role', value: item.role ?? '', onChange: (v) => onChange({ ...item, role: v || null }) },
+        { label: 'URL', value: item.url ?? '', onChange: (v) => onChange({ ...item, url: v || null }) },
+        {
+          label: 'Description',
+          value: item.description ?? '',
+          onChange: (v) => onChange({ ...item, description: v || null }),
+          multiline: true,
+        },
+      ]}
+    />
   );
 }

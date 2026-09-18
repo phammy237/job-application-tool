@@ -62,6 +62,7 @@ export * from './lib/resume-latex-render';
 export * from './lib/resume-content-from-profile';
 export * from './lib/parse-resume-date-text';
 export * from './lib/parse-resume-contact-info';
+export * from './lib/dedupe-resume-import-item';
 export * from './lib/resume-tailoring-numeric-guard';
 export * from './lib/resume-tailoring-technology-guard';
 export * from './lib/validate-resume-tailoring-plan';

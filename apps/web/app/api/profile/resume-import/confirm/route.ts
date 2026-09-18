@@ -14,6 +14,10 @@ import {
 import {
   educationInputSchema,
   experienceInputSchema,
+  isDuplicateEducation,
+  isDuplicateExperience,
+  isDuplicateProject,
+  isDuplicateSkill,
   profileUpdateSchema,
   projectInputSchema,
   skillInputSchema,
@@ -165,9 +169,7 @@ export async function POST(request: Request) {
     let experiencesCreated = 0;
     let experiencesSkippedAsDuplicate = 0;
     for (const item of input.experience) {
-      const isDuplicate = existingExperiences.some(
-        (e) => e.company === item.company && e.title === item.title && e.description === item.description,
-      );
+      const isDuplicate = isDuplicateExperience(existingExperiences, item);
       if (isDuplicate) {
         experiencesSkippedAsDuplicate += 1;
         continue;
@@ -200,9 +202,7 @@ export async function POST(request: Request) {
     let educationCreated = 0;
     let educationSkippedAsDuplicate = 0;
     for (const item of input.education) {
-      const isDuplicate = existingEducation.some(
-        (e) => e.school === item.school && e.degree === item.degree && e.fieldOfStudy === item.fieldOfStudy,
-      );
+      const isDuplicate = isDuplicateEducation(existingEducation, item);
       if (isDuplicate) {
         educationSkippedAsDuplicate += 1;
         continue;
@@ -229,9 +229,7 @@ export async function POST(request: Request) {
     let projectsCreated = 0;
     let projectsSkippedAsDuplicate = 0;
     for (const item of input.projects) {
-      const isDuplicate = existingProjects.some(
-        (p) => p.name === item.name && p.description === item.description,
-      );
+      const isDuplicate = isDuplicateProject(existingProjects, item);
       if (isDuplicate) {
         projectsSkippedAsDuplicate += 1;
         continue;
@@ -258,9 +256,7 @@ export async function POST(request: Request) {
     let skillsCreated = 0;
     let skillsSkippedAsDuplicate = 0;
     for (const item of input.skills) {
-      const isDuplicate = existingSkills.some(
-        (s) => s.name.toLowerCase() === item.name.toLowerCase(),
-      );
+      const isDuplicate = isDuplicateSkill(existingSkills, item);
       if (isDuplicate) {
         skillsSkippedAsDuplicate += 1;
         continue;

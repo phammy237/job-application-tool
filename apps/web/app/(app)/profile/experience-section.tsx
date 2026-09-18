@@ -2,12 +2,24 @@
 
 import type { Experience } from '@career-os/shared';
 import { Button, Input, Label, Textarea } from '@career-os/ui';
-import { useActionState } from 'react';
+import { useActionState, useState } from 'react';
+import { PendingImportCard } from '../../../lib/resume-import/pending-import-card';
+import type { PendingExperience } from '../../../lib/resume-import/pending-types';
 import { ApprovalCheckboxes } from './approval-checkboxes';
 import { addExperience, deleteExperience, updateExperienceApproval } from './actions';
 import { INITIAL_PROFILE_ACTION_STATE } from './profile-action-state';
 
-export function ExperienceSection({ experiences }: { experiences: Experience[] }) {
+export function ExperienceSection({
+  experiences,
+  pendingItems = [],
+  onPendingChange,
+  onPendingRemove,
+}: {
+  experiences: Experience[];
+  pendingItems?: PendingExperience[];
+  onPendingChange?: (key: string, next: PendingExperience) => void;
+  onPendingRemove?: (key: string) => void;
+}) {
   const [addState, addFormAction, addPending] = useActionState(
     addExperience,
     INITIAL_PROFILE_ACTION_STATE,
@@ -18,10 +30,18 @@ export function ExperienceSection({ experiences }: { experiences: Experience[] }
       <h2 className="text-lg font-semibold">Experience</h2>
 
       <div className="space-y-3">
+        {pendingItems.map((item) => (
+          <PendingExperienceCard
+            key={item.key}
+            item={item}
+            onChange={(next) => onPendingChange?.(item.key, next)}
+            onRemove={() => onPendingRemove?.(item.key)}
+          />
+        ))}
         {experiences.map((experience) => (
           <ExperienceRow key={experience.id} experience={experience} />
         ))}
-        {experiences.length === 0 ? (
+        {experiences.length === 0 && pendingItems.length === 0 ? (
           <p className="text-muted-foreground text-sm">No experience added yet.</p>
         ) : null}
       </div>
@@ -127,5 +147,76 @@ function ExperienceRow({ experience }: { experience: Experience }) {
         <p className="text-destructive mt-1 text-xs">{approvalState.error}</p>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * A staged, résumé-imported experience row — "Save to profile" calls the exact same `addExperience`
+ * server action the manual "Add experience" form above uses (same schema, same validation), so
+ * persistence never diverges from this section's existing save path. Reviewed-and-confirmed
+ * résumé facts are approved the moment the user explicitly saves them here — the same "review,
+ * optionally edit, explicitly confirm" approval event already established for
+ * /settings/resume-import's Confirm Import (see confirm/route.ts's own doc comment) — never the
+ * manual add-form's own unapproved-by-default behavior, which is for a fact the user is typing in
+ * for the first time with no prior review step behind it.
+ */
+function PendingExperienceCard({
+  item,
+  onChange,
+  onRemove,
+}: {
+  item: PendingExperience;
+  onChange: (next: PendingExperience) => void;
+  onRemove: () => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSave() {
+    if (saving) return; // duplicate-click guard
+    setSaving(true);
+    setError(null);
+    const fd = new FormData();
+    fd.set('company', item.company);
+    fd.set('title', item.title);
+    fd.set('location', item.location ?? '');
+    fd.set('description', item.description ?? '');
+    fd.set('employmentType', '');
+    fd.set('startDate', '');
+    fd.set('endDate', '');
+    fd.set('userApproved', 'on');
+    fd.set('approvedForApplications', 'on');
+    const result = await addExperience(INITIAL_PROFILE_ACTION_STATE, fd);
+    if (result.error) {
+      setError(result.error);
+      setSaving(false);
+      return;
+    }
+    onRemove();
+  }
+
+  return (
+    <PendingImportCard
+      note={item.dateRangeText ? `Dates on résumé: ${item.dateRangeText}` : undefined}
+      saving={saving}
+      error={error}
+      onSave={() => void handleSave()}
+      onDiscard={onRemove}
+      fields={[
+        { label: 'Company', value: item.company, onChange: (v) => onChange({ ...item, company: v }) },
+        { label: 'Title', value: item.title, onChange: (v) => onChange({ ...item, title: v }) },
+        {
+          label: 'Location',
+          value: item.location ?? '',
+          onChange: (v) => onChange({ ...item, location: v || null }),
+        },
+        {
+          label: 'Description',
+          value: item.description ?? '',
+          onChange: (v) => onChange({ ...item, description: v || null }),
+          multiline: true,
+        },
+      ]}
+    />
   );
 }

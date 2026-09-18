@@ -5,14 +5,9 @@ import {
   listOwnProjects,
   listOwnSkills,
 } from '@career-os/database';
-import Link from 'next/link';
 import { requireUser } from '../../../lib/auth';
 import { createClient } from '../../../lib/supabase/server';
-import { EducationSection } from './education-section';
-import { ExperienceSection } from './experience-section';
-import { ProfileForm } from './profile-form';
-import { ProjectSection } from './project-section';
-import { SkillSection } from './skill-section';
+import { ProfilePageClient } from './profile-page-client';
 
 export default async function ProfilePage() {
   const user = await requireUser();
@@ -26,16 +21,6 @@ export default async function ProfilePage() {
     listOwnSkills(supabase, user.id),
   ]);
 
-  // Phase B onboarding entry point: an "effectively empty" profile (no name, no structured
-  // sections at all) is the expected first-time state this product should offer to fill via
-  // Resume Import rather than forcing manual re-entry first (docs' "Profile empty state").
-  const isEffectivelyEmpty =
-    !profile?.fullName &&
-    experiences.length === 0 &&
-    education.length === 0 &&
-    projects.length === 0 &&
-    skills.length === 0;
-
   return (
     <div className="max-w-3xl space-y-10">
       <div>
@@ -47,31 +32,13 @@ export default async function ProfilePage() {
         </p>
       </div>
 
-      {isEffectivelyEmpty ? (
-        <div className="border-border bg-card rounded-lg border p-4 text-sm">
-          <p className="font-medium">Already have a resume?</p>
-          <p className="text-muted-foreground mt-1">
-            Import your existing résumé to populate your Career OS profile instead of typing
-            everything in by hand.
-          </p>
-          <Link
-            href="/settings/resume-import"
-            className="text-primary mt-2 inline-block underline underline-offset-2"
-          >
-            Import resume
-          </Link>
-        </div>
-      ) : null}
-
-      <section className="space-y-4">
-        <h2 className="text-lg font-semibold">Personal information</h2>
-        <ProfileForm profile={profile} />
-      </section>
-
-      <ExperienceSection experiences={experiences} />
-      <EducationSection education={education} />
-      <ProjectSection projects={projects} />
-      <SkillSection skills={skills} />
+      <ProfilePageClient
+        profile={profile}
+        experiences={experiences}
+        education={education}
+        projects={projects}
+        skills={skills}
+      />
     </div>
   );
 }
