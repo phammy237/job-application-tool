@@ -4,7 +4,7 @@ import {
   listOwnContacts,
   listOwnContactsWithDueFollowUp,
 } from '@career-os/database';
-import { Input, Label } from '@career-os/ui';
+import { Input, Label, buttonVariants } from '@career-os/ui';
 import Link from 'next/link';
 import { requireUser } from '../../../lib/auth';
 import { attachNetworkingNextActions } from '../../../lib/networking';
@@ -99,79 +99,98 @@ export default async function NetworkPage({
         </div>
       </form>
 
-      <details className="border-border rounded-lg border border-dashed p-4">
-        <summary className="cursor-pointer text-sm font-medium">Add contact</summary>
-        <div className="mt-4">
-          <ContactForm mode="create" />
+      {contacts.length === 0 ? (
+        <div className="border-border rounded-lg border border-dashed p-8 text-center">
+          {q ? (
+            <>
+              <p className="font-medium">No contacts match your search.</p>
+              <p className="text-muted-foreground mt-1 text-sm">Try a different search term.</p>
+            </>
+          ) : (
+            <>
+              <p className="font-medium">No contacts yet</p>
+              <p className="text-muted-foreground mt-1 text-sm">
+                Track recruiters, referrals, and people related to your applications.
+              </p>
+              <details className="mt-4 inline-block text-left">
+                <summary className={`${buttonVariants({ size: 'sm' })} cursor-pointer list-none`}>
+                  Add contact
+                </summary>
+                <div className="mt-4">
+                  <ContactForm mode="create" />
+                </div>
+              </details>
+            </>
+          )}
         </div>
-      </details>
+      ) : (
+        <>
+          <details className="border-border rounded-lg border border-dashed p-4">
+            <summary className="cursor-pointer text-sm font-medium">Add contact</summary>
+            <div className="mt-4">
+              <ContactForm mode="create" />
+            </div>
+          </details>
 
-      <div className="border-border overflow-x-auto rounded-lg border">
-        <table className="w-full text-sm">
-          <thead className="border-border bg-muted/50 text-muted-foreground border-b text-left">
-            <tr>
-              <th className="px-4 py-2 font-medium">Name</th>
-              <th className="px-4 py-2 font-medium">Company / Title</th>
-              <th className="px-4 py-2 font-medium">Tags</th>
-              <th className="px-4 py-2 font-medium">Email</th>
-              <th className="px-4 py-2 font-medium">Applications</th>
-              <th className="px-4 py-2 font-medium">Follow-up</th>
-            </tr>
-          </thead>
-          <tbody>
-            {contacts.map((contact) => {
-              const nextAction = nextActionByContact.get(contact.id);
-              return (
-                <tr key={contact.id} className="border-border border-b last:border-0">
-                  <td className="px-4 py-3">
-                    <Link
-                      href={`/network/${contact.id}`}
-                      className="hover:text-primary font-medium hover:underline"
-                    >
-                      {contact.displayName}
-                    </Link>
-                  </td>
-                  <td className="text-muted-foreground px-4 py-3">
-                    {[contact.currentTitle, contact.currentCompany].filter(Boolean).join(' at ') ||
-                      '—'}
-                  </td>
-                  <td className="px-4 py-3">
-                    <ContactTagBadges tags={tagsByContact.get(contact.id) ?? []} />
-                  </td>
-                  <td className="text-muted-foreground px-4 py-3">{contact.email ?? '—'}</td>
-                  <td className="text-muted-foreground px-4 py-3">
-                    {applicationCountByContact.get(contact.id) ?? 0}
-                  </td>
-                  <td className="px-4 py-3">
-                    {contact.followUpAt ? (
-                      <span
-                        className={
-                          nextAction?.type === 'FOLLOW_UP_WITH_CONTACT'
-                            ? 'font-medium'
-                            : 'text-muted-foreground'
-                        }
-                      >
-                        {formatFollowUpLabel(contact.followUpAt, now)}
-                      </span>
-                    ) : (
-                      <span className="text-muted-foreground">No reminder</span>
-                    )}
-                  </td>
+          <div className="border-border overflow-x-auto rounded-lg border">
+            <table className="w-full text-sm">
+              <thead className="border-border bg-muted/50 text-muted-foreground border-b text-left">
+                <tr>
+                  <th className="px-4 py-2 font-medium">Name</th>
+                  <th className="px-4 py-2 font-medium">Company / Title</th>
+                  <th className="px-4 py-2 font-medium">Tags</th>
+                  <th className="px-4 py-2 font-medium">Email</th>
+                  <th className="px-4 py-2 font-medium">Applications</th>
+                  <th className="px-4 py-2 font-medium">Follow-up</th>
                 </tr>
-              );
-            })}
-            {contacts.length === 0 ? (
-              <tr>
-                <td colSpan={6} className="text-muted-foreground px-4 py-8 text-center">
-                  {q
-                    ? 'No contacts match your search.'
-                    : "No contacts yet. Add the first person you're networking with."}
-                </td>
-              </tr>
-            ) : null}
-          </tbody>
-        </table>
-      </div>
+              </thead>
+              <tbody>
+                {contacts.map((contact) => {
+                  const nextAction = nextActionByContact.get(contact.id);
+                  return (
+                    <tr key={contact.id} className="border-border border-b last:border-0">
+                      <td className="px-4 py-3">
+                        <Link
+                          href={`/network/${contact.id}`}
+                          className="hover:text-primary font-medium hover:underline"
+                        >
+                          {contact.displayName}
+                        </Link>
+                      </td>
+                      <td className="text-muted-foreground px-4 py-3">
+                        {[contact.currentTitle, contact.currentCompany].filter(Boolean).join(' at ') ||
+                          '—'}
+                      </td>
+                      <td className="px-4 py-3">
+                        <ContactTagBadges tags={tagsByContact.get(contact.id) ?? []} />
+                      </td>
+                      <td className="text-muted-foreground px-4 py-3">{contact.email ?? '—'}</td>
+                      <td className="text-muted-foreground px-4 py-3">
+                        {applicationCountByContact.get(contact.id) ?? 0}
+                      </td>
+                      <td className="px-4 py-3">
+                        {contact.followUpAt ? (
+                          <span
+                            className={
+                              nextAction?.type === 'FOLLOW_UP_WITH_CONTACT'
+                                ? 'font-medium'
+                                : 'text-muted-foreground'
+                            }
+                          >
+                            {formatFollowUpLabel(contact.followUpAt, now)}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">No reminder</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
     </div>
   );
 }

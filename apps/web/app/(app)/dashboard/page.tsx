@@ -16,6 +16,7 @@ import {
   toRecentActivity,
   type DashboardStageGroup,
 } from '../../../lib/dashboard';
+import { formatFriendlyDateTime } from '../../../lib/format-friendly-date';
 import { createClient } from '../../../lib/supabase/server';
 import { ApplicationActionRow } from './application-action-row';
 
@@ -48,11 +49,17 @@ export default async function DashboardPage() {
     attachNextActions(applications, relevantStatusChangeEvents, now),
   );
   const attentionItems = withNextActions.filter(needsAttention);
-  const toFinishItems = withNextActions.filter(needsToFinish);
   const followUpItems = withNextActions.filter(
     (item) => item.nextAction.type === 'CONSIDER_FOLLOW_UP',
   );
+  // "Next actions" merges Attention-needed and Applications-to-finish into one prioritized
+  // list (already sorted by attention via `withNextActions`) — same underlying priority data,
+  // just one non-redundant section instead of two that were each often empty. Follow-up
+  // suggestions stay separate: they're Career OS's own recommendation, not a real next step,
+  // a distinction worth keeping visually separate (see its own heading annotation below).
+  const nextActionItems = withNextActions.filter((item) => needsAttention(item) || needsToFinish(item));
   const recentActivity = toRecentActivity(recentEvents, applications);
+  const hasNothingActionable = nextActionItems.length === 0 && followUpItems.length === 0;
 
   const stageCounts: Record<DashboardStageGroup | 'OTHER', number> = {
     PREPARING: 0,
@@ -75,14 +82,9 @@ export default async function DashboardPage() {
             ? `Welcome back, ${user.email}.`
             : attentionItems.length > 0
               ? `${attentionItems.length} application${attentionItems.length === 1 ? '' : 's'} need${attentionItems.length === 1 ? 's' : ''} attention.`
-              : toFinishItems.length > 0
-                ? /* Phase 5C.4 — COMPLETE_APPLICATION stays LOW priority (never counted in
-                     attentionItems), but the header should not flatly say "nothing needs
-                     attention" while a clearly visible "Applications to finish" section sits
-                     right below it — that reads as a contradiction. This still never claims
-                     finishing a draft is urgent, only that it exists. */
-                  `Nothing urgent right now, but ${toFinishItems.length} application${toFinishItems.length === 1 ? '' : 's'} could use finishing.`
-                : 'Nothing needs attention right now.'}
+              : hasNothingActionable
+                ? 'Nothing needs attention right now.'
+                : 'Here’s what to do next.'}
         </p>
       </div>
 
@@ -115,63 +117,6 @@ export default async function DashboardPage() {
       ) : (
         <>
           <section className="space-y-3">
-            <h2 className="text-muted-foreground text-sm font-medium">
-              Attention needed
-            </h2>
-            {attentionItems.length === 0 ? (
-              <p className="border-border text-muted-foreground rounded-lg border border-dashed p-4 text-sm">
-                Nothing needs attention right now.
-              </p>
-            ) : (
-              <ul className="space-y-2">
-                {attentionItems.map((item) => (
-                  <ApplicationActionRow key={item.application.id} item={item} />
-                ))}
-              </ul>
-            )}
-          </section>
-
-          <section className="space-y-3">
-            <h2 className="text-muted-foreground text-sm font-medium">
-              Applications to finish
-            </h2>
-            {toFinishItems.length === 0 ? (
-              <p className="text-muted-foreground text-sm">
-                Nothing waiting to be started or finished.
-              </p>
-            ) : (
-              <ul className="space-y-2">
-                {toFinishItems.map((item) => (
-                  <ApplicationActionRow key={item.application.id} item={item} />
-                ))}
-              </ul>
-            )}
-          </section>
-
-          <section className="space-y-3">
-            <h2 className="text-muted-foreground text-sm font-medium">
-              Follow-up suggestions
-              <span className="ml-2 text-xs font-normal">
-                (Career OS recommendations — not known employer deadlines)
-              </span>
-            </h2>
-            {followUpItems.length === 0 ? (
-              <p className="text-muted-foreground text-sm">
-                No follow-up suggestions right now.
-              </p>
-            ) : (
-              <ul className="space-y-2">
-                {followUpItems.map((item) => (
-                  <ApplicationActionRow key={item.application.id} item={item} />
-                ))}
-              </ul>
-            )}
-          </section>
-
-          <section className="space-y-3">
-            <h2 className="text-muted-foreground text-sm font-medium">
-              Pipeline overview
-            </h2>
             <div className="grid gap-3 sm:grid-cols-5">
               {(Object.keys(DASHBOARD_STAGE_GROUPS) as DashboardStageGroup[]).map(
                 (group) => (
@@ -189,6 +134,39 @@ export default async function DashboardPage() {
               )}
             </div>
           </section>
+
+          {nextActionItems.length > 0 ? (
+            <section className="space-y-3">
+              <h2 className="text-muted-foreground text-sm font-medium">Next actions</h2>
+              <ul className="space-y-2">
+                {nextActionItems.map((item) => (
+                  <ApplicationActionRow key={item.application.id} item={item} />
+                ))}
+              </ul>
+            </section>
+          ) : null}
+
+          {followUpItems.length > 0 ? (
+            <section className="space-y-3">
+              <h2 className="text-muted-foreground text-sm font-medium">
+                Follow-up suggestions
+                <span className="ml-2 text-xs font-normal">
+                  (Career OS recommendations — not known employer deadlines)
+                </span>
+              </h2>
+              <ul className="space-y-2">
+                {followUpItems.map((item) => (
+                  <ApplicationActionRow key={item.application.id} item={item} />
+                ))}
+              </ul>
+            </section>
+          ) : null}
+
+          {hasNothingActionable ? (
+            <p className="border-border text-muted-foreground rounded-lg border border-dashed p-4 text-sm">
+              Nothing needs attention right now.
+            </p>
+          ) : null}
 
           <section className="space-y-3">
             <h2 className="text-muted-foreground text-sm font-medium">Recent activity</h2>
@@ -217,7 +195,7 @@ export default async function DashboardPage() {
                       <StatusBadge status={item.event.toStatus} />
                     ) : null}
                     <span className="text-muted-foreground ml-auto text-xs">
-                      {new Date(item.event.createdAt).toLocaleString()}
+                      {formatFriendlyDateTime(item.event.createdAt)}
                       {item.event.source === 'GMAIL_SYNC' ? ' · via Gmail' : ''}
                     </span>
                   </li>

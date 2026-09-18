@@ -60,18 +60,21 @@ afterEach(() => {
 });
 
 describe('NetworkPage', () => {
-  it('shows a helpful empty state with no contacts and no search term', async () => {
+  it('shows a purposeful empty state (no giant empty table) with no contacts and no search term', async () => {
     mocks.listOwnContacts.mockResolvedValue([]);
     await renderPage();
+    expect(screen.getByText('No contacts yet')).toBeInTheDocument();
     expect(
-      screen.getByText("No contacts yet. Add the first person you're networking with."),
+      screen.getByText('Track recruiters, referrals, and people related to your applications.'),
     ).toBeInTheDocument();
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
   });
 
-  it('shows a distinct empty state when a search matches nothing', async () => {
+  it('shows a distinct empty state when a search matches nothing, also without a giant empty table', async () => {
     mocks.listOwnContacts.mockResolvedValue([]);
     await renderPage({ q: 'nobody' });
     expect(screen.getByText('No contacts match your search.')).toBeInTheDocument();
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
   });
 
   it('lists contacts with a link to their detail page', async () => {

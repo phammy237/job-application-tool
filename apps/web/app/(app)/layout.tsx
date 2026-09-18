@@ -1,16 +1,7 @@
 import Link from 'next/link';
 import { requireUser } from '../../lib/auth';
+import { AppNav } from './app-nav';
 import { SignOutButton } from './sign-out-button';
-
-const NAV_ITEMS = [
-  { href: '/dashboard', label: 'Dashboard' },
-  { href: '/discover', label: 'Discover' },
-  { href: '/profile', label: 'Profile' },
-  { href: '/applications', label: 'Applications' },
-  { href: '/resumes', label: 'Resumes' },
-  { href: '/network', label: 'Network' },
-  { href: '/settings', label: 'Settings' },
-];
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const user = await requireUser();
@@ -23,17 +14,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             Career OS
           </Link>
         </div>
-        <nav className="flex-1 space-y-1 px-2">
-          {NAV_ITEMS.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className="text-muted-foreground hover:bg-accent hover:text-accent-foreground block rounded-md px-3 py-2 text-sm font-medium"
-            >
-              {item.label}
-            </Link>
-          ))}
-        </nav>
+        <AppNav />
         <div className="border-border border-t px-4 py-4">
           <p className="text-muted-foreground truncate text-xs">{user.email}</p>
           <SignOutButton />
@@ -41,11 +22,6 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       </aside>
 
       <div className="flex flex-1 flex-col">
-        <header className="border-border flex h-14 items-center border-b px-6">
-          <div className="border-input bg-background text-muted-foreground flex w-full max-w-md items-center rounded-md border px-3 py-1.5 text-sm">
-            Search — coming soon
-          </div>
-        </header>
         <main className="flex-1 p-6">{children}</main>
       </div>
     </div>

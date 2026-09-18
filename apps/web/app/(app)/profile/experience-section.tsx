@@ -7,6 +7,7 @@ import { PendingImportCard } from '../../../lib/resume-import/pending-import-car
 import type { PendingExperience } from '../../../lib/resume-import/pending-types';
 import { ApprovalCheckboxes } from './approval-checkboxes';
 import { addExperience, deleteExperience, updateExperienceApproval } from './actions';
+import { BulletedDescription } from './bulleted-description';
 import { INITIAL_PROFILE_ACTION_STATE } from './profile-action-state';
 
 export function ExperienceSection({
@@ -123,7 +124,7 @@ function ExperienceRow({ experience }: { experience: Experience }) {
             {[experience.location, experience.employmentType].filter(Boolean).join(' · ')}
           </p>
           {experience.description ? (
-            <p className="mt-2 whitespace-pre-line text-sm">{experience.description}</p>
+            <BulletedDescription description={experience.description} />
           ) : null}
         </div>
         <form action={deleteAction}>

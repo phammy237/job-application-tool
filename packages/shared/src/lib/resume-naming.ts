@@ -11,14 +11,23 @@
  * back to the generic, non-identifying "My Resume" when that's unset — same convention, same
  * `"{owner} -- {Company} -- {Role}"` shape, but honest for every user, not just one.
  */
+/** The "{owner}'s Resume" (or generic "My Resume" fallback) piece both the master and tailored
+ * naming conventions share — one place for that rule so it can't drift between the two. */
+export function buildResumeOwnerLabel(ownerFullName: string | null): string {
+  const trimmedName = ownerFullName?.trim();
+  return trimmedName ? `${trimmedName}'s Resume` : 'My Resume';
+}
+
 export function buildTailoredResumeDisplayName(
   ownerFullName: string | null,
   company: string,
   role: string,
 ): string {
-  const trimmedName = ownerFullName?.trim();
-  const owner = trimmedName ? `${trimmedName}'s Resume` : 'My Resume';
-  return `${owner} -- ${company} -- ${role}`;
+  return `${buildResumeOwnerLabel(ownerFullName)} -- ${company} -- ${role}`;
+}
+
+export function buildMasterResumeDisplayName(ownerFullName: string | null): string {
+  return buildResumeOwnerLabel(ownerFullName);
 }
 
 /** Characters that are illegal (or awkward) in a filename on at least one major OS — backslash,

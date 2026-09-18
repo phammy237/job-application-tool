@@ -33,10 +33,24 @@ function baseResume() {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.spyOn(window, 'confirm').mockReturnValue(true);
+  // ResumeStudio now auto-triggers a debounced PDF-preview compile on every draft change
+  // (see use-resume-compile.ts) — mocked here so these structured-editing tests never make a
+  // real network call. `not_configured` is also this repo's actual honest default today (no
+  // compiler service is deployed anywhere yet).
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => ({ status: 'not_configured' }),
+    }),
+  );
 });
 
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
 });
 
 describe('ResumeStudio — loading and header editing', () => {
@@ -55,7 +69,7 @@ describe('ResumeStudio — loading and header editing', () => {
     expect(screen.getByText('No unsaved changes')).toBeInTheDocument();
   });
 
-  it('marks the draft dirty after an edit and reflects it in the live LaTeX preview', () => {
+  it('marks the draft dirty after an edit', () => {
     render(
       <ResumeStudio
         resumeId="resume-1"
@@ -69,7 +83,20 @@ describe('ResumeStudio — loading and header editing', () => {
       target: { value: 'Grace Hopper' },
     });
     expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
-    expect(screen.getAllByText(/Grace Hopper/).length).toBeGreaterThan(0);
+  });
+
+  it('never shows raw LaTeX source labeled as a "preview" — the preview panel renders an actual PDF or an honest non-PDF state, never a text dump of the source', () => {
+    render(
+      <ResumeStudio
+        resumeId="resume-1"
+        resumeName="Master Resume"
+        baseVersionLabel={null}
+        initialContent={baseResume()}
+        profileImportContent={baseResume()}
+      />,
+    );
+    expect(screen.queryByText('LaTeX preview')).not.toBeInTheDocument();
+    expect(screen.getByText('Preview')).toBeInTheDocument();
   });
 });
 
@@ -97,7 +124,7 @@ describe('ResumeStudio — entry sections', () => {
     fireEvent.change(screen.getByPlaceholderText('Role *'), {
       target: { value: 'Engineer' },
     });
-    expect(screen.getAllByText(/Acme Corp/).length).toBeGreaterThan(0);
+    expect(screen.getByPlaceholderText('Organization *')).toHaveValue('Acme Corp');
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove experience entry' }));
     expect(screen.getByText('No experience entry entries yet.')).toBeInTheDocument();

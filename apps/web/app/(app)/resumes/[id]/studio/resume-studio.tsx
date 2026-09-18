@@ -15,7 +15,10 @@ import { BulletsEditor } from './bullets-editor';
 import { DateRangeFields } from './date-range-fields';
 import { EntrySectionEditor } from './entry-section-editor';
 import { HeaderEditor } from './header-editor';
+import { LatexCodeEditor } from './latex-code-editor';
+import { ResumePdfPreview } from './resume-pdf-preview';
 import { SkillsEditor } from './skills-editor';
+import { useResumeCompile } from './use-resume-compile';
 
 const EMPTY_DATE_RANGE = { start: null, end: null, isPresent: false };
 
@@ -49,6 +52,7 @@ export function ResumeStudio({
   const [savedVersion, setSavedVersion] = useState<ResumeVersion | null>(null);
 
   const latex = useMemo(() => getLatexForResumeVersion(draft), [draft]);
+  const { state: compileState, refresh: refreshPreview } = useResumeCompile(latex);
 
   useEffect(() => {
     if (!dirty) return;
@@ -121,6 +125,14 @@ export function ResumeStudio({
   function handleDownloadTex() {
     const filename = buildResumeFileName(displayName, 'tex');
     const blob = new Blob([latex], { type: 'text/x-tex' });
+    downloadBlob(blob, filename);
+  }
+
+  function handleDownloadPdf(pdfBlob: Blob) {
+    downloadBlob(pdfBlob, buildResumeFileName(displayName, 'pdf'));
+  }
+
+  function downloadBlob(blob: Blob, filename: string) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -131,41 +143,7 @@ export function ResumeStudio({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="space-y-1.5">
-          <Label htmlFor="studio-display-name" className="text-xs">
-            Version label
-          </Label>
-          <Input
-            id="studio-display-name"
-            className="w-80"
-            value={displayName}
-            onChange={(e) => {
-              setDisplayName(e.target.value);
-              setDirty(true);
-            }}
-          />
-        </div>
-        <div className="flex items-center gap-3 text-sm">
-          {baseVersionLabel ? (
-            <span className="text-muted-foreground">Based on {baseVersionLabel}</span>
-          ) : (
-            <span className="text-muted-foreground">Starting blank</span>
-          )}
-          {dirty ? (
-            <span className="text-amber-600">Unsaved changes</span>
-          ) : (
-            <span className="text-muted-foreground">No unsaved changes</span>
-          )}
-        </div>
-      </div>
-
       {error ? <p className="text-destructive text-sm">{error}</p> : null}
-      {savedVersion ? (
-        <p className="text-sm text-green-700">
-          Saved as version {savedVersion.versionNumber}.
-        </p>
-      ) : null}
 
       <div className="flex gap-2">
         <Button
@@ -453,18 +431,15 @@ export function ResumeStudio({
               {draft.renderOverride ? (
                 <>
                   <p className="text-muted-foreground text-xs">
-                    Custom LaTeX override active — structured content above is no longer
-                    what renders below until you reset this.
+                    Custom LaTeX is active. Structured edits will not affect the rendered
+                    résumé until you reset the override.
                   </p>
-                  <textarea
-                    className="border-input bg-background h-96 w-full rounded-md border p-3 font-mono text-xs"
+                  <LatexCodeEditor
                     value={draft.renderOverride.latex}
-                    onChange={(e) =>
-                      update((prev) => ({
-                        ...prev,
-                        renderOverride: { latex: e.target.value },
-                      }))
+                    onChange={(value) =>
+                      update((prev) => ({ ...prev, renderOverride: { latex: value } }))
                     }
+                    errorLine={compileState.kind === 'error' ? compileState.line : undefined}
                   />
                   <Button
                     type="button"
@@ -478,15 +453,11 @@ export function ResumeStudio({
               ) : (
                 <>
                   <p className="text-muted-foreground text-xs">
-                    This document currently renders from structured content (below,
-                    read-only). Click &quot;Customize&quot; to start editing the LaTeX
-                    directly — structured content stays as the factual record either way,
-                    but the rendered output will follow your custom LaTeX instead until
-                    you reset it.
+                    This document currently renders from structured content above. Click
+                    &quot;Customize&quot; to start editing the LaTeX directly — the
+                    structured content stays as the factual record either way, but the
+                    rendered output follows your custom LaTeX instead until you reset it.
                   </p>
-                  <pre className="border-border bg-muted max-h-96 overflow-auto rounded-md border p-3 text-xs">
-                    {latex}
-                  </pre>
                   <Button
                     type="button"
                     variant="outline"
@@ -500,29 +471,46 @@ export function ResumeStudio({
             </div>
           )}
 
-          <div className="border-border border-t pt-4">
+          <div className="border-border space-y-3 border-t pt-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="studio-display-name" className="text-xs">
+                  Version label
+                </Label>
+                <Input
+                  id="studio-display-name"
+                  className="w-72"
+                  value={displayName}
+                  onChange={(e) => {
+                    setDisplayName(e.target.value);
+                    setDirty(true);
+                  }}
+                />
+              </div>
+              <div className="text-muted-foreground flex items-center gap-3 text-xs">
+                {baseVersionLabel ? <span>Based on {baseVersionLabel}</span> : <span>Starting blank</span>}
+                {dirty ? (
+                  <span className="text-amber-600">Unsaved changes</span>
+                ) : (
+                  <span>No unsaved changes</span>
+                )}
+              </div>
+            </div>
+            {savedVersion ? (
+              <p className="text-sm text-green-700">Saved as version {savedVersion.versionNumber}.</p>
+            ) : null}
             <Button type="button" disabled={saving} onClick={handleSave}>
               {saving ? 'Saving…' : 'Save New Version'}
             </Button>
           </div>
         </div>
 
-        <div className="min-w-0 space-y-2">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold">LaTeX preview</h3>
-            <Button type="button" variant="outline" size="sm" onClick={handleDownloadTex}>
-              Download .tex
-            </Button>
-          </div>
-          <p className="text-muted-foreground text-xs">
-            PDF compilation isn&apos;t available yet — no sandboxed compilation service
-            exists in this deployment. Download the .tex file and compile it yourself
-            (e.g. paste it into Overleaf) until that lands.
-          </p>
-          <pre className="border-border bg-muted sticky top-4 max-h-[80vh] overflow-auto rounded-md border p-3 text-xs">
-            {latex}
-          </pre>
-        </div>
+        <ResumePdfPreview
+          state={compileState}
+          onRefresh={refreshPreview}
+          onDownloadPdf={handleDownloadPdf}
+          onDownloadTex={handleDownloadTex}
+        />
       </div>
     </div>
   );

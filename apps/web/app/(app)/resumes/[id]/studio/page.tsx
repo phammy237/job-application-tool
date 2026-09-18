@@ -1,6 +1,7 @@
 import {
   getOwnProfile,
   getOwnResume,
+  listOwnApplicationsWithWorkingResumeVersion,
   listOwnEducation,
   listOwnExperiences,
   listOwnProjects,
@@ -13,6 +14,7 @@ import {
 } from '@career-os/shared';
 import { notFound } from 'next/navigation';
 import { requireUser } from '../../../../../lib/auth';
+import { formatFriendlyDateTime } from '../../../../../lib/format-friendly-date';
 import { createClient } from '../../../../../lib/supabase/server';
 import { ResumeStudio } from './resume-studio';
 
@@ -69,26 +71,61 @@ export default async function ResumeStudioPage({
 
   const baseVersionLabel = baseVersion ? `version ${baseVersion.versionNumber}` : null;
 
+  // Header identity — never parsed from `resume.name` (docs/IMPLEMENTATION_PLAN.md's own naming
+  // convention already produces long, sometimes-inconsistent strings there, see resume-naming.ts;
+  // fixing that is a display concern, not a database one). Reused from the resume DETAIL page's
+  // own "applications using each version" lookup, batched across every version on this resume in
+  // one pair of queries rather than a new per-page query.
+  const versionIds = versions.map((v) => v.id);
+  const workingUsage = await listOwnApplicationsWithWorkingResumeVersion(supabase, user.id, versionIds);
+  let linkedApplication: { id: string; company: string; title: string } | null = null;
+  for (const versionId of versionIds) {
+    const working = workingUsage.get(versionId);
+    if (working && working.length > 0) {
+      linkedApplication = working[0]!;
+      break;
+    }
+  }
+
+  const heading =
+    resume.kind === 'MASTER'
+      ? 'Master résumé'
+      : (linkedApplication ? `${linkedApplication.company} · ${linkedApplication.title}` : resume.name);
+  const subline =
+    resume.kind === 'MASTER'
+      ? versions[0]
+        ? `Version ${versions[0].versionNumber} · Updated ${formatFriendlyDateTime(versions[0].createdAt)}`
+        : 'No versions yet'
+      : `Tailored résumé${baseVersionLabel ? ` · Based on Master ${baseVersionLabel}` : ''}`;
+
   return (
     <div className="max-w-6xl space-y-4">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">{resume.name} — Studio</h1>
-        <p className="text-muted-foreground mt-1 text-sm">
-          Manual structured editing. Saving always creates a new version — existing
-          versions are never changed.
-        </p>
-        {requestedVersionId && !requestedVersion ? (
-          <p className="text-destructive mt-1 text-xs">
-            The requested base version was not found for this resume — starting from the
-            latest structured version instead.
-          </p>
-        ) : null}
-        {baseVersion && baseVersion.snapshotFormat !== 'STRUCTURED_V1' ? (
-          <p className="text-muted-foreground mt-1 text-xs">
-            This resume has no structured version yet — starting a new blank draft.
-          </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">{heading}</h1>
+          <p className="text-muted-foreground mt-1 text-sm">{subline}</p>
+        </div>
+        {linkedApplication ? (
+          <a
+            href={`/applications/${linkedApplication.id}`}
+            className="text-primary text-sm underline underline-offset-2"
+          >
+            View application
+          </a>
         ) : null}
       </div>
+
+      {requestedVersionId && !requestedVersion ? (
+        <p className="text-destructive text-xs">
+          The requested base version was not found for this resume — starting from the
+          latest structured version instead.
+        </p>
+      ) : null}
+      {baseVersion && baseVersion.snapshotFormat !== 'STRUCTURED_V1' ? (
+        <p className="text-muted-foreground text-xs">
+          This resume has no structured version yet — starting a new blank draft.
+        </p>
+      ) : null}
 
       <ResumeStudio
         resumeId={resume.id}

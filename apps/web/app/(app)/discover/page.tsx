@@ -100,126 +100,131 @@ export default async function DiscoverPage({
         </Link>
       </div>
 
-      <form className="flex flex-wrap items-end gap-3" method="get">
-        <div className="min-w-48 flex-1 space-y-1.5">
-          <Label htmlFor="q">Search</Label>
-          <Input
-            id="q"
-            name="q"
-            defaultValue={filters.search ?? ''}
-            placeholder="Title, company, or location"
-          />
+      <form className="space-y-3" method="get">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="min-w-48 flex-1 space-y-1.5">
+            <Label htmlFor="q">Search</Label>
+            <Input
+              id="q"
+              name="q"
+              defaultValue={filters.search ?? ''}
+              placeholder="Title, company, or location"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="role">Role family</Label>
+            <Select id="role" name="role" defaultValue={filters.roleFamilies?.[0] ?? ''}>
+              <option value="">Any role</option>
+              {DISCOVERY_ROLE_FAMILY_OPTIONS.map((value) => (
+                <option key={value} value={value}>
+                  {ROLE_FAMILY_LABELS[value] ?? value}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="location">Location</Label>
+            <Select id="location" name="location" defaultValue={filters.locationToken ?? ''}>
+              <option value="">Any location</option>
+              {locationTokens.map((token) => (
+                <option key={token} value={token}>
+                  {formatLocationTokenLabel(token)}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="workplace">Workplace</Label>
+            <Select id="workplace" name="workplace" defaultValue={filters.workplaceTypes?.[0] ?? ''}>
+              <option value="">Any workplace</option>
+              {DISCOVERY_WORKPLACE_TYPE_OPTIONS.map((value) => (
+                <option key={value} value={value}>
+                  {WORKPLACE_LABELS[value] ?? value}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="employment">Employment type</Label>
+            <Select
+              id="employment"
+              name="employment"
+              defaultValue={filters.employmentTypes?.[0] ?? ''}
+            >
+              <option value="">Any employment type</option>
+              {DISCOVERY_EMPLOYMENT_TYPE_OPTIONS.map((value) => (
+                <option key={value} value={value}>
+                  {EMPLOYMENT_LABELS[value] ?? value}
+                </option>
+              ))}
+            </Select>
+          </div>
         </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="role">Role family</Label>
-          <Select id="role" name="role" defaultValue={filters.roleFamilies?.[0] ?? ''}>
-            <option value="">Any role</option>
-            {DISCOVERY_ROLE_FAMILY_OPTIONS.map((value) => (
-              <option key={value} value={value}>
-                {ROLE_FAMILY_LABELS[value] ?? value}
-              </option>
-            ))}
-          </Select>
+
+        <div className="border-border flex flex-wrap items-end gap-3 border-t pt-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="eligibility">Eligibility</Label>
+            <Select
+              id="eligibility"
+              name="eligibility"
+              defaultValue={filters.eligibilityStatuses?.[0] ?? ''}
+            >
+              <option value="">Any eligibility</option>
+              {DISCOVERY_ELIGIBILITY_STATUS_OPTIONS.map((value) => (
+                <option key={value} value={value}>
+                  {ELIGIBILITY_FILTER_LABELS[value] ?? value}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div className="w-28 space-y-1.5">
+            <Label htmlFor="minMatch">Min Match</Label>
+            <Input
+              id="minMatch"
+              name="minMatch"
+              type="number"
+              min={0}
+              max={100}
+              defaultValue={filters.minMatch ?? ''}
+              placeholder="0-100"
+            />
+          </div>
+          <div className="w-28 space-y-1.5">
+            <Label htmlFor="minCoverage">Min Coverage</Label>
+            <Input
+              id="minCoverage"
+              name="minCoverage"
+              type="number"
+              min={0}
+              max={100}
+              defaultValue={filters.minCoverage ?? ''}
+              placeholder="0-100"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="freshness">Posted</Label>
+            <Select
+              id="freshness"
+              name="freshness"
+              defaultValue={filters.freshnessDays !== null ? String(filters.freshnessDays) : ''}
+            >
+              <option value="">Any time</option>
+              {FRESHNESS_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <Button type="submit" variant="outline">
+            Filter
+          </Button>
+          {hasAnyFilter ? (
+            <Link href="/discover" className="text-muted-foreground text-sm hover:underline">
+              Clear filters
+            </Link>
+          ) : null}
         </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="location">Location</Label>
-          <Select id="location" name="location" defaultValue={filters.locationToken ?? ''}>
-            <option value="">Any location</option>
-            {locationTokens.map((token) => (
-              <option key={token} value={token}>
-                {formatLocationTokenLabel(token)}
-              </option>
-            ))}
-          </Select>
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="workplace">Workplace</Label>
-          <Select id="workplace" name="workplace" defaultValue={filters.workplaceTypes?.[0] ?? ''}>
-            <option value="">Any workplace</option>
-            {DISCOVERY_WORKPLACE_TYPE_OPTIONS.map((value) => (
-              <option key={value} value={value}>
-                {WORKPLACE_LABELS[value] ?? value}
-              </option>
-            ))}
-          </Select>
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="employment">Employment type</Label>
-          <Select
-            id="employment"
-            name="employment"
-            defaultValue={filters.employmentTypes?.[0] ?? ''}
-          >
-            <option value="">Any employment type</option>
-            {DISCOVERY_EMPLOYMENT_TYPE_OPTIONS.map((value) => (
-              <option key={value} value={value}>
-                {EMPLOYMENT_LABELS[value] ?? value}
-              </option>
-            ))}
-          </Select>
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="eligibility">Eligibility</Label>
-          <Select
-            id="eligibility"
-            name="eligibility"
-            defaultValue={filters.eligibilityStatuses?.[0] ?? ''}
-          >
-            <option value="">Any eligibility</option>
-            {DISCOVERY_ELIGIBILITY_STATUS_OPTIONS.map((value) => (
-              <option key={value} value={value}>
-                {ELIGIBILITY_FILTER_LABELS[value] ?? value}
-              </option>
-            ))}
-          </Select>
-        </div>
-        <div className="w-28 space-y-1.5">
-          <Label htmlFor="minMatch">Min Match</Label>
-          <Input
-            id="minMatch"
-            name="minMatch"
-            type="number"
-            min={0}
-            max={100}
-            defaultValue={filters.minMatch ?? ''}
-            placeholder="0-100"
-          />
-        </div>
-        <div className="w-28 space-y-1.5">
-          <Label htmlFor="minCoverage">Min Coverage</Label>
-          <Input
-            id="minCoverage"
-            name="minCoverage"
-            type="number"
-            min={0}
-            max={100}
-            defaultValue={filters.minCoverage ?? ''}
-            placeholder="0-100"
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="freshness">Posted</Label>
-          <Select
-            id="freshness"
-            name="freshness"
-            defaultValue={filters.freshnessDays !== null ? String(filters.freshnessDays) : ''}
-          >
-            <option value="">Any time</option>
-            {FRESHNESS_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </Select>
-        </div>
-        <Button type="submit" variant="outline">
-          Filter
-        </Button>
-        {hasAnyFilter ? (
-          <Link href="/discover" className="text-muted-foreground text-sm hover:underline">
-            Clear filters
-          </Link>
-        ) : null}
       </form>
 
       {feedPage.items.length === 0 ? (

@@ -4,6 +4,7 @@ import { Button, Select } from '@career-os/ui';
 import type { EmailConnection, EmailSignal } from '@career-os/shared';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState, useTransition } from 'react';
+import { formatFriendlyDateTime } from '../../../lib/format-friendly-date';
 
 /**
  * Auto-sync-on-page-load, throttled — a documented shift from manual-only to attended
@@ -60,6 +61,8 @@ export function GmailSection({
     return <ConnectGmailButton />;
   }
 
+  const needsReconnect = connection.status === 'ERROR' || connection.status === 'DISCONNECTED';
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-4">
@@ -67,13 +70,19 @@ export function GmailSection({
           <p className="text-sm font-medium">{connection.emailAddress}</p>
           <p className="text-muted-foreground text-xs">
             {connection.lastSyncedAt
-              ? `Last synced ${new Date(connection.lastSyncedAt).toLocaleString()}`
+              ? `Last synced ${formatFriendlyDateTime(connection.lastSyncedAt)}`
               : 'Never synced'}
-            {connection.status === 'ERROR' ? ' — last sync failed, try reconnecting' : ''}
+            {needsReconnect ? (
+              <span className="text-destructive"> — reconnect required</span>
+            ) : null}
           </p>
         </div>
         <div className="flex gap-2">
-          <SyncGmailButton lastSyncedAt={connection.lastSyncedAt} />
+          {needsReconnect ? (
+            <ConnectGmailButton label="Reconnect Gmail" />
+          ) : (
+            <SyncGmailButton lastSyncedAt={connection.lastSyncedAt} />
+          )}
           <DisconnectGmailButton />
         </div>
       </div>
@@ -96,7 +105,7 @@ export function GmailSection({
   );
 }
 
-function ConnectGmailButton() {
+function ConnectGmailButton({ label = 'Connect Gmail' }: { label?: string }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
@@ -122,7 +131,7 @@ function ConnectGmailButton() {
           });
         }}
       >
-        {pending ? 'Connecting…' : 'Connect Gmail'}
+        {pending ? 'Connecting…' : label}
       </Button>
       {error ? <p className="text-destructive mt-2 text-sm">{error}</p> : null}
     </div>

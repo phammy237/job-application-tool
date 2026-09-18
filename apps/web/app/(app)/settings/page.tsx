@@ -6,9 +6,10 @@ import {
   listOwnExtensionSessions,
 } from '@career-os/database';
 import { FEATURE_FLAG_KEYS } from '@career-os/shared';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@career-os/ui';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle, buttonVariants } from '@career-os/ui';
 import Link from 'next/link';
 import { requireUser } from '../../../lib/auth';
+import { formatFriendlyDateTime } from '../../../lib/format-friendly-date';
 import { createClient } from '../../../lib/supabase/server';
 import { DeleteAccountButton } from './delete-account-button';
 import { GmailSection } from './gmail-section';
@@ -87,8 +88,12 @@ export default async function SettingsPage({
                     </p>
                     <p className="text-muted-foreground text-xs">
                       {session.lastUsedAt
-                        ? `Last used ${new Date(session.lastUsedAt).toLocaleString()}`
+                        ? `Last used ${formatFriendlyDateTime(session.lastUsedAt)}`
                         : 'Never used'}
+                    </p>
+                    <p className="text-muted-foreground text-xs">
+                      Connected {formatFriendlyDateTime(session.createdAt)} · Expires{' '}
+                      {formatFriendlyDateTime(session.expiresAt)}
                     </p>
                   </div>
                   <RevokeExtensionSessionButton
@@ -108,13 +113,14 @@ export default async function SettingsPage({
           <CardDescription>
             Already have a resume? Upload it and Career OS can extract your experience,
             education, projects, skills, and contact details for review — nothing is added to
-            your profile until you approve it.{' '}
-            <Link href="/settings/resume-import" className="underline underline-offset-2">
-              Import resume
-            </Link>
-            .
+            your profile until you approve it.
           </CardDescription>
         </CardHeader>
+        <CardContent>
+          <Link href="/settings/resume-import" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+            Import resume
+          </Link>
+        </CardContent>
       </Card>
 
       <Card>
@@ -123,7 +129,7 @@ export default async function SettingsPage({
           <CardDescription>
             {gmailGloballyEnabled
               ? 'Check your inbox for application status updates — manually, or automatically (throttled) while you have this page open. Always opt-in, never a background job.'
-              : 'Not yet available for this account. See docs/EMAIL_INTEGRATION.md.'}
+              : 'Not yet available for this account.'}
           </CardDescription>
         </CardHeader>
         {gmailGloballyEnabled ? (
@@ -149,7 +155,7 @@ export default async function SettingsPage({
         ) : null}
       </Card>
 
-      <Card className="border-destructive/40">
+      <Card className="border-destructive/40 mt-6 border-t-2 pt-1">
         <CardHeader>
           <CardTitle>Danger zone</CardTitle>
           <CardDescription>

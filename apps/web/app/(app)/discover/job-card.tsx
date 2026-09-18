@@ -1,22 +1,9 @@
 import { Card, CardContent, CardHeader } from '@career-os/ui';
 import type { DiscoveryFeedResultItem } from '@career-os/shared';
 import Link from 'next/link';
+import { EMPLOYMENT_LABELS, WORKPLACE_LABELS } from './discovery-display-labels';
 import { MatchCoverageEligibility } from './match-coverage-eligibility';
 import { StartApplicationButton } from './start-application-button';
-
-const WORKPLACE_LABELS: Record<string, string> = {
-  REMOTE: 'Remote',
-  HYBRID: 'Hybrid',
-  ONSITE: 'On-site',
-};
-
-const EMPLOYMENT_LABELS: Record<string, string> = {
-  FULL_TIME: 'Full-time',
-  PART_TIME: 'Part-time',
-  CONTRACT: 'Contract',
-  INTERNSHIP: 'Internship',
-  TEMPORARY: 'Temporary',
-};
 
 /** "New today" / "X days ago" — same hand-rolled relative-date approach as
  * `network/page.tsx`'s `formatFollowUpLabel`, not a new date-formatting dependency. */
@@ -31,7 +18,7 @@ function formatFirstSeenLabel(firstSeenAt: string, now: Date): string {
 export function JobCard({ job, now }: { job: DiscoveryFeedResultItem; now: Date }) {
   return (
     <Card>
-      <CardHeader className="pb-3">
+      <CardHeader className="pb-2">
         <div className="flex items-start justify-between gap-4">
           <div>
             <Link
@@ -50,7 +37,7 @@ export function JobCard({ job, now }: { job: DiscoveryFeedResultItem; now: Date 
           </span>
         </div>
       </CardHeader>
-      <CardContent className="space-y-3 pt-0">
+      <CardContent className="space-y-2 pt-0">
         <div className="text-muted-foreground flex flex-wrap gap-x-3 gap-y-1 text-xs">
           <span>{WORKPLACE_LABELS[job.normalizedWorkplaceType] ?? 'Workplace unknown'}</span>
           <span>{EMPLOYMENT_LABELS[job.normalizedEmploymentType] ?? 'Employment type unknown'}</span>

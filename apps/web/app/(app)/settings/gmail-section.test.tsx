@@ -161,3 +161,58 @@ describe('GmailSection auto-sync-on-page-load', () => {
     await waitFor(() => expect(syncRequestsIn(vi.mocked(fetch))).toHaveLength(2));
   });
 });
+
+describe('GmailSection reconnect-required state', () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it('an ERROR-status connection shows "Reconnect Gmail" as the primary action, never "Sync Gmail"', () => {
+    render(
+      <GmailSection
+        connection={connectionFixture({ status: 'ERROR', lastSyncedAt: '2026-01-01T00:00:00.000Z' })}
+        pendingSignals={[]}
+        applications={[]}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Reconnect Gmail' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Sync Gmail' })).not.toBeInTheDocument();
+    expect(screen.getByText(/reconnect required/i)).toBeInTheDocument();
+  });
+
+  it('a DISCONNECTED-status connection also shows "Reconnect Gmail", never "Sync Gmail"', () => {
+    render(
+      <GmailSection
+        connection={connectionFixture({ status: 'DISCONNECTED' })}
+        pendingSignals={[]}
+        applications={[]}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Reconnect Gmail' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Sync Gmail' })).not.toBeInTheDocument();
+  });
+
+  it('an ACTIVE-status connection shows "Sync Gmail", never "Reconnect Gmail"', () => {
+    // Inside the auto-sync throttle window (matches this file's own "does not auto-sync ..."
+    // test above) so the button stays "Sync Gmail" rather than flipping to "Checking for
+    // updates…" the instant it mounts.
+    const now = new Date('2026-01-01T12:00:00.000Z');
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    vi.stubGlobal('fetch', vi.fn().mockReturnValue(jsonResponse(SYNC_SUMMARY)));
+    const oneMinuteAgo = new Date(now.getTime() - 60_000).toISOString();
+
+    render(
+      <GmailSection
+        connection={connectionFixture({ status: 'ACTIVE', lastSyncedAt: oneMinuteAgo })}
+        pendingSignals={[]}
+        applications={[]}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Sync Gmail' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reconnect Gmail' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/reconnect required/i)).not.toBeInTheDocument();
+    vi.useRealTimers();
+  });
+});

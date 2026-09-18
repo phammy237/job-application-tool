@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildMasterResumeDisplayName,
   buildResumeFileName,
   buildTailoredResumeDisplayName,
   sanitizeResumeFileNameSegment,
@@ -24,6 +25,16 @@ describe('buildTailoredResumeDisplayName', () => {
   it('never bakes in a literal hardcoded person name (CLAUDE.md multi-tenancy)', () => {
     const result = buildTailoredResumeDisplayName(null, 'Acme', 'Analyst');
     expect(result).not.toContain('My Pham');
+  });
+});
+
+describe('buildMasterResumeDisplayName', () => {
+  it("uses the owner's full name when set — the same owner-label rule tailored naming uses", () => {
+    expect(buildMasterResumeDisplayName('Ada Lovelace')).toBe("Ada Lovelace's Resume");
+  });
+
+  it('falls back to the same generic label when unset', () => {
+    expect(buildMasterResumeDisplayName(null)).toBe('My Resume');
   });
 });
 

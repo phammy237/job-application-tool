@@ -5,16 +5,13 @@ import {
 import {
   APPLICATION_STATUSES,
   CREATABLE_APPLICATION_STATUSES,
-  formatNextAction,
   type ApplicationStatus,
 } from '@career-os/shared';
-import { Button, Input, Label, Select, StatusBadge } from '@career-os/ui';
-import Link from 'next/link';
+import { Button, Input, Label, Select } from '@career-os/ui';
 import { requireUser } from '../../../lib/auth';
 import { attachNextActions } from '../../../lib/dashboard';
 import { createClient } from '../../../lib/supabase/server';
-import { ACTION_TYPE_TO_PANEL_ID } from '../dashboard/application-action-row';
-import { PriorityBadge } from '../dashboard/priority-badge';
+import { ApplicationRow } from './application-row';
 import { createApplication } from './actions';
 
 export default async function ApplicationsPage({
@@ -110,44 +107,13 @@ export default async function ApplicationsPage({
               <th className="px-4 py-2 font-medium">Company</th>
               <th className="px-4 py-2 font-medium">Title</th>
               <th className="px-4 py-2 font-medium">Status</th>
-              <th className="px-4 py-2 font-medium">Next action</th>
+              <th className="border-primary/30 border-l px-4 py-2 font-medium">Next action</th>
               <th className="px-4 py-2 font-medium">Updated</th>
             </tr>
           </thead>
           <tbody>
             {withNextActions.map(({ application, nextAction }) => (
-              <tr key={application.id} className="border-border border-b last:border-0">
-                <td className="px-4 py-3">
-                  <Link
-                    href={`/applications/${application.id}`}
-                    className="hover:text-primary font-medium hover:underline"
-                  >
-                    {application.company}
-                  </Link>
-                </td>
-                <td className="px-4 py-3">{application.title}</td>
-                <td className="px-4 py-3">
-                  <StatusBadge status={application.status} />
-                </td>
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-2">
-                    <PriorityBadge priority={nextAction.priority} />
-                    {ACTION_TYPE_TO_PANEL_ID[nextAction.type] ? (
-                      <Link
-                        href={`/applications/${application.id}#${ACTION_TYPE_TO_PANEL_ID[nextAction.type]}`}
-                        className="hover:text-primary hover:underline"
-                      >
-                        {formatNextAction(nextAction).title}
-                      </Link>
-                    ) : (
-                      <span>{formatNextAction(nextAction).title}</span>
-                    )}
-                  </div>
-                </td>
-                <td className="text-muted-foreground px-4 py-3">
-                  {new Date(application.updatedAt).toLocaleDateString()}
-                </td>
-              </tr>
+              <ApplicationRow key={application.id} application={application} nextAction={nextAction} />
             ))}
             {applications.length === 0 ? (
               <tr>

@@ -1,7 +1,7 @@
 'use client';
 
 import { Button } from '@career-os/ui';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 
 type Mode = 'upload' | 'paste';
 
@@ -33,6 +33,7 @@ export function ResumeUploadOrPaste({
   const [file, setFile] = useState<File | null>(null);
   const [text, setText] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   function handleFileChange(selected: File | null) {
     setLocalError(null);
@@ -120,15 +121,37 @@ export function ResumeUploadOrPaste({
       </div>
 
       {mode === 'upload' ? (
-        <div className="space-y-2">
+        <div
+          className="border-border hover:border-primary/50 flex flex-col items-center gap-2 rounded-lg border border-dashed p-6 text-center transition-colors"
+          onClick={() => fileInputRef.current?.click()}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') fileInputRef.current?.click();
+          }}
+        >
+          <p className="text-sm font-medium">Upload résumé</p>
+          <p className="text-muted-foreground text-xs">PDF · up to 5 MB</p>
           <input
+            ref={fileInputRef}
             type="file"
             accept="application/pdf"
             disabled={analyzing}
             onChange={(e) => handleFileChange(e.target.files?.[0] ?? null)}
-            className="text-sm"
+            className="sr-only"
           />
-          <p className="text-muted-foreground text-xs">PDF only, up to 5 MB.</p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={analyzing}
+            onClick={(e) => {
+              e.stopPropagation();
+              fileInputRef.current?.click();
+            }}
+          >
+            Choose PDF
+          </Button>
           {file ? <p className="text-sm">Selected: {file.name}</p> : null}
         </div>
       ) : (

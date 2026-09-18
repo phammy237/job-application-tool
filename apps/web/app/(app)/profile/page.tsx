@@ -26,9 +26,9 @@ export default async function ProfilePage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Profile</h1>
         <p className="text-muted-foreground mt-1 text-sm">
-          Only facts marked <strong>Approved</strong> and{' '}
-          <strong>Usable in AI suggestions</strong> will ever be used to generate or
-          autofill an application answer. See docs/AI_GROUNDING.md.
+          Career OS only uses information you&apos;ve approved when generating application
+          content — mark facts <strong>Approved</strong> and{' '}
+          <strong>Usable in AI suggestions</strong> to make them eligible.
         </p>
       </div>
 

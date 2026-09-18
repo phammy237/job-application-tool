@@ -7,6 +7,7 @@ import { PendingImportCard } from '../../../lib/resume-import/pending-import-car
 import type { PendingProject } from '../../../lib/resume-import/pending-types';
 import { ApprovalCheckboxes } from './approval-checkboxes';
 import { addProject, deleteProject, updateProjectApproval } from './actions';
+import { BulletedDescription } from './bulleted-description';
 import { INITIAL_PROFILE_ACTION_STATE } from './profile-action-state';
 
 export function ProjectSection({
@@ -101,9 +102,7 @@ function ProjectRow({ project }: { project: Project }) {
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="font-medium">{project.name}</p>
-          {project.description ? (
-            <p className="text-muted-foreground mt-1 text-sm">{project.description}</p>
-          ) : null}
+          {project.description ? <BulletedDescription description={project.description} /> : null}
         </div>
         <form action={deleteAction}>
           <Button type="submit" variant="ghost" size="sm" disabled={deletePending}>

@@ -14,7 +14,7 @@ import {
   listOwnSkills,
   updateOwnResume,
 } from '@career-os/database';
-import { buildStructuredResumeFromProfile } from '@career-os/shared';
+import { buildMasterResumeDisplayName, buildStructuredResumeFromProfile } from '@career-os/shared';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { requireUser } from '../../../lib/auth';
@@ -122,7 +122,7 @@ export async function createMasterResumeVersionFromProfile(): Promise<ActionResu
   let master = existingResumes.find((r) => r.kind === 'MASTER') ?? null;
   if (!master) {
     master = await createOwnResume(supabase, user.id, {
-      name: profile?.fullName ? `${profile.fullName}'s Resume` : 'My Resume',
+      name: buildMasterResumeDisplayName(profile?.fullName ?? null),
       kind: 'MASTER',
     });
   }
