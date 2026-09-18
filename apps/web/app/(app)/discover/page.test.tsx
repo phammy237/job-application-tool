@@ -32,6 +32,7 @@ function job(overrides: Partial<Record<string, unknown>> = {}) {
     locationText: 'New York, NY',
     normalizedWorkplaceType: 'REMOTE',
     normalizedEmploymentType: 'FULL_TIME',
+    isInternship: false,
     roleFamily: 'SOFTWARE_ENGINEERING',
     firstSeenAt: new Date().toISOString(),
     matchScore: 78,
@@ -89,6 +90,29 @@ describe('DiscoverPage', () => {
     const link = screen.getByRole('link', { name: 'Software Engineer' });
     expect(link).toHaveAttribute('href', '/discover/job-1');
     expect(screen.getByText(/Acme/)).toBeInTheDocument();
+  });
+
+  it('a canonically-classified internship shows "Internship" even when its normalizedEmploymentType is FULL_TIME, never a contradicting raw label', async () => {
+    mocks.listOwnDiscoveryFeed.mockResolvedValue({
+      items: [job({ isInternship: true, normalizedEmploymentType: 'FULL_TIME' })],
+      hasNextPage: false,
+    });
+    await renderPage();
+    // "Internship"/"Full-time" both also appear as the Employment type filter's own static
+    // <option> labels regardless of the fixture — assert the job card contributes a SECOND
+    // "Internship" occurrence (its own badge), while "Full-time" stays at exactly the filter's one.
+    expect(screen.getAllByText('Internship')).toHaveLength(2);
+    expect(screen.getAllByText('Full-time')).toHaveLength(1);
+  });
+
+  it('a non-internship job still shows its real normalizedEmploymentType label unchanged', async () => {
+    mocks.listOwnDiscoveryFeed.mockResolvedValue({
+      items: [job({ isInternship: false, normalizedEmploymentType: 'FULL_TIME' })],
+      hasNextPage: false,
+    });
+    await renderPage();
+    expect(screen.getAllByText('Full-time')).toHaveLength(2);
+    expect(screen.getAllByText('Internship')).toHaveLength(1);
   });
 
   it('shows Match, Coverage, and Eligibility as three separate labeled values, never combined', async () => {

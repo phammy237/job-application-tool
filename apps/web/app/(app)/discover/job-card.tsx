@@ -40,7 +40,16 @@ export function JobCard({ job, now }: { job: DiscoveryFeedResultItem; now: Date 
       <CardContent className="space-y-2 pt-0">
         <div className="text-muted-foreground flex flex-wrap gap-x-3 gap-y-1 text-xs">
           <span>{WORKPLACE_LABELS[job.normalizedWorkplaceType] ?? 'Workplace unknown'}</span>
-          <span>{EMPLOYMENT_LABELS[job.normalizedEmploymentType] ?? 'Employment type unknown'}</span>
+          {/* `isInternship` is the canonical classification (broader than
+              normalizedEmploymentType === 'INTERNSHIP' alone — see discovery-feed-result.ts) — a
+              card that only matched the Internship filter via this broader signal must still say
+              "Internship", never a raw "Full-time"/"Employment type unknown" that contradicts the
+              very filter that surfaced it. normalizedEmploymentType itself is never mutated. */}
+          <span>
+            {job.isInternship
+              ? EMPLOYMENT_LABELS.INTERNSHIP
+              : (EMPLOYMENT_LABELS[job.normalizedEmploymentType] ?? 'Employment type unknown')}
+          </span>
         </div>
         <MatchCoverageEligibility
           matchScore={job.matchScore}

@@ -3,10 +3,12 @@ import {
   computeMatchScore,
   evaluateCriteria,
   extractJobCatalogFeatures,
+  extractSponsorshipSignal,
   type CriteriaWeights,
   type DiscoveryScoringProfile,
   type RawDiscoveredJob,
 } from '@career-os/shared';
+import { stripJobrightBoilerplate } from '../jobright-enrichment';
 
 /**
  * Provider-bias audit (docs/JOB_DISCOVERY.md "Provider bias audit", design spec §32): three
@@ -43,6 +45,10 @@ function rawJob(overrides: Partial<RawDiscoveredJob> = {}): RawDiscoveredJob {
 const GREENHOUSE_SHAPED = rawJob({ employmentType: null, workplaceType: null });
 const LEVER_SHAPED = rawJob({ employmentType: 'Full-time', workplaceType: null });
 const ASHBY_SHAPED = rawJob({ employmentType: 'FullTime', workplaceType: 'HYBRID' });
+// D7 — a Jobright README-sourced row: same identity/description as the other three, but its own
+// distinct employmentType string ("Internship" — the repo's own guaranteed scope, never a
+// per-row README field) and a workplace type derived from the README's "Work Model" column.
+const JOBRIGHT_SHAPED = rawJob({ employmentType: 'Internship', workplaceType: 'HYBRID' });
 
 const FIRST_SEEN_AT = '2026-01-25T00:00:00.000Z';
 const NOW = new Date('2026-01-31T00:00:00.000Z');
@@ -105,6 +111,14 @@ describe('provider fairness — criteria available equally across providers', ()
     expect(greenhouse.matchScore).toBe(ashby.matchScore);
     expect(greenhouse.coverage).toBe(lever.coverage);
     expect(greenhouse.coverage).toBe(ashby.coverage);
+  });
+
+  it('D7 (1/4): a Jobright-sourced posting scores identically to the same posting from an ATS — the source provider is never itself an input to Match', () => {
+    const greenhouse = scoreFor(GREENHOUSE_SHAPED, providerAgnosticWeights);
+    const jobright = scoreFor(JOBRIGHT_SHAPED, providerAgnosticWeights);
+
+    expect(jobright.matchScore).toBe(greenhouse.matchScore);
+    expect(jobright.coverage).toBe(greenhouse.coverage);
   });
 });
 
@@ -194,5 +208,71 @@ describe('provider fairness — provider/salary/posted_at are never inputs to Ma
     const weights: CriteriaWeights = { ROLE_FIT: 10, LOCATION_FIT: 10 };
 
     expect(scoreFor(withSalary, weights).matchScore).toBe(scoreFor(withoutSalary, weights).matchScore);
+  });
+});
+
+describe('D7 — Jobright coverage honesty and sponsorship-boilerplate isolation', () => {
+  const allCriteriaWeights: CriteriaWeights = {
+    ROLE_FIT: 10,
+    COMPETENCY_FIT: 10,
+    SENIORITY_FIT: 10,
+    LOCATION_FIT: 10,
+    WORK_MODE_FIT: 10,
+    EMPLOYMENT_TYPE_FIT: 10,
+    OBSERVED_FRESHNESS: 10,
+  };
+
+  it('D7 (2/4): a README-only Jobright row (no description yet) has honestly lower Coverage than the same row once enriched — never inflated for having been "found via Jobright"', () => {
+    const readmeOnly = rawJob({
+      employmentType: 'Internship',
+      workplaceType: null,
+      description: null,
+    });
+    const enriched = rawJob({
+      employmentType: 'Internship',
+      workplaceType: 'REMOTE',
+      description: 'Own product analytics and SQL-driven reporting for the growth team.',
+    });
+
+    const readmeOnlyResult = scoreFor(readmeOnly, allCriteriaWeights);
+    const enrichedResult = scoreFor(enriched, allCriteriaWeights);
+
+    expect(enrichedResult.coverage).toBeGreaterThan(readmeOnlyResult.coverage);
+  });
+
+  it('D7 (3/4): enrichment only ever adds Coverage backed by real extracted evidence — it never raises Coverage on its own just because the row came from Jobright', () => {
+    // Enrichment supplies a workplaceType but the description still yields no matched
+    // competencies (COMPETENCY_FIT stays UNKNOWN either way) — Coverage rises by exactly the one
+    // criterion enrichment actually made evaluable (WORK_MODE_FIT), never more.
+    const readmeOnly = rawJob({ employmentType: 'Internship', workplaceType: null, description: null });
+    const enrichedWorkplaceOnly = rawJob({
+      employmentType: 'Internship',
+      workplaceType: 'ONSITE',
+      description: null,
+    });
+
+    const before = scoreFor(readmeOnly, allCriteriaWeights);
+    const after = scoreFor(enrichedWorkplaceOnly, allCriteriaWeights);
+
+    // Exactly one more KNOWN criterion (WORK_MODE_FIT) out of 7 equally-weighted criteria.
+    expect(after.coverage - before.coverage).toBeCloseTo(100 / 7, 0);
+  });
+
+  it('D7 (4/4): Jobright\'s own "Company H1B Sponsorship" aggregate commentary would falsely read as an availability signal if left in — stripping it before extraction is what keeps Eligibility honest', () => {
+    const realPostingText = 'Join our growth team and help scale analytics infrastructure.';
+    const jobrightBoilerplate =
+      '<h2>Company H1B Sponsorship</h2><p>We sponsor H1B visas for eligible candidates, with 13 approvals in 2026.</p>';
+    const unstrippedDescription = `${realPostingText}${jobrightBoilerplate}`;
+
+    // Proves the contamination risk is real: left in, Jobright's own aggregate commentary reads
+    // as the POSTING's own stated sponsorship policy.
+    expect(extractSponsorshipSignal(unstrippedDescription).signal).toBe('AVAILABLE');
+
+    // The enrichment stage's truncation step removes it before the description ever reaches this
+    // extractor (or any user-facing field) — the real posting text says nothing about
+    // sponsorship, so the honest answer is UNKNOWN, never a fabricated AVAILABLE.
+    const stripped = stripJobrightBoilerplate(unstrippedDescription);
+    expect(stripped).toBe(realPostingText);
+    expect(extractSponsorshipSignal(stripped).signal).toBe('UNKNOWN');
   });
 });

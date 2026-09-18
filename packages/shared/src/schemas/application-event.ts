@@ -34,7 +34,10 @@ export type ApplicationEventSource = z.infer<typeof applicationEventSourceSchema
  */
 export const discoveryHandoffEventMetadataSchema = z.object({
   jobCatalogId: uuidSchema,
-  sourceType: z.enum(['GREENHOUSE', 'LEVER', 'ASHBY']).nullable(),
+  // JOBRIGHT_GITHUB added for D7 — Jobright-sourced handoffs are the first writer to see it, every
+  // other existing writer never produces it, so this is purely additive (same precedent as ASHBY's
+  // own D6 addition here).
+  sourceType: z.enum(['GREENHOUSE', 'LEVER', 'ASHBY', 'JOBRIGHT_GITHUB']).nullable(),
   matchScore: z.number().min(0).max(100).nullable(),
   coverage: z.number().min(0).max(100).nullable(),
   eligibilityStatus: z.enum(['ELIGIBLE', 'UNKNOWN', 'CONFLICT']).nullable(),

@@ -34,6 +34,16 @@ jobs:
       - name: Run discovery sync
         run: npm run discovery:sync
 
+      # D7 — bounded Jobright detail-page enrichment (README ingestion, the ATS syncs above, and
+      # the ranking recompute below all already run regardless of whether this step's fetches
+      # succeed). `continue-on-error` because one or more stale/unreachable Jobright detail pages
+      # must never block the ranking recompute that makes this run's newly-synced jobs visible —
+      # the exact same failure-isolation principle as one broken ATS source inside discovery:sync
+      # itself (docs/JOB_DISCOVERY.md "Failure isolation").
+      - name: Enrich Jobright-sourced jobs
+        run: npm run discovery:enrich-jobright
+        continue-on-error: true
+
       # Runs only if sync succeeds (default GitHub Actions step behavior — a non-zero exit above
       # stops the job before this step). `discovery:rank` re-extracts stale job_catalog_features
       # first (idempotent, cheap) and then re-scores every user who has a Discovery Scoring

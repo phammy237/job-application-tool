@@ -23,6 +23,7 @@ function rowToDiscoveryFeedResultItem(row: {
   location_text: string | null;
   normalized_workplace_type: string;
   normalized_employment_type: string;
+  is_internship: boolean;
   role_family: string;
   first_seen_at: string;
   match_score: number;
@@ -38,6 +39,7 @@ function rowToDiscoveryFeedResultItem(row: {
     locationText: row.location_text,
     normalizedWorkplaceType: row.normalized_workplace_type,
     normalizedEmploymentType: row.normalized_employment_type,
+    isInternship: row.is_internship,
     roleFamily: row.role_family,
     firstSeenAt: row.first_seen_at,
     matchScore: row.match_score,

@@ -1,5 +1,6 @@
 import {
   jobCatalogEntrySchema,
+  type CrossSourceObservation,
   type JobCatalogEntry,
   type NormalizedDiscoveredJob,
 } from '@career-os/shared';
@@ -43,6 +44,9 @@ function rowToJobCatalogEntry(row: Row): JobCatalogEntry {
     sourceUrl: row.source_url,
     canonicalApplyUrl: row.canonical_apply_url,
     dedupeFingerprint: row.dedupe_fingerprint,
+    crossSourceObservations: Array.isArray(row.cross_source_observations)
+      ? row.cross_source_observations
+      : [],
     postedAt: row.posted_at,
     sourceUpdatedAt: row.source_updated_at,
     firstSeenAt: row.first_seen_at,
@@ -252,6 +256,236 @@ export async function upsertDiscoveredJobsForSource(
   }
 
   return summary;
+}
+
+export interface JobCatalogDedupeCandidateRow {
+  jobCatalogId: string;
+  sourceId: string;
+  companyName: string;
+  title: string;
+  locationText: string | null;
+  canonicalApplyUrl: string | null;
+  postedAt: string | null;
+}
+
+/**
+ * D7 §8 — the full candidate set for cross-source dedupe: every ACTIVE catalog row belonging to
+ * one of the given (non-Jobright) `sourceIds`, in the shape `cross-source-dedupe.ts`'s pure
+ * matching functions need. Fetched once per sync run by the orchestrator, never once per
+ * candidate row — see that module's own doc comment for why this stays a single query.
+ */
+export async function listActiveJobCatalogEntriesForDedupe(
+  supabase: CareerOsSupabaseClient,
+  sourceIds: string[],
+): Promise<JobCatalogDedupeCandidateRow[]> {
+  if (sourceIds.length === 0) return [];
+  const result: JobCatalogDedupeCandidateRow[] = [];
+  for (const idsChunk of chunk(sourceIds, EXISTING_LOOKUP_CHUNK_SIZE)) {
+    const { data, error } = await supabase
+      .from('job_catalog')
+      .select('id, source_id, company_name, title, location_text, canonical_apply_url, posted_at')
+      .eq('status', 'ACTIVE')
+      .in('source_id', idsChunk);
+    assertNoError(error, 'listActiveJobCatalogEntriesForDedupe');
+    for (const row of data ?? []) {
+      result.push({
+        jobCatalogId: row.id,
+        sourceId: row.source_id,
+        companyName: row.company_name,
+        title: row.title,
+        locationText: row.location_text,
+        canonicalApplyUrl: row.canonical_apply_url,
+        postedAt: row.posted_at,
+      });
+    }
+  }
+  return result;
+}
+
+/**
+ * D7 §8 — records a suppressed duplicate observation on the canonical row without touching its
+ * own identity (`source_id`/`source_job_id`) or any ranking-relevant field. Reads the current
+ * array first rather than a database-side JSONB append so a duplicate observation (the same
+ * `provider`+`sourceJobId` seen again on a later sync) is never appended twice.
+ */
+export async function appendCrossSourceObservation(
+  supabase: CareerOsSupabaseClient,
+  jobCatalogId: string,
+  observation: CrossSourceObservation,
+): Promise<void> {
+  const { data, error } = await supabase
+    .from('job_catalog')
+    .select('cross_source_observations')
+    .eq('id', jobCatalogId)
+    .maybeSingle();
+  assertNoError(error, 'appendCrossSourceObservation (read)');
+  const existing: CrossSourceObservation[] = Array.isArray(data?.cross_source_observations)
+    ? (data.cross_source_observations as CrossSourceObservation[])
+    : [];
+
+  const alreadyPresent = existing.some(
+    (o) => o.provider === observation.provider && o.sourceJobId === observation.sourceJobId,
+  );
+  const next = alreadyPresent
+    ? existing.map((o) =>
+        o.provider === observation.provider && o.sourceJobId === observation.sourceJobId
+          ? observation
+          : o,
+      )
+    : [...existing, observation];
+
+  const { error: updateError } = await supabase
+    .from('job_catalog')
+    .update({ cross_source_observations: next })
+    .eq('id', jobCatalogId);
+  assertNoError(updateError, 'appendCrossSourceObservation (write)');
+}
+
+export interface JobCatalogEnrichmentSnapshot {
+  description: string | null;
+  responsibilities: string | null;
+  qualifications: string | null;
+  salaryMin: number | null;
+  salaryMax: number | null;
+  salaryCurrency: string | null;
+}
+
+/**
+ * D7 §9-10 — the previously-enriched fields (if any) for a batch of `job_catalog` rows under one
+ * Jobright source, keyed by `source_job_id`. Exists so the orchestrator's periodic README resync
+ * can carry a row's already-enriched description/salary forward into the recomputed content hash
+ * instead of silently reverting it to null: the raw README table never supplies these fields, so
+ * without this lookup every normal resync would recompute a content hash from `description: null`
+ * and overwrite an enriched row right back to its README-only state (docs/JOB_DISCOVERY.md
+ * "Jobright enrichment persistence").
+ */
+export async function listJobCatalogEnrichmentSnapshots(
+  supabase: CareerOsSupabaseClient,
+  sourceId: string,
+  sourceJobIds: string[],
+): Promise<Map<string, JobCatalogEnrichmentSnapshot>> {
+  const result = new Map<string, JobCatalogEnrichmentSnapshot>();
+  if (sourceJobIds.length === 0) return result;
+  for (const idsChunk of chunk(sourceJobIds, EXISTING_LOOKUP_CHUNK_SIZE)) {
+    const { data, error } = await supabase
+      .from('job_catalog')
+      .select(
+        'source_job_id, description, responsibilities, qualifications, salary_min, salary_max, salary_currency',
+      )
+      .eq('source_id', sourceId)
+      .in('source_job_id', idsChunk);
+    assertNoError(error, 'listJobCatalogEnrichmentSnapshots');
+    for (const row of data ?? []) {
+      result.set(row.source_job_id, {
+        description: row.description,
+        responsibilities: row.responsibilities,
+        qualifications: row.qualifications,
+        salaryMin: row.salary_min,
+        salaryMax: row.salary_max,
+        salaryCurrency: row.salary_currency,
+      });
+    }
+  }
+  return result;
+}
+
+export interface JobrightEnrichmentCandidate {
+  jobCatalogId: string;
+  applyUrl: string;
+}
+
+/**
+ * D7 §9-10 — the bounded set of ACTIVE Jobright-sourced rows that still need (or are due for a
+ * refresh of) detail-page enrichment: never-yet-enriched rows (`description IS NULL`, since the
+ * README table never supplies one) plus rows whose last enrichment write is older than
+ * `staleAfterMs`. Filters in application code rather than a PostgREST `.or()` filter string —
+ * same "hundreds of sources" scale precedent as `listEnabledJobSourcesDueForCrawl`'s own doc
+ * comment. Deterministically ordered (never-enriched rows first, then oldest-enriched first) so a
+ * bounded `maxCount` always makes the same forward progress across runs.
+ */
+export async function listJobrightEnrichmentCandidates(
+  supabase: CareerOsSupabaseClient,
+  jobrightSourceIds: string[],
+  options: { staleAfterMs: number; maxCount: number; now?: Date },
+): Promise<JobrightEnrichmentCandidate[]> {
+  if (jobrightSourceIds.length === 0) return [];
+  const now = options.now ?? new Date();
+  const staleBeforeMs = now.getTime() - options.staleAfterMs;
+
+  const rows: { id: string; apply_url: string; description: string | null; content_updated_at: string }[] = [];
+  for (const idsChunk of chunk(jobrightSourceIds, EXISTING_LOOKUP_CHUNK_SIZE)) {
+    const { data, error } = await supabase
+      .from('job_catalog')
+      .select('id, apply_url, description, content_updated_at')
+      .eq('status', 'ACTIVE')
+      .in('source_id', idsChunk);
+    assertNoError(error, 'listJobrightEnrichmentCandidates');
+    rows.push(...(data ?? []));
+  }
+
+  return rows
+    .filter((row) => row.description === null || new Date(row.content_updated_at).getTime() < staleBeforeMs)
+    .sort((a, b) => {
+      if (a.description === null && b.description !== null) return -1;
+      if (a.description !== null && b.description === null) return 1;
+      return new Date(a.content_updated_at).getTime() - new Date(b.content_updated_at).getTime();
+    })
+    .slice(0, options.maxCount)
+    .map((row) => ({ jobCatalogId: row.id, applyUrl: row.apply_url }));
+}
+
+export interface JobCatalogEnrichmentUpdate {
+  description?: string | null;
+  responsibilities?: string | null;
+  qualifications?: string | null;
+  employmentType?: string | null;
+  workplaceType?: 'REMOTE' | 'HYBRID' | 'ONSITE' | null;
+  locationText?: string | null;
+  normalizedLocation?: string | null;
+  city?: string | null;
+  stateRegion?: string | null;
+  country?: string | null;
+  salaryMin?: number | null;
+  salaryMax?: number | null;
+  salaryCurrency?: string | null;
+  postedAt?: string | null;
+  contentHash: string;
+}
+
+/**
+ * D7 §10 — the enrichment stage's one write: a targeted update to fields the Jobright detail
+ * page's structured data can genuinely supply, never touching `source_id`/`source_job_id`/
+ * `status`/lifecycle fields. `contentHash` is always recomputed by the caller
+ * (`computeJobCatalogContentHash`) and written here so the next feature-extraction pass picks up
+ * the richer content — this is the only way enrichment becomes visible to Match/Coverage.
+ */
+export async function updateJobCatalogEnrichment(
+  supabase: CareerOsSupabaseClient,
+  jobCatalogId: string,
+  update: JobCatalogEnrichmentUpdate,
+  now: Date = new Date(),
+): Promise<void> {
+  const payload: Database['public']['Tables']['job_catalog']['Update'] = {
+    content_hash: update.contentHash,
+    content_updated_at: now.toISOString(),
+  };
+  if (update.description !== undefined) payload.description = update.description;
+  if (update.responsibilities !== undefined) payload.responsibilities = update.responsibilities;
+  if (update.qualifications !== undefined) payload.qualifications = update.qualifications;
+  if (update.employmentType !== undefined) payload.employment_type = update.employmentType;
+  if (update.workplaceType !== undefined) payload.workplace_type = update.workplaceType;
+  if (update.locationText !== undefined) payload.location_text = update.locationText;
+  if (update.normalizedLocation !== undefined) payload.normalized_location = update.normalizedLocation;
+  if (update.city !== undefined) payload.city = update.city;
+  if (update.stateRegion !== undefined) payload.state_region = update.stateRegion;
+  if (update.country !== undefined) payload.country = update.country;
+  if (update.salaryMin !== undefined) payload.salary_min = update.salaryMin;
+  if (update.salaryMax !== undefined) payload.salary_max = update.salaryMax;
+  if (update.salaryCurrency !== undefined) payload.salary_currency = update.salaryCurrency;
+  if (update.postedAt !== undefined) payload.posted_at = update.postedAt;
+
+  const { error } = await supabase.from('job_catalog').update(payload).eq('id', jobCatalogId);
+  assertNoError(error, 'updateJobCatalogEnrichment');
 }
 
 export interface ReconcileMissingJobsSummary {

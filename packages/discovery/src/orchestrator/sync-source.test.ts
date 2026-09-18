@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CareerOsSupabaseClient } from '@career-os/database';
-import type { JobSource } from '@career-os/shared';
+import { computeJobCatalogContentHash, type JobSource } from '@career-os/shared';
 import { syncSource } from './sync-source';
 import greenhouseSample from '../adapters/__fixtures__/greenhouse-sample.json';
 import greenhouseMalformed from '../adapters/__fixtures__/greenhouse-malformed.json';
@@ -44,6 +44,10 @@ class FakeQuery {
   select(cols: string): this {
     this.op = 'select';
     this.selectCols = cols.split(',').map((c) => c.trim());
+    return this;
+  }
+
+  order(_col: string): this {
     return this;
   }
 
@@ -157,6 +161,7 @@ const SOURCE: JobSource = {
   lastErrorAt: null,
   lastError: null,
   consecutiveFailures: 0,
+  etag: null,
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z',
 };
@@ -177,6 +182,7 @@ function sourceRow(): FakeRow {
     last_error_at: SOURCE.lastErrorAt,
     last_error: SOURCE.lastError,
     consecutive_failures: SOURCE.consecutiveFailures,
+    etag: SOURCE.etag,
     created_at: SOURCE.createdAt,
     updated_at: SOURCE.updatedAt,
   };
@@ -192,6 +198,63 @@ function mockFetchOnce(options: { ok: boolean; status?: number; json?: unknown }
     }),
   );
 }
+
+const JOBRIGHT_SOURCE: JobSource = {
+  id: 'bbbbbbbb-0000-4000-8000-000000000000',
+  companyName: 'Jobright — Test Internships',
+  sourceType: 'JOBRIGHT_GITHUB',
+  sourceIdentifier: 'jobright-ai/test-repo',
+  careersUrl: null,
+  enabled: true,
+  crawlIntervalHours: 24,
+  lastCrawledAt: null,
+  lastSuccessAt: null,
+  lastErrorAt: null,
+  lastError: null,
+  consecutiveFailures: 0,
+  etag: null,
+  createdAt: '2026-01-01T00:00:00.000Z',
+  updatedAt: '2026-01-01T00:00:00.000Z',
+};
+
+function jobrightSourceRow(): FakeRow {
+  return {
+    id: JOBRIGHT_SOURCE.id,
+    company_name: JOBRIGHT_SOURCE.companyName,
+    source_type: JOBRIGHT_SOURCE.sourceType,
+    source_identifier: JOBRIGHT_SOURCE.sourceIdentifier,
+    careers_url: JOBRIGHT_SOURCE.careersUrl,
+    enabled: JOBRIGHT_SOURCE.enabled,
+    crawl_interval_hours: JOBRIGHT_SOURCE.crawlIntervalHours,
+    last_crawled_at: JOBRIGHT_SOURCE.lastCrawledAt,
+    last_success_at: JOBRIGHT_SOURCE.lastSuccessAt,
+    last_error_at: JOBRIGHT_SOURCE.lastErrorAt,
+    last_error: JOBRIGHT_SOURCE.lastError,
+    consecutive_failures: JOBRIGHT_SOURCE.consecutiveFailures,
+    etag: JOBRIGHT_SOURCE.etag,
+    created_at: JOBRIGHT_SOURCE.createdAt,
+    updated_at: JOBRIGHT_SOURCE.updatedAt,
+  };
+}
+
+function mockFetchOnceText(options: { status?: number; body?: string; etag?: string | null }) {
+  const status = options.status ?? 200;
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue({
+      ok: status < 400,
+      status,
+      text: vi.fn().mockResolvedValue(options.body ?? ''),
+      headers: { get: (name: string) => (name.toLowerCase() === 'etag' ? options.etag ?? null : null) },
+    }),
+  );
+}
+
+const JOBRIGHT_README = `<!-- TABLE_START -->
+| Company | Job Title | Location | Work Model | Date Posted |
+| --- | --- | --- | --- | --- |
+| **[Acme Corp](https://jobright.ai/jobs/info/aaaaaaaaaaaaaaaaaaaaaaaa)** | **[Software Engineer Intern](https://jobright.ai/jobs/info/aaaaaaaaaaaaaaaaaaaaaaaa)** | Remote | Remote | Sep 17 |
+<!-- TABLE_END -->`;
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -278,5 +341,49 @@ describe('syncSource', () => {
     const missingRow = store.tables.job_catalog.find((r) => r.source_job_id === '8200002');
     expect(missingRow?.status).toBe('POSSIBLY_CLOSED');
     expect(missingRow?.consecutive_misses).toBe(1);
+  });
+
+  it('D7: a normal Jobright resync preserves a previously enriched row\'s description/salary instead of reverting them to null', async () => {
+    const store = new FakeStore();
+    store.tables.job_sources.push(jobrightSourceRow());
+    const supabase = fakeSupabase(store);
+
+    mockFetchOnceText({ body: JOBRIGHT_README });
+    await syncSource(supabase, JOBRIGHT_SOURCE, new Date('2026-09-17T00:00:00.000Z'));
+    expect(store.tables.job_catalog).toHaveLength(1);
+
+    // Simulate the enrichment stage having already run against this README-seeded row.
+    const enrichedHash = await computeJobCatalogContentHash({
+      companyName: 'Acme Corp',
+      title: 'Software Engineer Intern',
+      locationText: 'Remote',
+      workplaceType: 'REMOTE',
+      employmentType: 'Internship',
+      description: 'A rich enriched description.',
+      responsibilities: null,
+      qualifications: null,
+      salaryMin: 50000,
+      salaryMax: 60000,
+      salaryCurrency: 'USD',
+      applyUrl: 'https://jobright.ai/jobs/info/aaaaaaaaaaaaaaaaaaaaaaaa',
+    });
+    const row = store.tables.job_catalog[0]!;
+    row.description = 'A rich enriched description.';
+    row.salary_min = 50000;
+    row.salary_max = 60000;
+    row.salary_currency = 'USD';
+    row.content_hash = enrichedHash;
+
+    // Resync the exact same, unchanged README.
+    vi.unstubAllGlobals();
+    mockFetchOnceText({ body: JOBRIGHT_README });
+    const result = await syncSource(supabase, JOBRIGHT_SOURCE, new Date('2026-09-18T00:00:00.000Z'));
+
+    expect(result.outcome).toBe('SUCCESS');
+    expect(result.unchanged).toBe(1);
+    expect(result.updated).toBe(0);
+    const rowAfter = store.tables.job_catalog[0]!;
+    expect(rowAfter.description).toBe('A rich enriched description.');
+    expect(rowAfter.salary_min).toBe(50000);
   });
 });

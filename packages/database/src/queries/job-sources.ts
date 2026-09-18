@@ -28,6 +28,7 @@ function rowToJobSource(row: Row): JobSource {
     lastErrorAt: row.last_error_at,
     lastError: row.last_error,
     consecutiveFailures: row.consecutive_failures,
+    etag: row.etag,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });
@@ -121,6 +122,21 @@ export async function recordJobSourceCrawlSuccess(
     })
     .eq('id', id);
   assertNoError(error, 'recordJobSourceCrawlSuccess');
+}
+
+/**
+ * D7 — caches the GitHub Contents API's ETag for this source so the next sync can send
+ * `If-None-Match` and skip re-parsing an unchanged README on a 304. `etag: null` explicitly clears
+ * a stale value (e.g. after a non-304 response) rather than leaving a caller to guess whether
+ * omitting the field means "don't touch it."
+ */
+export async function updateJobSourceEtag(
+  supabase: CareerOsSupabaseClient,
+  id: string,
+  etag: string | null,
+): Promise<void> {
+  const { error } = await supabase.from('job_sources').update({ etag }).eq('id', id);
+  assertNoError(error, 'updateJobSourceEtag');
 }
 
 /**

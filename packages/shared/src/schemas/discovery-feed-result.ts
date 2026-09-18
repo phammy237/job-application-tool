@@ -20,6 +20,14 @@ export const discoveryFeedResultItemSchema = z.object({
   locationText: z.string().nullable(),
   normalizedWorkplaceType: normalizedWorkplaceTypeSchema,
   normalizedEmploymentType: normalizedEmploymentTypeSchema,
+  /** The canonical internship classification (packages/shared/src/lib/
+   * extract-job-catalog-features.ts) -- broader than `normalizedEmploymentType === 'INTERNSHIP'`
+   * alone (it also catches a title-evident internship whose ATS-provided employment_type is
+   * missing/generic, e.g. Greenhouse never sets employment_type at all). The Discover feed's own
+   * Internship filter and job-card label both key off this field, never off
+   * `normalizedEmploymentType` directly, so the two can never disagree about which cards are
+   * internships. */
+  isInternship: z.boolean(),
   roleFamily: roleFamilySchema,
   firstSeenAt: isoDateTimeSchema,
   matchScore: z.number().min(0).max(100),

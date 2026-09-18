@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { isoDateTimeSchema, uuidSchema } from './common';
+import { jobSourceTypeSchema } from './job-source';
 
 export const jobCatalogWorkplaceTypeSchema = z.enum(['REMOTE', 'HYBRID', 'ONSITE']);
 export type JobCatalogWorkplaceType = z.infer<typeof jobCatalogWorkplaceTypeSchema>;
@@ -11,6 +12,21 @@ export type JobCatalogWorkplaceType = z.infer<typeof jobCatalogWorkplaceTypeSche
  */
 export const jobCatalogStatusSchema = z.enum(['ACTIVE', 'POSSIBLY_CLOSED', 'CLOSED']);
 export type JobCatalogStatus = z.infer<typeof jobCatalogStatusSchema>;
+
+/**
+ * D7 cross-source dedupe (docs/JOB_DISCOVERY.md "Cross-source dedupe") — one entry per duplicate
+ * posting detected from a *different* source and suppressed rather than inserted as a second
+ * `job_catalog` row. Provenance only: never read by feature extraction or ranking, and never
+ * used to change the canonical row's own `source_id`/`source_job_id` identity.
+ */
+export const crossSourceObservationSchema = z.object({
+  provider: jobSourceTypeSchema,
+  sourceIdentifier: z.string().min(1),
+  sourceJobId: z.string().min(1),
+  sourceUrl: z.string().nullable(),
+  observedAt: isoDateTimeSchema,
+});
+export type CrossSourceObservation = z.infer<typeof crossSourceObservationSchema>;
 
 /**
  * The persisted `job_catalog` row shape — global, mutable, platform-owned "what jobs currently
@@ -48,6 +64,7 @@ export const jobCatalogEntrySchema = z.object({
   sourceUrl: z.string().nullable(),
   canonicalApplyUrl: z.string().nullable(),
   dedupeFingerprint: z.string().nullable(),
+  crossSourceObservations: z.array(crossSourceObservationSchema).default([]),
 
   postedAt: isoDateTimeSchema.nullable(),
   sourceUpdatedAt: isoDateTimeSchema.nullable(),

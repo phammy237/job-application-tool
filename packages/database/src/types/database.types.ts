@@ -812,6 +812,7 @@ export interface Database {
           last_error_at: string | null;
           last_error: string | null;
           consecutive_failures: number;
+          etag: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -848,6 +849,7 @@ export interface Database {
           source_url: string | null;
           canonical_apply_url: string | null;
           dedupe_fingerprint: string | null;
+          cross_source_observations: Json;
           posted_at: string | null;
           source_updated_at: string | null;
           first_seen_at: string;
@@ -1005,6 +1007,9 @@ export interface Database {
           location_text: string | null;
           normalized_workplace_type: string;
           normalized_employment_type: string;
+          /** Added in migration 0037 — the canonical internship classification (broader than
+           * normalized_employment_type === 'INTERNSHIP' alone). */
+          is_internship: boolean;
           role_family: string;
           first_seen_at: string;
           match_score: number;

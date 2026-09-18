@@ -23,6 +23,7 @@ const BASE_ROW = {
   last_error_at: null as string | null,
   last_error: null as string | null,
   consecutive_failures: 0,
+  etag: null as string | null,
   created_at: '2026-01-01T00:00:00.000Z',
   updated_at: '2026-01-01T00:00:00.000Z',
 };

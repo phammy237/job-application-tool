@@ -31,6 +31,7 @@ function feedRow(overrides: Partial<Record<string, unknown>> = {}) {
     location_text: 'Remote',
     normalized_workplace_type: 'REMOTE',
     normalized_employment_type: 'FULL_TIME',
+    is_internship: false,
     role_family: 'SOFTWARE_ENGINEERING',
     first_seen_at: '2026-01-01T00:00:00.000Z',
     match_score: 87.5,
@@ -133,6 +134,18 @@ describe('listOwnDiscoveryFeed', () => {
     expect(page.items[0]?.matchScore).toBe(70);
     expect(page.items[0]?.coverage).toBe(60);
     expect(page.items[0]?.eligibilityStatus).toBe('ELIGIBLE');
+  });
+
+  it('maps is_internship straight through, independent of normalized_employment_type', async () => {
+    const rpc = vi.fn().mockResolvedValue({
+      data: [feedRow({ normalized_employment_type: 'FULL_TIME', is_internship: true })],
+      error: null,
+    });
+    const supabase = { rpc } as unknown as CareerOsSupabaseClient;
+
+    const page = await listOwnDiscoveryFeed(supabase, EMPTY_FILTERS);
+    expect(page.items[0]?.isInternship).toBe(true);
+    expect(page.items[0]?.normalizedEmploymentType).toBe('FULL_TIME');
   });
 
   it('maps an untracked result to null tracked-application fields', async () => {
