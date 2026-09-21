@@ -7,6 +7,8 @@ export * from './adapters/jobright-github';
 export * from './jobright-registry';
 export * from './jobright-enrichment';
 export * from './dedupe/cross-source-dedupe';
+export * from './official-posting-validator';
+export * from './official-posting-resolution';
 export * from './orchestrator/sync-source';
 export * from './orchestrator/run-sync';
 export * from './ranking/extract-features';

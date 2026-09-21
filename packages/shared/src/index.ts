@@ -50,6 +50,8 @@ export * from './schemas/job-catalog-features';
 export * from './schemas/eligibility-check';
 export * from './schemas/user-job-match-score';
 export * from './lib/canonicalize-url';
+export * from './lib/classify-job-posting-host';
+export * from './lib/select-job-apply-actions';
 export * from './lib/contact-duplicate-detection';
 export * from './lib/datetime-local';
 export * from './lib/networking-next-action-rules';

@@ -1,5 +1,5 @@
 import { getOwnDiscoveryFeedJobDetail } from '@career-os/database';
-import { isSafeExternalUrl } from '@career-os/shared';
+import { selectJobApplyActions } from '@career-os/shared';
 import { Badge, Card, CardContent, CardHeader, CardTitle } from '@career-os/ui';
 import { notFound } from 'next/navigation';
 import { requireUser } from '../../../../lib/auth';
@@ -48,9 +48,7 @@ export default async function DiscoverJobDetailPage({
     ? (EMPLOYMENT_LABELS[features.normalizedEmploymentType] ?? 'Employment type unknown')
     : (job.employmentType ?? 'Employment type unknown');
 
-  const originalPostingUrl = [job.sourceUrl, job.canonicalApplyUrl, job.applyUrl].find(
-    (url): url is string => !!url && isSafeExternalUrl(url),
-  );
+  const applyActions = selectJobApplyActions(job);
 
   return (
     <div className="max-w-2xl space-y-8">
@@ -69,20 +67,35 @@ export default async function DiscoverJobDetailPage({
           {workplaceLabel} · {employmentLabel}
         </p>
         <div className="flex flex-wrap items-center gap-4">
-          {originalPostingUrl ? (
+          {applyActions.primary ? (
             <a
-              href={originalPostingUrl}
+              href={applyActions.primary.url}
               target="_blank"
               rel="noopener noreferrer"
               className="text-primary inline-block text-sm hover:underline"
             >
-              View original posting →
+              {applyActions.primary.label} →
             </a>
           ) : (
-            <p className="text-muted-foreground text-sm">
-              No original posting link is available for this job.
-            </p>
+            <a
+              href={applyActions.fallbackSearchUrl ?? '#'}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary inline-block text-sm hover:underline"
+            >
+              Find official posting →
+            </a>
           )}
+          {applyActions.sourceUrl ? (
+            <a
+              href={applyActions.sourceUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-muted-foreground inline-block text-sm hover:underline"
+            >
+              View source
+            </a>
+          ) : null}
           <StartApplicationButton
             jobCatalogId={job.id}
             trackedApplicationId={trackedApplication?.id ?? null}

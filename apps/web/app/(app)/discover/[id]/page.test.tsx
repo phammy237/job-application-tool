@@ -252,28 +252,41 @@ describe('DiscoverJobDetailPage', () => {
     expect(screen.getByText(/None of the eligibility checks Career OS runs/)).toBeInTheDocument();
   });
 
-  it('links "View original posting" to the safe source URL', async () => {
+  it('D7.1 (25): with no confirmed employer/ATS destination, shows "Find official posting" as the primary action, and "View source" pointing to the safe source URL', async () => {
     mocks.getOwnDiscoveryFeedJobDetail.mockResolvedValue({
-      job: BASE_JOB,
+      job: BASE_JOB, // canonicalApplyUrl: null
       features: BASE_FEATURES,
       matchScore: BASE_MATCH_SCORE,
     });
     await renderPage();
-    const link = screen.getByRole('link', { name: 'View original posting →' });
-    expect(link).toHaveAttribute('href', 'https://example.com/jobs/1');
-    expect(link).toHaveAttribute('target', '_blank');
-    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    const primary = screen.getByRole('link', { name: 'Find official posting →' });
+    expect(primary).toHaveAttribute('target', '_blank');
+    expect(primary).toHaveAttribute('rel', 'noopener noreferrer');
+    const sourceLink = screen.getByRole('link', { name: 'View source' });
+    expect(sourceLink).toHaveAttribute('href', 'https://example.com/jobs/1');
   });
 
-  it('falls back to the apply URL and never renders an unsafe source URL', async () => {
+  it('D7.1 (24): with a confirmed employer/ATS canonicalApplyUrl, shows "Apply on employer site" as the primary action', async () => {
+    mocks.getOwnDiscoveryFeedJobDetail.mockResolvedValue({
+      job: { ...BASE_JOB, canonicalApplyUrl: 'https://boards.greenhouse.io/acme/jobs/1234' },
+      features: BASE_FEATURES,
+      matchScore: BASE_MATCH_SCORE,
+    });
+    await renderPage();
+    const primary = screen.getByRole('link', { name: 'Apply on employer site →' });
+    expect(primary).toHaveAttribute('href', 'https://boards.greenhouse.io/acme/jobs/1234');
+    expect(screen.queryByRole('link', { name: 'Find official posting →' })).not.toBeInTheDocument();
+  });
+
+  it('View source falls back to the apply URL and never renders an unsafe source URL', async () => {
     mocks.getOwnDiscoveryFeedJobDetail.mockResolvedValue({
       job: { ...BASE_JOB, sourceUrl: 'http://localhost:8080/internal', applyUrl: 'https://example.com/apply' },
       features: BASE_FEATURES,
       matchScore: BASE_MATCH_SCORE,
     });
     await renderPage();
-    const link = screen.getByRole('link', { name: 'View original posting →' });
-    expect(link).toHaveAttribute('href', 'https://example.com/apply');
+    const sourceLink = screen.getByRole('link', { name: 'View source' });
+    expect(sourceLink).toHaveAttribute('href', 'https://example.com/apply');
   });
 
   it('shows a closed-posting notice for a CLOSED job', async () => {
@@ -315,7 +328,7 @@ describe('DiscoverJobDetailPage', () => {
       expect(screen.queryByRole('button', { name: 'Start application' })).not.toBeInTheDocument();
     });
 
-    it('opening "View original posting" alone never creates or changes tracked state', async () => {
+    it('opening the apply/find-posting link alone never creates or changes tracked state', async () => {
       mocks.getOwnDiscoveryFeedJobDetail.mockResolvedValue({
         job: BASE_JOB,
         features: BASE_FEATURES,
@@ -323,10 +336,10 @@ describe('DiscoverJobDetailPage', () => {
         trackedApplication: null,
       });
       await renderPage();
-      // The link is a plain <a target="_blank"> to the external posting — no onClick handler, no
-      // fetch call wired to it at all; rendering the page (including this link) never itself
-      // calls the handoff endpoint.
-      const link = screen.getByRole('link', { name: 'View original posting →' });
+      // The link is a plain <a target="_blank"> to the external posting/search — no onClick
+      // handler, no fetch call wired to it at all; rendering the page (including this link) never
+      // itself calls the handoff endpoint.
+      const link = screen.getByRole('link', { name: 'Find official posting →' });
       expect(link.getAttribute('href')).not.toContain('/api/discovery');
       expect(screen.getByRole('button', { name: 'Start application' })).toBeInTheDocument();
     });

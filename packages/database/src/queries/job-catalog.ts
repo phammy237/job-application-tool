@@ -55,6 +55,13 @@ function rowToJobCatalogEntry(row: Row): JobCatalogEntry {
     consecutiveMisses: row.consecutive_misses,
     status: row.status,
     closedAt: row.closed_at,
+    resolutionStatus: row.resolution_status,
+    resolutionStrategy: row.resolution_strategy,
+    resolutionConfidence: row.resolution_confidence,
+    resolutionCandidateUrl: row.resolution_candidate_url,
+    resolutionAttemptCount: row.resolution_attempt_count,
+    resolutionLastAttemptAt: row.resolution_last_attempt_at,
+    resolutionLinkCheckFailures: row.resolution_link_check_failures,
     contentHash: row.content_hash,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -221,6 +228,13 @@ export async function upsertDiscoveredJobsForSource(
       continue;
     }
 
+    // D7.1 — a MERGED row (this job's real-world posting is now tracked canonically under a
+    // different, ATS-native job_catalog row) must never be reopened by its own source's normal
+    // resync: unlike CLOSED, nothing about a MERGED row's absence/presence in the source feed is
+    // meaningful anymore, so it is skipped entirely here — no freshness touch, no content
+    // overwrite, not counted in this summary (docs/JOB_DISCOVERY.md "Official posting resolution").
+    if (existing.status === 'MERGED') continue;
+
     const wasClosed = existing.status === 'CLOSED';
     if (existing.contentHash === job.contentHash) {
       freshnessOnlyIds.push(existing.id);
@@ -339,6 +353,308 @@ export async function appendCrossSourceObservation(
     .update({ cross_source_observations: next })
     .eq('id', jobCatalogId);
   assertNoError(updateError, 'appendCrossSourceObservation (write)');
+}
+
+/**
+ * D7.1 — deletes every `user_job_match_scores` row for one `job_catalog` row (across all users).
+ * Used only when a job_catalog row is merged into an ATS-native duplicate: the feed RPC
+ * (`list_own_discovery_feed`) has no `job_catalog.status` filter at all, so a stale match score
+ * would otherwise keep a MERGED row's card visible forever, regardless of its status. Never
+ * touches the `job_catalog` row itself or any other user's data beyond their own score on this one
+ * job — the same "delete, don't disable" precedent this table already uses for a superseded score.
+ */
+export async function deleteMatchScoresForJobCatalogId(
+  supabase: CareerOsSupabaseClient,
+  jobCatalogId: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from('user_job_match_scores')
+    .delete()
+    .eq('job_catalog_id', jobCatalogId);
+  assertNoError(error, 'deleteMatchScoresForJobCatalogId');
+}
+
+/**
+ * D7.1 — the one write for "this Jobright job_catalog row's real-world posting is now tracked
+ * canonically under `atsJobCatalogId`": appends the cross-source observation onto the ATS row
+ * (reusing the existing D7 `appendCrossSourceObservation`, unchanged), deletes the Jobright row's
+ * own match scores (see above), and marks the Jobright row `MERGED` with
+ * `resolution_status = RESOLVED_HIGH_CONFIDENCE` / `resolution_strategy = CATALOG_MATCH`. Never
+ * deletes the Jobright row itself or its content — provenance is retained, only its independent
+ * visibility/ranking stops.
+ */
+export async function mergeJobCatalogRowIntoAtsMatch(
+  supabase: CareerOsSupabaseClient,
+  params: {
+    jobrightJobCatalogId: string;
+    atsJobCatalogId: string;
+    observation: CrossSourceObservation;
+  },
+  now: Date = new Date(),
+): Promise<void> {
+  await appendCrossSourceObservation(supabase, params.atsJobCatalogId, params.observation);
+  await deleteMatchScoresForJobCatalogId(supabase, params.jobrightJobCatalogId);
+
+  const { error } = await supabase
+    .from('job_catalog')
+    .update({
+      status: 'MERGED',
+      resolution_status: 'RESOLVED_HIGH_CONFIDENCE',
+      resolution_strategy: 'CATALOG_MATCH',
+      resolution_confidence: 100,
+      resolution_attempt_count: 1,
+      resolution_last_attempt_at: now.toISOString(),
+    })
+    .eq('id', params.jobrightJobCatalogId);
+  assertNoError(error, 'mergeJobCatalogRowIntoAtsMatch');
+}
+
+export interface OfficialPostingResolutionCandidate {
+  jobCatalogId: string;
+  sourceId: string;
+  sourceJobId: string;
+  companyName: string;
+  title: string;
+  locationText: string | null;
+  canonicalApplyUrl: string | null;
+  sourceUrl: string | null;
+  applyUrl: string;
+  postedAt: string | null;
+  resolutionAttemptCount: number;
+}
+
+/**
+ * D7.1 §10 — the bounded set of ACTIVE Jobright-sourced rows still eligible for an official-posting
+ * resolution attempt: never-attempted rows, plus previously UNRESOLVED/RESOLVED_REVIEW rows whose
+ * last attempt is older than `retryAfterMs` (search-cost control — never re-searches a resolved or
+ * recently-attempted row). Filters in application code, same "hundreds of sources" scale precedent
+ * as `listEnabledJobSourcesDueForCrawl`/`listJobrightEnrichmentCandidates`. Never selects
+ * `RESOLVED_HIGH_CONFIDENCE` rows — those are handled by revalidation, not re-resolution.
+ */
+export async function listOfficialPostingResolutionCandidates(
+  supabase: CareerOsSupabaseClient,
+  jobrightSourceIds: string[],
+  options: { retryAfterMs: number; maxCount: number; now?: Date },
+): Promise<OfficialPostingResolutionCandidate[]> {
+  if (jobrightSourceIds.length === 0) return [];
+  const now = options.now ?? new Date();
+  const retryBeforeMs = now.getTime() - options.retryAfterMs;
+
+  const rows: {
+    id: string;
+    source_id: string;
+    source_job_id: string;
+    company_name: string;
+    title: string;
+    location_text: string | null;
+    canonical_apply_url: string | null;
+    source_url: string | null;
+    apply_url: string;
+    posted_at: string | null;
+    resolution_status: string;
+    resolution_attempt_count: number;
+    resolution_last_attempt_at: string | null;
+  }[] = [];
+  for (const idsChunk of chunk(jobrightSourceIds, EXISTING_LOOKUP_CHUNK_SIZE)) {
+    const { data, error } = await supabase
+      .from('job_catalog')
+      .select(
+        'id, source_id, source_job_id, company_name, title, location_text, canonical_apply_url, source_url, apply_url, posted_at, resolution_status, resolution_attempt_count, resolution_last_attempt_at',
+      )
+      .eq('status', 'ACTIVE')
+      .in('source_id', idsChunk);
+    assertNoError(error, 'listOfficialPostingResolutionCandidates');
+    rows.push(...(data ?? []));
+  }
+
+  return rows
+    .filter((row) => {
+      if (row.resolution_status === 'NOT_ATTEMPTED') return true;
+      if (row.resolution_status === 'RESOLVED_HIGH_CONFIDENCE') return false;
+      return (
+        !row.resolution_last_attempt_at ||
+        new Date(row.resolution_last_attempt_at).getTime() < retryBeforeMs
+      );
+    })
+    .sort((a, b) => {
+      const aAt = a.resolution_last_attempt_at ? new Date(a.resolution_last_attempt_at).getTime() : 0;
+      const bAt = b.resolution_last_attempt_at ? new Date(b.resolution_last_attempt_at).getTime() : 0;
+      return aAt - bAt;
+    })
+    .slice(0, options.maxCount)
+    .map((row) => ({
+      jobCatalogId: row.id,
+      sourceId: row.source_id,
+      sourceJobId: row.source_job_id,
+      companyName: row.company_name,
+      title: row.title,
+      locationText: row.location_text,
+      canonicalApplyUrl: row.canonical_apply_url,
+      sourceUrl: row.source_url,
+      applyUrl: row.apply_url,
+      postedAt: row.posted_at,
+      resolutionAttemptCount: row.resolution_attempt_count,
+    }));
+}
+
+export interface OfficialPostingResolutionUpdate {
+  resolutionStatus: 'RESOLVED_HIGH_CONFIDENCE' | 'RESOLVED_REVIEW' | 'UNRESOLVED';
+  resolutionStrategy: 'SEARCH';
+  resolutionConfidence: number;
+  /** Only set (non-null) for RESOLVED_REVIEW — canonical_apply_url is never touched for that tier. */
+  canonicalApplyUrl?: string;
+  resolutionCandidateUrl?: string | null;
+}
+
+/**
+ * D7.1 — persists one Strategy-B (search) resolution attempt's outcome. `canonicalApplyUrl` is
+ * only ever included in the update payload for a RESOLVED_HIGH_CONFIDENCE outcome — a
+ * RESOLVED_REVIEW or UNRESOLVED outcome never touches it, exactly per the task's "store candidate
+ * separately... do not silently replace canonical" instruction. Always bumps
+ * `resolution_attempt_count`/`resolution_last_attempt_at`, which is what drives the retry-window
+ * cost control in `listOfficialPostingResolutionCandidates`.
+ */
+export async function recordOfficialPostingResolutionAttempt(
+  supabase: CareerOsSupabaseClient,
+  jobCatalogId: string,
+  update: OfficialPostingResolutionUpdate,
+  currentAttemptCount: number,
+  now: Date = new Date(),
+): Promise<void> {
+  const payload: Database['public']['Tables']['job_catalog']['Update'] = {
+    resolution_status: update.resolutionStatus,
+    resolution_strategy: update.resolutionStrategy,
+    resolution_confidence: update.resolutionConfidence,
+    resolution_attempt_count: currentAttemptCount + 1,
+    resolution_last_attempt_at: now.toISOString(),
+  };
+  if (update.canonicalApplyUrl !== undefined) payload.canonical_apply_url = update.canonicalApplyUrl;
+  if (update.resolutionCandidateUrl !== undefined) {
+    payload.resolution_candidate_url = update.resolutionCandidateUrl;
+  }
+
+  const { error } = await supabase.from('job_catalog').update(payload).eq('id', jobCatalogId);
+  assertNoError(error, 'recordOfficialPostingResolutionAttempt');
+}
+
+export interface OfficialPostingRevalidationCandidate {
+  jobCatalogId: string;
+  canonicalApplyUrl: string;
+  linkCheckFailures: number;
+}
+
+/**
+ * D7.1 §11 — SEARCH-resolved postings due for a liveness recheck (older than
+ * `validationIntervalMs` since the last resolution/recheck). CATALOG_MATCH-resolved rows are
+ * deliberately excluded: they mirror an ATS-native row that its own source's normal daily sync
+ * already continuously reconciles, so a separate liveness check would be redundant.
+ */
+export async function listResolvedPostingsForRevalidation(
+  supabase: CareerOsSupabaseClient,
+  jobrightSourceIds: string[],
+  options: { validationIntervalMs: number; maxCount: number; now?: Date },
+): Promise<OfficialPostingRevalidationCandidate[]> {
+  if (jobrightSourceIds.length === 0) return [];
+  const now = options.now ?? new Date();
+  const staleBeforeMs = now.getTime() - options.validationIntervalMs;
+
+  const rows: {
+    id: string;
+    canonical_apply_url: string | null;
+    resolution_last_attempt_at: string | null;
+    resolution_link_check_failures: number;
+  }[] = [];
+  for (const idsChunk of chunk(jobrightSourceIds, EXISTING_LOOKUP_CHUNK_SIZE)) {
+    const { data, error } = await supabase
+      .from('job_catalog')
+      .select('id, canonical_apply_url, resolution_last_attempt_at, resolution_link_check_failures')
+      .eq('status', 'ACTIVE')
+      .eq('resolution_status', 'RESOLVED_HIGH_CONFIDENCE')
+      .eq('resolution_strategy', 'SEARCH')
+      .in('source_id', idsChunk);
+    assertNoError(error, 'listResolvedPostingsForRevalidation');
+    rows.push(...(data ?? []));
+  }
+
+  return rows
+    .filter(
+      (row) =>
+        row.canonical_apply_url &&
+        (!row.resolution_last_attempt_at ||
+          new Date(row.resolution_last_attempt_at).getTime() < staleBeforeMs),
+    )
+    .slice(0, options.maxCount)
+    .map((row) => ({
+      jobCatalogId: row.id,
+      canonicalApplyUrl: row.canonical_apply_url as string,
+      linkCheckFailures: row.resolution_link_check_failures,
+    }));
+}
+
+const LINK_CHECK_FAILURE_THRESHOLD = 2;
+
+/**
+ * D7.1 §11 — records one liveness-check outcome. A single failure only increments the counter
+ * (never equated with closure — a transient HTTP error is not the same as the posting being gone).
+ * Only at `LINK_CHECK_FAILURE_THRESHOLD` consecutive failures does this clear
+ * `canonical_apply_url` back to `null` (never back to the Jobright source URL) and downgrade
+ * `resolution_status` to `UNRESOLVED`, so the next scheduled resolution pass re-attempts fresh and
+ * the UI's `selectJobApplyActions` falls back to "Find official posting" with zero coupling to
+ * resolution state.
+ */
+export async function recordOfficialPostingLivenessCheck(
+  supabase: CareerOsSupabaseClient,
+  jobCatalogId: string,
+  outcome: { reachable: boolean },
+  currentFailures: number,
+  now: Date = new Date(),
+): Promise<void> {
+  if (outcome.reachable) {
+    const { error } = await supabase
+      .from('job_catalog')
+      .update({ resolution_link_check_failures: 0, resolution_last_attempt_at: now.toISOString() })
+      .eq('id', jobCatalogId);
+    assertNoError(error, 'recordOfficialPostingLivenessCheck (reachable)');
+    return;
+  }
+
+  const nextFailures = currentFailures + 1;
+  const payload: Database['public']['Tables']['job_catalog']['Update'] = {
+    resolution_link_check_failures: nextFailures,
+    resolution_last_attempt_at: now.toISOString(),
+  };
+  if (nextFailures >= LINK_CHECK_FAILURE_THRESHOLD) {
+    payload.canonical_apply_url = null;
+    payload.resolution_status = 'UNRESOLVED';
+  }
+  const { error } = await supabase.from('job_catalog').update(payload).eq('id', jobCatalogId);
+  assertNoError(error, 'recordOfficialPostingLivenessCheck (unreachable)');
+}
+
+/**
+ * D7.1 — looks up which of a batch of `sourceJobId`s already have their own `job_catalog` row
+ * under `sourceId`, keyed by `sourceJobId`. Used by `sync-source.ts`'s ongoing per-sync
+ * cross-source-dedupe check to decide whether a newly-matching Jobright candidate needs a full
+ * merge (an existing row, which must stop being independently visible/ranked) or the simpler
+ * "never insert a second row" suppression that already handles a genuinely new candidate.
+ */
+export async function getJobCatalogIdsBySourceJobIds(
+  supabase: CareerOsSupabaseClient,
+  sourceId: string,
+  sourceJobIds: string[],
+): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  if (sourceJobIds.length === 0) return result;
+  for (const idsChunk of chunk(sourceJobIds, EXISTING_LOOKUP_CHUNK_SIZE)) {
+    const { data, error } = await supabase
+      .from('job_catalog')
+      .select('id, source_job_id')
+      .eq('source_id', sourceId)
+      .in('source_job_id', idsChunk);
+    assertNoError(error, 'getJobCatalogIdsBySourceJobIds');
+    for (const row of data ?? []) result.set(row.source_job_id, row.id);
+  }
+  return result;
 }
 
 export interface JobCatalogEnrichmentSnapshot {

@@ -40,6 +40,9 @@ function job(overrides: Partial<Record<string, unknown>> = {}) {
     eligibilityStatus: 'ELIGIBLE',
     trackedApplicationId: null,
     trackedApplicationStatus: null,
+    canonicalApplyUrl: 'https://boards.greenhouse.io/acme/jobs/1234',
+    sourceUrl: null,
+    applyUrl: 'https://boards.greenhouse.io/acme/jobs/1234',
     ...overrides,
   };
 }
@@ -90,6 +93,37 @@ describe('DiscoverPage', () => {
     const link = screen.getByRole('link', { name: 'Software Engineer' });
     expect(link).toHaveAttribute('href', '/discover/job-1');
     expect(screen.getByText(/Acme/)).toBeInTheDocument();
+  });
+
+  it('D7.1 (24, 27): a resolved/ATS-native job shows "Apply on employer site" as the primary card action', async () => {
+    mocks.listOwnDiscoveryFeed.mockResolvedValue({
+      items: [job({ canonicalApplyUrl: 'https://boards.greenhouse.io/acme/jobs/1234' })],
+      hasNextPage: false,
+    });
+    await renderPage();
+    const primary = screen.getByRole('link', { name: 'Apply on employer site →' });
+    expect(primary).toHaveAttribute('href', 'https://boards.greenhouse.io/acme/jobs/1234');
+    expect(screen.queryByRole('link', { name: 'Find official posting →' })).not.toBeInTheDocument();
+  });
+
+  it('D7.1 (25, 26): an unresolved job shows "Find official posting" as primary and keeps "View source" available', async () => {
+    mocks.listOwnDiscoveryFeed.mockResolvedValue({
+      items: [
+        job({
+          canonicalApplyUrl: 'https://jobright.ai/jobs/info/abc123',
+          sourceUrl: 'https://jobright.ai/jobs/info/abc123',
+          applyUrl: 'https://jobright.ai/jobs/info/abc123',
+        }),
+      ],
+      hasNextPage: false,
+    });
+    await renderPage();
+    expect(screen.getByRole('link', { name: 'Find official posting →' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'View source' })).toHaveAttribute(
+      'href',
+      'https://jobright.ai/jobs/info/abc123',
+    );
+    expect(screen.queryByRole('link', { name: 'Apply on employer site →' })).not.toBeInTheDocument();
   });
 
   it('a canonically-classified internship shows "Internship" even when its normalizedEmploymentType is FULL_TIME, never a contradicting raw label', async () => {

@@ -19,10 +19,11 @@ interface FakeRow {
 interface FakeTables {
   job_sources: FakeRow[];
   job_catalog: FakeRow[];
+  user_job_match_scores: FakeRow[];
 }
 
 class FakeStore {
-  tables: FakeTables = { job_sources: [], job_catalog: [] };
+  tables: FakeTables = { job_sources: [], job_catalog: [], user_job_match_scores: [] };
   private nextId = 1;
   genId(): string {
     return `row-${this.nextId++}`;
@@ -30,7 +31,7 @@ class FakeStore {
 }
 
 class FakeQuery {
-  private op: 'select' | 'upsert' | 'update' | null = null;
+  private op: 'select' | 'upsert' | 'update' | 'delete' | null = null;
   private filters: Array<['eq' | 'in', string, unknown]> = [];
   private selectCols: string[] | null = null;
   private payload: unknown = null;
@@ -71,6 +72,11 @@ class FakeQuery {
   update(payload: Record<string, unknown>): this {
     this.op = 'update';
     this.payload = payload;
+    return this;
+  }
+
+  delete(): this {
+    this.op = 'delete';
     return this;
   }
 
@@ -135,6 +141,12 @@ class FakeQuery {
           rows.push({ id: this.store.genId(), ...incoming });
         }
       }
+      return { data: null, error: null };
+    }
+
+    if (this.op === 'delete') {
+      const remaining = this.rows().filter((row) => !this.matches(row));
+      this.store.tables[this.table] = remaining;
       return { data: null, error: null };
     }
 
@@ -385,5 +397,62 @@ describe('syncSource', () => {
     const rowAfter = store.tables.job_catalog[0]!;
     expect(rowAfter.description).toBe('A rich enriched description.');
     expect(rowAfter.salary_min).toBe(50000);
+  });
+
+  it("D7.1: a Jobright row that already has its own job_catalog entry is MERGED (not just suppressed) the moment it starts matching an existing ATS-native row", async () => {
+    const store = new FakeStore();
+    store.tables.job_sources.push(sourceRow(), jobrightSourceRow());
+    // An ATS-native (Greenhouse) row for the exact same real job the Jobright README also lists.
+    store.tables.job_catalog.push({
+      id: 'ats-row-1',
+      source_id: SOURCE.id,
+      source_job_id: 'gh-1234',
+      company_name: 'Acme Corp',
+      title: 'Software Engineer Intern',
+      location_text: 'Remote',
+      canonical_apply_url: 'https://boards.greenhouse.io/acmecorp/jobs/1234',
+      posted_at: '2026-09-16T00:00:00.000Z',
+      status: 'ACTIVE',
+      cross_source_observations: [],
+    });
+    // The Jobright row already exists from an earlier sync, before this ATS row existed.
+    store.tables.job_catalog.push({
+      id: 'jobright-row-1',
+      source_id: JOBRIGHT_SOURCE.id,
+      source_job_id: 'aaaaaaaaaaaaaaaaaaaaaaaa',
+      company_name: 'Acme Corp',
+      title: 'Software Engineer Intern',
+      location_text: 'Remote',
+      canonical_apply_url: 'https://jobright.ai/jobs/info/aaaaaaaaaaaaaaaaaaaaaaaa',
+      source_url: 'https://jobright.ai/jobs/info/aaaaaaaaaaaaaaaaaaaaaaaa',
+      apply_url: 'https://jobright.ai/jobs/info/aaaaaaaaaaaaaaaaaaaaaaaa',
+      posted_at: '2026-09-17T00:00:00.000Z',
+      status: 'ACTIVE',
+      resolution_status: 'NOT_ATTEMPTED',
+      resolution_attempt_count: 0,
+      cross_source_observations: [],
+    });
+    store.tables.user_job_match_scores.push({ id: 'score-1', job_catalog_id: 'jobright-row-1' });
+
+    const supabase = fakeSupabase(store);
+    mockFetchOnceText({ body: JOBRIGHT_README });
+    const result = await syncSource(supabase, JOBRIGHT_SOURCE, new Date('2026-09-18T00:00:00.000Z'));
+
+    expect(result.outcome).toBe('SUCCESS');
+    expect(result.crossSourceDuplicates).toBe(1);
+
+    const jobrightRow = store.tables.job_catalog.find((r) => r.id === 'jobright-row-1')!;
+    expect(jobrightRow.status).toBe('MERGED');
+    expect(jobrightRow.resolution_status).toBe('RESOLVED_HIGH_CONFIDENCE');
+    expect(jobrightRow.resolution_strategy).toBe('CATALOG_MATCH');
+
+    const atsRow = store.tables.job_catalog.find((r) => r.id === 'ats-row-1')!;
+    expect(atsRow.cross_source_observations).toHaveLength(1);
+    expect((atsRow.cross_source_observations as { sourceJobId: string }[])[0]?.sourceJobId).toBe(
+      'aaaaaaaaaaaaaaaaaaaaaaaa',
+    );
+
+    // The Jobright row's own match score is gone — it must never again show as its own card.
+    expect(store.tables.user_job_match_scores).toHaveLength(0);
   });
 });

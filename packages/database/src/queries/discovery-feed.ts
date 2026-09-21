@@ -31,6 +31,9 @@ function rowToDiscoveryFeedResultItem(row: {
   eligibility_status: string;
   tracked_application_id: string | null;
   tracked_application_status: string | null;
+  canonical_apply_url: string | null;
+  source_url: string | null;
+  apply_url: string;
 }): DiscoveryFeedResultItem {
   return discoveryFeedResultItemSchema.parse({
     jobCatalogId: row.job_catalog_id,
@@ -47,6 +50,9 @@ function rowToDiscoveryFeedResultItem(row: {
     eligibilityStatus: row.eligibility_status,
     trackedApplicationId: row.tracked_application_id,
     trackedApplicationStatus: row.tracked_application_status,
+    canonicalApplyUrl: row.canonical_apply_url,
+    sourceUrl: row.source_url,
+    applyUrl: row.apply_url,
   });
 }
 

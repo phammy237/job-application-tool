@@ -50,3 +50,10 @@ export { generateResumeExtraction } from './generate-resume-extraction';
 export type { GenerateResumeExtractionResult } from './generate-resume-extraction';
 export { deriveEligibleNextAction } from './derive-eligible-next-action';
 export { NEVER_SUGGEST_CLASSIFICATIONS } from './config';
+/** D7.1 — the project's existing external search capability (docs/JOB_DISCOVERY.md "Official
+ * posting resolution"). This remains the *only* place that talks to Tavily's own API; the
+ * official-posting resolver (`packages/discovery`) only ever calls this function, never a raw
+ * fetch. Newly exported from this package's public surface — every other Tavily caller so far has
+ * lived inside this same package and used a relative import. */
+export { isTavilyConfigured, tavilySearch } from './research/tavily-client';
+export type { TavilySearchOutcome, TavilySearchResultItem } from './research/tavily-client';

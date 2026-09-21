@@ -39,6 +39,9 @@ function feedRow(overrides: Partial<Record<string, unknown>> = {}) {
     eligibility_status: 'ELIGIBLE',
     tracked_application_id: null,
     tracked_application_status: null,
+    canonical_apply_url: 'https://boards.greenhouse.io/acme/jobs/1234',
+    source_url: null,
+    apply_url: 'https://boards.greenhouse.io/acme/jobs/1234',
     ...overrides,
   };
 }
@@ -148,6 +151,25 @@ describe('listOwnDiscoveryFeed', () => {
     expect(page.items[0]?.normalizedEmploymentType).toBe('FULL_TIME');
   });
 
+  it('D7.1 — maps canonical_apply_url/source_url/apply_url straight through', async () => {
+    const rpc = vi.fn().mockResolvedValue({
+      data: [
+        feedRow({
+          canonical_apply_url: 'https://boards.greenhouse.io/acme/jobs/9999',
+          source_url: 'https://jobright.ai/jobs/info/abc123',
+          apply_url: 'https://jobright.ai/jobs/info/abc123',
+        }),
+      ],
+      error: null,
+    });
+    const supabase = { rpc } as unknown as CareerOsSupabaseClient;
+
+    const page = await listOwnDiscoveryFeed(supabase, EMPTY_FILTERS);
+    expect(page.items[0]?.canonicalApplyUrl).toBe('https://boards.greenhouse.io/acme/jobs/9999');
+    expect(page.items[0]?.sourceUrl).toBe('https://jobright.ai/jobs/info/abc123');
+    expect(page.items[0]?.applyUrl).toBe('https://jobright.ai/jobs/info/abc123');
+  });
+
   it('maps an untracked result to null tracked-application fields', async () => {
     const rpc = vi.fn().mockResolvedValue({ data: [feedRow()], error: null });
     const supabase = { rpc } as unknown as CareerOsSupabaseClient;
@@ -222,6 +244,13 @@ describe('getOwnDiscoveryFeedJobDetail', () => {
       consecutive_misses: 0,
       status: 'ACTIVE',
       closed_at: null,
+      resolution_status: 'NOT_ATTEMPTED',
+      resolution_strategy: null,
+      resolution_confidence: null,
+      resolution_candidate_url: null,
+      resolution_attempt_count: 0,
+      resolution_last_attempt_at: null,
+      resolution_link_check_failures: 0,
       content_hash: 'hash',
       created_at: '2026-01-01T00:00:00.000Z',
       updated_at: '2026-01-01T00:00:00.000Z',
@@ -276,6 +305,13 @@ describe('getOwnDiscoveryFeedJobDetail', () => {
       consecutive_misses: 0,
       status: 'ACTIVE',
       closed_at: null,
+      resolution_status: 'NOT_ATTEMPTED',
+      resolution_strategy: null,
+      resolution_confidence: null,
+      resolution_candidate_url: null,
+      resolution_attempt_count: 0,
+      resolution_last_attempt_at: null,
+      resolution_link_check_failures: 0,
       content_hash: 'hash',
       created_at: '2026-01-01T00:00:00.000Z',
       updated_at: '2026-01-01T00:00:00.000Z',

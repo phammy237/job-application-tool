@@ -10,6 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@career-os/ai": "*",
     "@career-os/database": "*",
     "@career-os/shared": "*",
     "@supabase/supabase-js": "^2.47.10",

@@ -35,5 +35,12 @@ export const discoveryFeedResultItemSchema = z.object({
   eligibilityStatus: eligibilityStatusSchema,
   trackedApplicationId: uuidSchema.nullable(),
   trackedApplicationStatus: applicationStatusSchema.nullable(),
+  /** D7.1 — the three URL fields `selectJobApplyActions` (packages/shared) needs to decide a
+   * card's primary apply action without a separate per-card fetch. `applyUrl` is the only one of
+   * the three guaranteed non-empty (every adapter requires it); `canonicalApplyUrl`/`sourceUrl`
+   * mirror `job_catalog`'s own nullable columns exactly. */
+  canonicalApplyUrl: z.string().nullable(),
+  sourceUrl: z.string().nullable(),
+  applyUrl: z.string().min(1),
 });
 export type DiscoveryFeedResultItem = z.infer<typeof discoveryFeedResultItemSchema>;

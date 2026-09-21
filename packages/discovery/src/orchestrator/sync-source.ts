@@ -1,6 +1,7 @@
 import type { CareerOsSupabaseClient } from '@career-os/database';
 import {
   appendCrossSourceObservation,
+  getJobCatalogIdsBySourceJobIds,
   listActiveJobCatalogEntriesForDedupe,
   listAllJobSources,
   listJobCatalogEnrichmentSnapshots,
@@ -22,6 +23,7 @@ import { jobrightGithubAdapter } from '../adapters/jobright-github';
 import { leverAdapter } from '../adapters/lever';
 import { buildCrossSourceDedupeIndex, findCrossSourceDuplicate } from '../dedupe/cross-source-dedupe';
 import { normalizeDiscoveredJob } from '../normalize';
+import { mergeIntoAtsMatch } from '../official-posting-resolution';
 import type { JobSourceAdapter } from '../types';
 
 const ADAPTERS: Record<JobSource['sourceType'], JobSourceAdapter> = {
@@ -158,6 +160,17 @@ export async function syncSource(
     const dedupeCandidates = await listActiveJobCatalogEntriesForDedupe(supabase, otherSourceIds);
     const dedupeIndex = buildCrossSourceDedupeIndex(dedupeCandidates);
 
+    // D7.1 — a job whose sourceJobId already has its own job_catalog row (ingested before a
+    // matching ATS-native row existed) needs a full MERGE, not just a "don't insert a duplicate"
+    // suppression, the moment it starts matching one: without this, the existing row would simply
+    // freeze in place (excluded from toUpsert below, but never reconciled either) and keep showing
+    // as its own independent card forever (docs/JOB_DISCOVERY.md "Official posting resolution").
+    const existingJobCatalogIds = await getJobCatalogIdsBySourceJobIds(
+      supabase,
+      source.id,
+      normalized.map((job) => job.sourceJobId),
+    );
+
     const genuinelyNew: NormalizedDiscoveredJob[] = [];
     for (const job of normalized) {
       const match = findCrossSourceDuplicate(dedupeIndex, {
@@ -169,13 +182,28 @@ export async function syncSource(
       });
       if (match) {
         crossSourceDuplicates += 1;
-        await appendCrossSourceObservation(supabase, match.jobCatalogId, {
-          provider: 'JOBRIGHT_GITHUB',
-          sourceIdentifier: source.sourceIdentifier,
-          sourceJobId: job.sourceJobId,
-          sourceUrl: job.sourceUrl ?? job.applyUrl,
-          observedAt: now.toISOString(),
-        });
+        const existingJobCatalogId = existingJobCatalogIds.get(job.sourceJobId);
+        if (existingJobCatalogId) {
+          await mergeIntoAtsMatch(
+            supabase,
+            {
+              jobrightJobCatalogId: existingJobCatalogId,
+              atsJobCatalogId: match.jobCatalogId,
+              sourceIdentifier: source.sourceIdentifier,
+              sourceJobId: job.sourceJobId,
+              sourceUrl: job.sourceUrl ?? job.applyUrl,
+            },
+            now,
+          );
+        } else {
+          await appendCrossSourceObservation(supabase, match.jobCatalogId, {
+            provider: 'JOBRIGHT_GITHUB',
+            sourceIdentifier: source.sourceIdentifier,
+            sourceJobId: job.sourceJobId,
+            sourceUrl: job.sourceUrl ?? job.applyUrl,
+            observedAt: now.toISOString(),
+          });
+        }
       } else {
         genuinelyNew.push(job);
       }

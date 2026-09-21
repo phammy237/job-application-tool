@@ -1,5 +1,5 @@
 import { Card, CardContent, CardHeader } from '@career-os/ui';
-import type { DiscoveryFeedResultItem } from '@career-os/shared';
+import { selectJobApplyActions, type DiscoveryFeedResultItem } from '@career-os/shared';
 import Link from 'next/link';
 import { EMPLOYMENT_LABELS, WORKPLACE_LABELS } from './discovery-display-labels';
 import { MatchCoverageEligibility } from './match-coverage-eligibility';
@@ -16,6 +16,8 @@ function formatFirstSeenLabel(firstSeenAt: string, now: Date): string {
 }
 
 export function JobCard({ job, now }: { job: DiscoveryFeedResultItem; now: Date }) {
+  const applyActions = selectJobApplyActions(job);
+
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -56,6 +58,37 @@ export function JobCard({ job, now }: { job: DiscoveryFeedResultItem; now: Date 
           coverage={job.coverage}
           eligibilityStatus={job.eligibilityStatus}
         />
+        <div className="flex flex-wrap items-center gap-3 text-sm">
+          {applyActions.primary ? (
+            <a
+              href={applyActions.primary.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary hover:underline"
+            >
+              {applyActions.primary.label} →
+            </a>
+          ) : (
+            <a
+              href={applyActions.fallbackSearchUrl ?? '#'}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary hover:underline"
+            >
+              Find official posting →
+            </a>
+          )}
+          {applyActions.sourceUrl ? (
+            <a
+              href={applyActions.sourceUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-muted-foreground text-xs hover:underline"
+            >
+              View source
+            </a>
+          ) : null}
+        </div>
         <StartApplicationButton
           jobCatalogId={job.jobCatalogId}
           trackedApplicationId={job.trackedApplicationId}

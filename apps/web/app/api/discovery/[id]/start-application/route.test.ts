@@ -212,6 +212,36 @@ describe('POST /api/discovery/[id]/start-application', () => {
     expect(input.canonicalUrl).toBe(BASE_JOB.canonicalApplyUrl);
   });
 
+  it('D7.1 (22): a resolved Jobright job uses the resolved employer canonical URL, never the Jobright detail URL, for the handoff', async () => {
+    mocks.getJobCatalogEntryById.mockResolvedValue({
+      ...BASE_JOB,
+      sourceUrl: 'https://jobright.ai/jobs/info/abc123',
+      applyUrl: 'https://jobright.ai/jobs/info/abc123',
+      canonicalApplyUrl: 'https://boards.greenhouse.io/acme/jobs/9999', // D7.1-resolved
+    });
+    mocks.getJobSource.mockResolvedValue({ ...BASE_JOB_SOURCE, sourceType: 'JOBRIGHT_GITHUB' });
+
+    await POST(postRequest(), paramsFor(JOB_CATALOG_ID));
+    const [, , input] = mocks.startApplicationFromCatalogJob.mock.calls[0]!;
+    expect(input.canonicalUrl).toBe('https://boards.greenhouse.io/acme/jobs/9999');
+    expect(input.canonicalUrl).not.toContain('jobright.ai');
+  });
+
+  it('D7.1 (23): an unresolved Jobright job never mislabels Jobright as the original employer posting — sourceType honestly says JOBRIGHT_GITHUB, never the employer\'s own ATS', async () => {
+    mocks.getJobCatalogEntryById.mockResolvedValue({
+      ...BASE_JOB,
+      sourceUrl: 'https://jobright.ai/jobs/info/abc123',
+      applyUrl: 'https://jobright.ai/jobs/info/abc123',
+      canonicalApplyUrl: 'https://jobright.ai/jobs/info/abc123', // never resolved
+    });
+    mocks.getJobSource.mockResolvedValue({ ...BASE_JOB_SOURCE, sourceType: 'JOBRIGHT_GITHUB' });
+
+    await POST(postRequest(), paramsFor(JOB_CATALOG_ID));
+    const [, , input] = mocks.startApplicationFromCatalogJob.mock.calls[0]!;
+    expect(input.eventMetadata.sourceType).toBe('JOBRIGHT_GITHUB');
+    expect(input.snapshot.sourceUrl).toContain('jobright.ai');
+  });
+
   it('builds discovery-handoff event metadata from the real match score, never fabricated', async () => {
     await POST(postRequest(), paramsFor(JOB_CATALOG_ID));
     const [, , input] = mocks.startApplicationFromCatalogJob.mock.calls[0]!;

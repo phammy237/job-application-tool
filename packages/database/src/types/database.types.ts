@@ -858,6 +858,14 @@ export interface Database {
           consecutive_misses: number;
           status: string;
           closed_at: string | null;
+          /** D7.1 — official-posting-resolution bookkeeping. Never read by ranking/features/UI. */
+          resolution_status: string;
+          resolution_strategy: string | null;
+          resolution_confidence: number | null;
+          resolution_candidate_url: string | null;
+          resolution_attempt_count: number;
+          resolution_last_attempt_at: string | null;
+          resolution_link_check_failures: number;
           content_hash: string;
           created_at: string;
           updated_at: string;
@@ -1019,6 +1027,11 @@ export interface Database {
            * to this catalog job. */
           tracked_application_id: string | null;
           tracked_application_status: string | null;
+          /** Added in migration 0040 (D7.1) — lets the job-card decide its own primary apply
+           * action without a separate per-card fetch. */
+          canonical_apply_url: string | null;
+          source_url: string | null;
+          apply_url: string;
         }[];
       };
       start_application_from_catalog_job: {

@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { NormalizedDiscoveredJob } from '@career-os/shared';
 import type { CareerOsSupabaseClient } from '../types/client';
-import { reconcileMissingJobsForSource, upsertDiscoveredJobsForSource } from './job-catalog';
+import {
+  listOfficialPostingResolutionCandidates,
+  reconcileMissingJobsForSource,
+  upsertDiscoveredJobsForSource,
+} from './job-catalog';
 
 /**
  * A minimal in-memory fake of the exact PostgREST call shapes `job-catalog.ts` actually issues
@@ -374,5 +378,87 @@ describe('reconcileMissingJobsForSource', () => {
     const summary = await reconcileMissingJobsForSource(supabase, SOURCE_ID, ['1']);
     expect(summary).toEqual({ possiblyClosed: 0, closed: 0 });
     expect(store.rows[0]?.status).toBe('ACTIVE');
+  });
+});
+
+describe('listOfficialPostingResolutionCandidates', () => {
+  function baseRow(overrides: Partial<Record<string, unknown>> & { id: string }): FakeRow {
+    return {
+      source_id: SOURCE_ID,
+      source_job_id: overrides.id,
+      company_name: 'Acme',
+      title: 'Software Engineer Intern',
+      location_text: 'Remote',
+      canonical_apply_url: 'https://jobright.ai/jobs/info/x',
+      source_url: 'https://jobright.ai/jobs/info/x',
+      apply_url: 'https://jobright.ai/jobs/info/x',
+      posted_at: null,
+      status: 'ACTIVE',
+      resolution_status: 'NOT_ATTEMPTED',
+      resolution_attempt_count: 0,
+      resolution_last_attempt_at: null,
+      ...overrides,
+    };
+  }
+
+  it('17. a RESOLVED_HIGH_CONFIDENCE row is never re-selected — resolved jobs are not searched repeatedly', async () => {
+    const store = new FakeStore();
+    store.rows.push(
+      baseRow({ id: 'resolved-1', resolution_status: 'RESOLVED_HIGH_CONFIDENCE', resolution_attempt_count: 1, resolution_last_attempt_at: '2020-01-01T00:00:00.000Z' }),
+      baseRow({ id: 'not-attempted-1' }),
+    );
+    const supabase = fakeSupabase(store);
+
+    const candidates = await listOfficialPostingResolutionCandidates(supabase, [SOURCE_ID], {
+      retryAfterMs: 1000,
+      maxCount: 10,
+      now: new Date('2026-01-01T00:00:00.000Z'),
+    });
+
+    expect(candidates.map((c) => c.jobCatalogId)).not.toContain('resolved-1');
+    expect(candidates.some((c) => c.sourceJobId === 'not-attempted-1')).toBe(true);
+  });
+
+  it('18. a previously UNRESOLVED row is only retried after the configured retry interval has elapsed', async () => {
+    const store = new FakeStore();
+    store.rows.push(
+      baseRow({
+        id: 'unresolved-recent',
+        resolution_status: 'UNRESOLVED',
+        resolution_attempt_count: 1,
+        resolution_last_attempt_at: '2026-01-05T00:00:00.000Z', // 5 days before "now"
+      }),
+      baseRow({
+        id: 'unresolved-stale',
+        resolution_status: 'UNRESOLVED',
+        resolution_attempt_count: 1,
+        resolution_last_attempt_at: '2025-12-01T00:00:00.000Z', // well over 14 days before "now"
+      }),
+    );
+    const supabase = fakeSupabase(store);
+    const now = new Date('2026-01-10T00:00:00.000Z');
+    const retryAfterMs = 14 * 24 * 60 * 60 * 1000;
+
+    const candidates = await listOfficialPostingResolutionCandidates(supabase, [SOURCE_ID], {
+      retryAfterMs,
+      maxCount: 10,
+      now,
+    });
+
+    const ids = candidates.map((c) => c.sourceJobId);
+    expect(ids).not.toContain('unresolved-recent');
+    expect(ids).toContain('unresolved-stale');
+  });
+
+  it('a NOT_ATTEMPTED row is always eligible regardless of last_attempt_at', async () => {
+    const store = new FakeStore();
+    store.rows.push(baseRow({ id: 'fresh-1' }));
+    const supabase = fakeSupabase(store);
+
+    const candidates = await listOfficialPostingResolutionCandidates(supabase, [SOURCE_ID], {
+      retryAfterMs: 1000,
+      maxCount: 10,
+    });
+    expect(candidates.map((c) => c.sourceJobId)).toEqual(['fresh-1']);
   });
 });
