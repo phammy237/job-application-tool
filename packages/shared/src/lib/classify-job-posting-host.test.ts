@@ -53,6 +53,28 @@ describe('classifyJobPostingHost', () => {
   it('rejects Glassdoor as a canonical destination', () => {
     expect(classifyJobPostingHost('https://www.glassdoor.com/job-listing/1234')).toBe('REJECTED_AGGREGATOR');
   });
+  it('rejects BeBee as a canonical destination (live-observed third-party mirror)', () => {
+    expect(classifyJobPostingHost('https://www.bebee.com/job/1234')).toBe('REJECTED_AGGREGATOR');
+  });
+  it('rejects Supportfinity as a canonical destination (live-observed third-party mirror)', () => {
+    expect(classifyJobPostingHost('https://supportfinity.com/job/1234')).toBe('REJECTED_AGGREGATOR');
+  });
+  it('rejects Prosple as a canonical destination (live-observed third-party mirror)', () => {
+    expect(classifyJobPostingHost('https://www.prosple.com/graduate-employers/acme/jobs/1')).toBe(
+      'REJECTED_AGGREGATOR',
+    );
+  });
+  it('rejects the ACCA job board as a canonical destination (live-observed third-party repost)', () => {
+    expect(classifyJobPostingHost('https://jobs.accaglobal.com/job/1234')).toBe('REJECTED_AGGREGATOR');
+  });
+  it('rejects any .edu career-services portal as a canonical destination (pattern-based, not a hardcoded per-university list)', () => {
+    expect(classifyJobPostingHost('https://careerservices.stjohns.edu/jobs/1234')).toBe(
+      'REJECTED_AGGREGATOR',
+    );
+    expect(classifyJobPostingHost('https://careers.anyuniversity.edu/jobs/1')).toBe(
+      'REJECTED_AGGREGATOR',
+    );
+  });
   it('classifies an employer\'s own domain as EMPLOYER_DOMAIN only when a matching hint is given', () => {
     expect(classifyJobPostingHost('https://careers.acme.com/jobs/1234', 'acme.com')).toBe(
       'EMPLOYER_DOMAIN',
