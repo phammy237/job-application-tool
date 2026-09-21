@@ -3,6 +3,7 @@ import type { CareerOsSupabaseClient } from '@career-os/database';
 import { buildCrossSourceDedupeIndex } from './dedupe/cross-source-dedupe';
 import {
   mergeIntoAtsMatch,
+  decideHighFromConfirmation,
   resolveViaCatalogMatch,
   resolveViaSearch,
   runOfficialPostingResolution,
@@ -113,6 +114,8 @@ function fakeSupabase(store: FakeStore): CareerOsSupabaseClient {
   return { from: (table: keyof FakeTables) => new FakeQuery(store, table) } as unknown as CareerOsSupabaseClient;
 }
 
+// Candidate-page fetches resolve DNS before every hop; keep unit tests off the network.
+vi.mock('node:dns/promises', () => ({ lookup: vi.fn(async () => [{ address: '93.184.216.34', family: 4 }]) }));
 vi.mock('@career-os/ai', () => ({ tavilySearch: vi.fn() }));
 import { tavilySearch } from '@career-os/ai';
 const mockedTavilySearch = vi.mocked(tavilySearch);
@@ -120,6 +123,11 @@ const mockedTavilySearch = vi.mocked(tavilySearch);
 afterEach(() => {
   vi.clearAllMocks();
 });
+
+// An accepted-ATS (Greenhouse) HIGH must now be confirmed by the page itself, so the fixtures that
+// exercise the Databricks Greenhouse flow serve a page whose JobPosting title matches.
+const DATABRICKS_PAGE =
+  '<html><head><script type="application/ld+json">{"@type":"JobPosting","title":"Product Management Intern (Summer 2027)"}</script></head><body></body></html>';
 
 const GREENHOUSE_ROW = {
   jobCatalogId: 'gh-1',
@@ -221,7 +229,7 @@ describe('resolveViaSearch (Strategy B)', () => {
         },
       ],
     });
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200 }));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => DATABRICKS_PAGE }));
 
     const result = await resolveViaSearch(CANDIDATE);
     expect(result.tier).toBe('RESOLVED_HIGH_CONFIDENCE');
@@ -251,6 +259,554 @@ describe('resolveViaSearch (Strategy B)', () => {
     mockedTavilySearch.mockResolvedValue({ status: 'unavailable' });
     const result = await resolveViaSearch(CANDIDATE);
     expect(result.tier).toBe('UNRESOLVED');
+  });
+
+  it('production case: promotes a REVIEW employer-domain-matched candidate to HIGH after content verification confirms hiringOrganization.name + title on the candidate page itself', async () => {
+    mockedTavilySearch.mockResolvedValue({
+      status: 'ok',
+      results: [
+        {
+          url: 'https://careers.cisco.com/jobs/ProjectDetail/Business-Analyst-I-Intern/1234567',
+          // Weak title overlap in the SEARCH SNIPPET alone — reaches REVIEW, not HIGH,
+          // structurally (validated by official-posting-validator.test.ts's own case).
+          title: 'Business Analyst I - Cisco Careers',
+          content: 'Cisco is hiring for a Business Analyst I role.',
+          publishedDate: null,
+        },
+      ],
+    });
+    const html = `<html><head><script type="application/ld+json">${JSON.stringify({
+      '@type': 'JobPosting',
+      title: 'Business Analyst I Intern',
+      hiringOrganization: { '@type': 'Organization', name: 'Cisco' },
+    })}</script></head><body></body></html>`;
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => html }));
+
+    const result = await resolveViaSearch({
+      companyName: 'Cisco',
+      title: 'Business Analyst I Intern',
+      locationText: null,
+    });
+
+    expect(result.tier).toBe('RESOLVED_HIGH_CONFIDENCE');
+    if (result.tier === 'RESOLVED_HIGH_CONFIDENCE') {
+      expect(result.url).toBe(
+        'https://careers.cisco.com/jobs/ProjectDetail/Business-Analyst-I-Intern/1234567',
+      );
+      expect(result.confidence).toBe(95);
+    }
+    vi.unstubAllGlobals();
+  });
+
+  it('does not promote when the candidate page has no JobPosting JSON-LD — stays REVIEW, never a crash', async () => {
+    mockedTavilySearch.mockResolvedValue({
+      status: 'ok',
+      results: [
+        {
+          url: 'https://careers.cisco.com/jobs/ProjectDetail/Business-Analyst-I-Intern/1234567',
+          title: 'Business Analyst I - Cisco Careers',
+          content: 'Cisco is hiring for a Business Analyst I role.',
+          publishedDate: null,
+        },
+      ],
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => '<html><body>no structured data</body></html>' }),
+    );
+
+    const result = await resolveViaSearch({
+      companyName: 'Cisco',
+      title: 'Business Analyst I Intern',
+      locationText: null,
+    });
+
+    expect(result.tier).toBe('RESOLVED_REVIEW');
+    vi.unstubAllGlobals();
+  });
+
+  it('does not promote when the candidate page JSON-LD names a different employer — stays REVIEW, never trusts the domain alone', async () => {
+    mockedTavilySearch.mockResolvedValue({
+      status: 'ok',
+      results: [
+        {
+          url: 'https://careers.cisco.com/jobs/ProjectDetail/Business-Analyst-I-Intern/1234567',
+          title: 'Business Analyst I - Cisco Careers',
+          content: 'Cisco is hiring for a Business Analyst I role.',
+          publishedDate: null,
+        },
+      ],
+    });
+    const html = `<html><head><script type="application/ld+json">${JSON.stringify({
+      '@type': 'JobPosting',
+      title: 'Business Analyst I Intern',
+      hiringOrganization: { '@type': 'Organization', name: 'Some Other Company' },
+    })}</script></head><body></body></html>`;
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => html }));
+
+    const result = await resolveViaSearch({
+      companyName: 'Cisco',
+      title: 'Business Analyst I Intern',
+      locationText: null,
+    });
+
+    expect(result.tier).toBe('RESOLVED_REVIEW');
+    vi.unstubAllGlobals();
+  });
+
+  it('never attempts a verification fetch for a candidate whose domain does not match the company at all (no employer-domain evidence)', async () => {
+    mockedTavilySearch.mockResolvedValue({
+      status: 'ok',
+      results: [
+        {
+          url: 'https://some-unrelated-board.example/job/cisco-business-analyst',
+          title: 'Business Analyst I Intern - Cisco',
+          content: 'Cisco is hiring a Business Analyst I Intern.',
+          publishedDate: null,
+        },
+      ],
+    });
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await resolveViaSearch({
+      companyName: 'Cisco',
+      title: 'Business Analyst I Intern',
+      locationText: null,
+    });
+
+    expect(result.tier).toBe('RESOLVED_REVIEW');
+    expect(fetchMock).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it('never promotes a third-party mirror (BeBee) to HIGH even when title/company text matches well', async () => {
+    mockedTavilySearch.mockResolvedValue({
+      status: 'ok',
+      results: [
+        {
+          url: 'https://www.bebee.com/job/cisco-business-analyst-i-intern',
+          title: 'Business Analyst I Intern - Cisco',
+          content: 'Cisco is hiring a Business Analyst I Intern.',
+          publishedDate: null,
+        },
+      ],
+    });
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await resolveViaSearch({
+      companyName: 'Cisco',
+      title: 'Business Analyst I Intern',
+      locationText: null,
+    });
+
+    expect(result.tier).toBe('UNRESOLVED');
+    expect(fetchMock).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+});
+
+describe('resolveViaSearch — page identity confirmation of a structural HIGH', () => {
+  const QTS = {
+    companyName: 'QTS Data Centers',
+    title: 'Summer 2027 Internship: Process Analytics - Technology Delivery Team',
+    locationText: 'Suwanee, GA, United States',
+  };
+  const QTS_WORKDAY_URL =
+    'https://qtsdatacenters.wd5.myworkdayjobs.com/QTS/job/Suwanee-GA/Summer-2026-Internship--IT-Asset-Management_R2025-0980';
+  // Search evidence carrying the EXPECTED title on an official Workday host — the only shape that
+  // can reach structural HIGH (the validator scores the snippet title, never the page).
+  const qtsSnippetResult = {
+    url: QTS_WORKDAY_URL,
+    title: 'Summer 2027 Internship: Process Analytics - Technology Delivery Team - QTS Data Centers',
+    content: 'QTS Data Centers is hiring a Summer 2027 intern in Suwanee, GA.',
+  };
+  const GARMIN = { companyName: 'Garmin', title: 'Business Analyst Intern', locationText: null };
+  const garminSnippetResult = {
+    url: 'https://careers.garmin.com/jobs/20154?lang=en-us',
+    title: 'Business Analyst Intern | Garmin Careers',
+    content: 'Garmin is hiring a Business Analyst Intern in Olathe, KS.',
+  };
+
+  // Real shape of the closed QTS requisition: the Workday client-rendered shell, HTTP 200, empty
+  // <title>/og:title, and `postingAvailable: false` in the bootstrap script.
+  const CLOSED_WORKDAY_SHELL = `<!DOCTYPE html><html lang="en-US"><head><title></title>
+    <meta name="title" property="og:title"><script type="text/javascript">
+    window.workday = window.workday || { tenant: "qtsdatacenters", siteId: "QTS", isExternal: true,
+    appName: "cxs", postingAvailable: false, allowedFileTypes: [] };</script></head>
+    <body><div id="root"></div></body></html>`;
+  const LIVE_WORKDAY_SHELL = CLOSED_WORKDAY_SHELL.replace('postingAvailable: false', 'postingAvailable: true');
+
+  function page(opts: { jsonLd?: Record<string, unknown>; ogTitle?: string; title?: string } = {}): string {
+    const head: string[] = [];
+    if (opts.title !== undefined) head.push(`<title>${opts.title}</title>`);
+    if (opts.ogTitle !== undefined) head.push(`<meta property="og:title" content="${opts.ogTitle}">`);
+    if (opts.jsonLd) {
+      head.push(`<script type="application/ld+json">${JSON.stringify({ '@type': 'JobPosting', ...opts.jsonLd })}</script>`);
+    }
+    return `<html><head>${head.join('')}</head><body></body></html>`;
+  }
+  function stubPages(byUrl: Record<string, string>) {
+    const fetchMock = vi.fn(async (url: string) =>
+      url in byUrl ? { ok: true, status: 200, text: async () => byUrl[url] } : { ok: false, status: 404 },
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+  function searchReturns(...results: { url: string; title: string; content: string }[]) {
+    mockedTavilySearch.mockResolvedValue({
+      status: 'ok',
+      results: results.map((r) => ({ ...r, publishedDate: null })),
+    });
+  }
+  async function resolveQts(html: string) {
+    searchReturns(qtsSnippetResult);
+    stubPages({ [QTS_WORKDAY_URL]: html });
+    const result = await resolveViaSearch(QTS);
+    vi.unstubAllGlobals();
+    return result;
+  }
+  async function resolveGarmin(html: string) {
+    searchReturns(garminSnippetResult);
+    stubPages({ [garminSnippetResult.url]: html });
+    const result = await resolveViaSearch(GARMIN);
+    vi.unstubAllGlobals();
+    return result;
+  }
+
+  describe('accepted ATS host (Workday)', () => {
+    const MATCHING = 'Summer 2027 Internship: Process Analytics - Technology Delivery Team';
+
+    it('matching JSON-LD title (empty Workday hiringOrganization.name ignored) → HIGH', async () => {
+      const result = await resolveQts(page({ jsonLd: { title: MATCHING, hiringOrganization: { name: '' } } }));
+      expect(result.tier).toBe('RESOLVED_HIGH_CONFIDENCE');
+    });
+
+    it('matching og:title (no JSON-LD) → HIGH', async () => {
+      expect((await resolveQts(page({ ogTitle: MATCHING }))).tier).toBe('RESOLVED_HIGH_CONFIDENCE');
+    });
+
+    it('matching HTML <title> (no JSON-LD, no og:title) → HIGH', async () => {
+      expect((await resolveQts(page({ title: `${MATCHING} | QTS Careers` }))).tier).toBe('RESOLVED_HIGH_CONFIDENCE');
+    });
+
+    it('a colon/dash difference in an otherwise identical page title is not a conflict', async () => {
+      const result = await resolveQts(
+        page({ ogTitle: 'Summer 2027 Internship - Process Analytics - Technology Delivery Team' }),
+      );
+      expect(result.tier).toBe('RESOLVED_HIGH_CONFIDENCE');
+    });
+
+    it('no extractable identity (plain page) → REVIEW, not HIGH', async () => {
+      const result = await resolveQts('<html><body>rendered client-side</body></html>');
+      expect(result.tier).toBe('RESOLVED_REVIEW');
+    });
+
+    it('a live Workday shell with no title data → REVIEW, not HIGH', async () => {
+      expect((await resolveQts(LIVE_WORKDAY_SHELL)).tier).toBe('RESOLVED_REVIEW');
+    });
+
+    it.each([
+      ['Careers', page({ title: 'Careers' })],
+      ['Jobs', page({ ogTitle: 'Jobs' })],
+      ['Search Jobs', page({ title: 'Search Jobs' })],
+      ['company-name-only', page({ title: 'QTS Data Centers' })],
+      ['"<company> Careers"', page({ ogTitle: 'QTS Data Centers Careers' })],
+      ['"Careers at <company>"', page({ title: 'Careers at QTS Data Centers' })],
+    ])('generic page title (%s) is not job identity → REVIEW', async (_label, html) => {
+      expect((await resolveQts(html)).tier).toBe('RESOLVED_REVIEW');
+    });
+
+    it('conflicting JSON-LD title → not HIGH and not even a REVIEW candidate', async () => {
+      const result = await resolveQts(page({ jsonLd: { title: 'Summer 2026 Internship: IT Asset Management' } }));
+      expect(result.tier).toBe('UNRESOLVED');
+    });
+
+    it('conflicting og:title → not HIGH', async () => {
+      const result = await resolveQts(page({ ogTitle: 'Summer 2026 Internship: IT Asset Management' }));
+      expect(result.tier).toBe('UNRESOLVED');
+    });
+
+    it('QTS shape: closed Workday shell (HTTP 200, empty title, postingAvailable:false) → REVIEW', async () => {
+      const result = await resolveQts(CLOSED_WORKDAY_SHELL);
+      expect(result.tier).toBe('RESOLVED_REVIEW');
+      if (result.tier === 'RESOLVED_REVIEW') expect(result.url).toBe(QTS_WORKDAY_URL);
+    });
+
+    it('unreachable page → REVIEW', async () => {
+      searchReturns(qtsSnippetResult);
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('boom')));
+      expect((await resolveViaSearch(QTS)).tier).toBe('RESOLVED_REVIEW');
+      vi.unstubAllGlobals();
+    });
+
+    describe('Workday /apply URLs', () => {
+      const DETAIL =
+        'https://tencent.wd1.myworkdayjobs.com/Tencent_Careers/job/Tencent-Cloud-CPaaS-Product-Management-Intern_R108020';
+      const TENCENT = { companyName: 'Tencent', title: 'Tencent Cloud CPaaS Product Management Intern', locationText: null };
+      const applySnippet = {
+        url: `${DETAIL}/apply`,
+        title: 'Tencent Cloud CPaaS Product Management Intern - Tencent',
+        content: 'Tencent is hiring a Tencent Cloud CPaaS Product Management Intern.',
+      };
+
+      it('reads identity from the detail page (the /apply shell falsely reports closed) — HIGH, one request, no extra fetch', async () => {
+        searchReturns(applySnippet);
+        const fetchMock = stubPages({
+          [`${DETAIL}/apply`]: CLOSED_WORKDAY_SHELL,
+          [DETAIL]: page({ jsonLd: { title: 'Tencent Cloud CPaaS Product Management Intern' } }),
+        });
+        const result = await resolveViaSearch(TENCENT);
+        expect(result.tier).toBe('RESOLVED_HIGH_CONFIDENCE');
+        if (result.tier === 'RESOLVED_HIGH_CONFIDENCE') expect(result.url).toBe(`${DETAIL}/apply`);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(fetchMock.mock.calls[0]?.[0]).toBe(DETAIL);
+        vi.unstubAllGlobals();
+      });
+
+      it('a genuinely closed detail page still demotes an /apply URL → REVIEW', async () => {
+        searchReturns(applySnippet);
+        stubPages({ [DETAIL]: CLOSED_WORKDAY_SHELL });
+        expect((await resolveViaSearch(TENCENT)).tier).toBe('RESOLVED_REVIEW');
+        vi.unstubAllGlobals();
+      });
+    });
+  });
+
+  describe('exact employer-owned domain', () => {
+    it('matching JSON-LD title with an opaque URL → HIGH', async () => {
+      const result = await resolveGarmin(page({ jsonLd: { title: 'Business Analyst Intern', hiringOrganization: { name: 'Garmin' } } }));
+      expect(result.tier).toBe('RESOLVED_HIGH_CONFIDENCE');
+    });
+
+    it('no identity at all → existing HIGH behavior preserved', async () => {
+      expect((await resolveGarmin('<html><body>rendered client-side</body></html>')).tier).toBe('RESOLVED_HIGH_CONFIDENCE');
+    });
+
+    it('only a generic <title> ("Garmin Careers") → existing HIGH behavior preserved', async () => {
+      expect((await resolveGarmin(page({ title: 'Garmin Careers' }))).tier).toBe('RESOLVED_HIGH_CONFIDENCE');
+    });
+
+    it('conflicting JSON-LD title → not HIGH', async () => {
+      expect((await resolveGarmin(page({ jsonLd: { title: 'Senior Software Engineer' } }))).tier).toBe('UNRESOLVED');
+    });
+
+    it('conflicting og:title → not HIGH', async () => {
+      expect((await resolveGarmin(page({ ogTitle: 'Senior Software Engineer' }))).tier).toBe('UNRESOLVED');
+    });
+
+    it('JSON-LD names a different employer → not HIGH', async () => {
+      const result = await resolveGarmin(
+        page({ jsonLd: { title: 'Business Analyst Intern', hiringOrganization: { name: 'Some Other Company' } } }),
+      );
+      expect(result.tier).toBe('UNRESOLVED');
+    });
+
+    it('a closed page → REVIEW', async () => {
+      expect((await resolveGarmin(CLOSED_WORKDAY_SHELL)).tier).toBe('RESOLVED_REVIEW');
+    });
+
+    it('unreachable page → REVIEW', async () => {
+      searchReturns(garminSnippetResult);
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('boom')));
+      expect((await resolveViaSearch(GARMIN)).tier).toBe('RESOLVED_REVIEW');
+      vi.unstubAllGlobals();
+    });
+
+    it('Boston Scientific shape: HTML <title> carries a "Job Details | Boston Scientific" suffix the catalog title also has in another form → HIGH', async () => {
+      const url = 'https://jobs.bostonscientific.com/job/St_-Paul-IT-Analyst-Intern-Minnesota-MN-55101/1429599000';
+      searchReturns({
+        url,
+        title: 'IT Analyst Intern- Minnesota Job Details | Boston Scientific',
+        content: 'Boston Scientific is hiring an IT Analyst Intern in Minnesota.',
+      });
+      stubPages({
+        [url]: page({ title: 'IT Analyst Intern- Minnesota Job Details | Boston Scientific', ogTitle: 'IT Analyst Intern- Minnesota' }),
+      });
+      const result = await resolveViaSearch({
+        companyName: 'Boston Scientific',
+        title: 'IT Analyst Intern- Minnesota Job Details / Boston Scientific',
+        locationText: 'Arden Hills, MN, United States',
+      });
+      expect(result.tier).toBe('RESOLVED_HIGH_CONFIDENCE');
+      vi.unstubAllGlobals();
+    });
+
+    it('a sibling role (Product Design vs Product Manager) is vetoed on the page title', async () => {
+      const url = 'https://jobs.intuit.com/job/mountain-view/summer-2027-product-manager-intern/27595/100620927648';
+      searchReturns({ url, title: 'Summer 2027: Product Manager Intern - Intuit', content: 'Intuit is hiring a Product Manager Intern.' });
+      stubPages({ [url]: page({ jsonLd: { title: 'Summer 2027: Product Design Intern', hiringOrganization: { name: 'Intuit' } } }) });
+      const result = await resolveViaSearch({ companyName: 'Intuit', title: 'Summer 2027: Product Manager Intern', locationText: null });
+      expect(result.tier).toBe('UNRESOLVED');
+      vi.unstubAllGlobals();
+    });
+  });
+
+  describe('redirect-safe page fetching', () => {
+    const TIKTOK = { companyName: 'TikTok', title: 'Product Strategy Analyst Project Intern', locationText: null };
+    const TIKTOK_URL = 'https://careers.tiktok.com/m/position/7662640431646279989/detail';
+    const tiktokSnippet = {
+      url: TIKTOK_URL,
+      title: 'Product Strategy Analyst Project Intern - TikTok',
+      content: 'TikTok is hiring a Product Strategy Analyst Project Intern.',
+    };
+    const redirectTo = (location: string) => new Response(null, { status: 302, headers: { location } });
+    function stubRoutes(routes: Record<string, () => Response>) {
+      const fetchMock = vi.fn(async (url: string) => {
+        const handler = routes[url];
+        if (!handler) throw new Error(`unexpected request to ${url}`);
+        return handler();
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      return fetchMock;
+    }
+
+    it('a legitimate cross-host redirect (careers.tiktok.com → lifeattiktok.com) is followed and identity is read from the destination → HIGH', async () => {
+      searchReturns(tiktokSnippet);
+      const fetchMock = stubRoutes({
+        [TIKTOK_URL]: () => redirectTo('https://lifeattiktok.com/search/7662640431646279989'),
+        'https://lifeattiktok.com/search/7662640431646279989': () =>
+          new Response(page({ jsonLd: { title: 'Product Strategy Analyst Project Intern' } }), { status: 200 }),
+      });
+      const result = await resolveViaSearch(TIKTOK);
+      expect(result.tier).toBe('RESOLVED_HIGH_CONFIDENCE');
+      if (result.tier === 'RESOLVED_HIGH_CONFIDENCE') expect(result.url).toBe(TIKTOK_URL); // stored URL is never rewritten
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      vi.unstubAllGlobals();
+    });
+
+    it.each([
+      'http://169.254.169.254/latest/meta-data/',
+      'http://127.0.0.1:8080/admin',
+      'http://localhost/',
+      'http://10.0.0.7/',
+      'http://192.168.1.1/',
+      'http://[::1]/',
+      'file:///etc/passwd',
+    ])('a redirect to %s is never requested and demotes the HIGH to REVIEW', async (target) => {
+      searchReturns(tiktokSnippet);
+      const fetchMock = stubRoutes({ [TIKTOK_URL]: () => redirectTo(target) });
+      const result = await resolveViaSearch(TIKTOK);
+      expect(result.tier).toBe('RESOLVED_REVIEW');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      vi.unstubAllGlobals();
+    });
+
+    it('more than 5 redirects → REVIEW, and the 6th redirect target is never requested', async () => {
+      searchReturns(tiktokSnippet);
+      const routes: Record<string, () => Response> = { [TIKTOK_URL]: () => redirectTo('https://h1.example.com/') };
+      for (let i = 1; i <= 5; i += 1) routes[`https://h${i}.example.com/`] = () => redirectTo(`https://h${i + 1}.example.com/`);
+      const fetchMock = stubRoutes(routes);
+      expect((await resolveViaSearch(TIKTOK)).tier).toBe('RESOLVED_REVIEW');
+      expect(fetchMock).toHaveBeenCalledTimes(6);
+      vi.unstubAllGlobals();
+    });
+
+    it('the 2 MB body cap still applies to the page reached AFTER a redirect', async () => {
+      const chunk = new TextEncoder().encode(page({ jsonLd: { title: TIKTOK.title } }) + ' '.repeat(500_000));
+      let pulls = 0;
+      let cancelled = false;
+      const stream = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          pulls += 1;
+          controller.enqueue(chunk);
+          if (pulls > 100) controller.close();
+        },
+        cancel() {
+          cancelled = true;
+        },
+      });
+      searchReturns(tiktokSnippet);
+      stubRoutes({
+        [TIKTOK_URL]: () => redirectTo('https://lifeattiktok.com/x'),
+        'https://lifeattiktok.com/x': () => new Response(stream, { status: 200 }),
+      });
+      expect((await resolveViaSearch(TIKTOK)).tier).toBe('RESOLVED_HIGH_CONFIDENCE');
+      expect(cancelled).toBe(true);
+      expect(pulls).toBeLessThan(10);
+      vi.unstubAllGlobals();
+    });
+
+    it('the liveness check on a content-verified promotion also refuses an unsafe redirect (REVIEW, not HIGH)', async () => {
+      const ciscoUrl = 'https://careers.cisco.com/jobs/ProjectDetail/Business-Analyst-I-Intern/1234567';
+      searchReturns({ url: ciscoUrl, title: 'Business Analyst I - Cisco Careers', content: 'Cisco is hiring for a Business Analyst I role.' });
+      let getCount = 0;
+      const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+        if (url === ciscoUrl && init.method === 'GET') {
+          getCount += 1;
+          return new Response(
+            page({ jsonLd: { title: 'Business Analyst I Intern', hiringOrganization: { name: 'Cisco' } } }),
+            { status: 200 },
+          );
+        }
+        if (url === ciscoUrl && init.method === 'HEAD') return redirectTo('http://169.254.169.254/');
+        throw new Error(`unexpected request to ${url}`);
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      const result = await resolveViaSearch({ companyName: 'Cisco', title: 'Business Analyst I Intern', locationText: null });
+      expect(getCount).toBe(1);
+      expect(result.tier).toBe('RESOLVED_REVIEW');
+      expect(fetchMock.mock.calls.some((call) => String(call[0]).includes('169.254'))).toBe(false);
+      vi.unstubAllGlobals();
+    });
+  });
+
+  describe('fetch bounds', () => {
+    it('makes exactly one page GET for the candidate selected for HIGH — no fetch per search result', async () => {
+      searchReturns(
+        qtsSnippetResult,
+        { url: 'https://interninsider.me/internships/qts-data-centers/process-analytics-intern-x', title: 'Process Analytics Intern at QTS Data Centers', content: 'QTS Data Centers' },
+        { url: 'https://www.linkedin.com/jobs/view/1', title: qtsSnippetResult.title, content: 'QTS Data Centers' },
+      );
+      const fetchMock = stubPages({ [QTS_WORKDAY_URL]: page({ jsonLd: { title: QTS.title } }) });
+      await resolveViaSearch(QTS);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[0]?.[0]).toBe(QTS_WORKDAY_URL);
+      vi.unstubAllGlobals();
+    });
+
+    it('stops reading an oversized body at the cap, cancels the stream, and still extracts identity from the head', async () => {
+      const head = page({ jsonLd: { title: QTS.title } });
+      const chunk = new TextEncoder().encode(head + ' '.repeat(500_000));
+      let pulls = 0;
+      let cancelled = false;
+      const stream = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          pulls += 1;
+          controller.enqueue(chunk);
+          if (pulls > 100) controller.close();
+        },
+        cancel() {
+          cancelled = true;
+        },
+      });
+      searchReturns(qtsSnippetResult);
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(stream, { status: 200 })));
+      const result = await resolveViaSearch(QTS);
+      expect(result.tier).toBe('RESOLVED_HIGH_CONFIDENCE');
+      expect(cancelled).toBe(true);
+      expect(pulls).toBeLessThan(10);
+      vi.unstubAllGlobals();
+    });
+  });
+});
+
+describe('decideHighFromConfirmation', () => {
+  it.each([
+    ['CONFIRMED', 'ACCEPTED_ATS', 'HIGH'],
+    ['CONFIRMED', 'UNKNOWN', 'HIGH'],
+    ['IDENTITY_UNAVAILABLE', 'ACCEPTED_ATS', 'REVIEW'],
+    ['IDENTITY_UNAVAILABLE', 'UNKNOWN', 'HIGH'],
+    ['IDENTITY_UNAVAILABLE', 'EMPLOYER_DOMAIN', 'HIGH'],
+    ['MISMATCH', 'ACCEPTED_ATS', 'DROP'],
+    ['MISMATCH', 'UNKNOWN', 'DROP'],
+    ['CLOSED', 'ACCEPTED_ATS', 'REVIEW'],
+    ['CLOSED', 'UNKNOWN', 'REVIEW'],
+    ['UNREACHABLE', 'ACCEPTED_ATS', 'REVIEW'],
+    ['UNREACHABLE', 'UNKNOWN', 'REVIEW'],
+  ] as const)('%s on %s → %s', (outcome, hostClass, expected) => {
+    expect(decideHighFromConfirmation(outcome, hostClass)).toBe(expected);
   });
 });
 
@@ -445,7 +1001,7 @@ describe('runOfficialPostingResolution', () => {
         },
       ],
     });
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200 }));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => DATABRICKS_PAGE }));
 
     const summary = await runOfficialPostingResolution(
       supabase,

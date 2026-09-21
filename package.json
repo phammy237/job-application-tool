@@ -21,6 +21,7 @@
     "discovery:extract-features": "vite-node scripts/discovery/extract-features.ts",
     "discovery:enrich-jobright": "vite-node scripts/discovery/enrich-jobright.ts",
     "discovery:resolve-postings": "vite-node scripts/discovery/resolve-official-postings.ts",
+    "discovery:revalidate-high": "vite-node scripts/discovery/revalidate-high-postings.ts",
     "discovery:rank": "vite-node scripts/discovery/rank.ts",
     "discovery:set-profile": "vite-node scripts/discovery/set-profile.ts"
   },

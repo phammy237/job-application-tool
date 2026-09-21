@@ -1521,3 +1521,65 @@ already idempotent and already prioritize never-processed rows first (`listJobri
 sorts `description IS NULL` rows before stale-but-already-enriched ones); catching up a backlog
 larger than one run's bound (30 enrichments, a handful of resolutions) is simply a matter of
 running the existing CLI commands again, or letting the daily schedule cycle through it.
+
+## 55. Official posting resolution — page confirmation, revalidation, and safe fetching
+
+Strategy B (search) of the official-posting resolver (`packages/discovery/src/official-posting-resolution.ts`)
+finds a candidate URL from a search snippet, then decides whether it may be stored as a Jobright row's
+`canonical_apply_url` (HIGH) or only kept as a `resolution_candidate_url` (REVIEW). Search-snippet
+evidence alone is never enough to persist HIGH — the snippet is the only title the scorer sees, so on its
+own it cannot tell "right employer, official ATS, **wrong requisition**" from the right job.
+
+**Structural HIGH confirmation.** A candidate that already clears the scorer (`official-posting-validator.ts`:
+non-aggregator host, employer domain or accepted ATS, title overlap ≥ 0.85, individual-posting URL shape)
+gets exactly one bounded page fetch before HIGH is persisted (`confirmHighCandidatePage`). Page identity
+comes from one shared extractor (`candidate-page-identity.ts`): JobPosting JSON-LD title, then `og:title`,
+then the HTML `<title>`; employer only from JSON-LD `hiringOrganization`. Generic titles ("Careers", "Jobs",
+"Search Jobs", the company name alone, an empty Workday-shell title) never count as job identity. There is no
+DOM/selector scraping. Workday's `postingAvailable` flag is the one ATS-specific signal, isolated in
+`workday-posting-signals.ts` (which also maps a Workday `/apply` URL to its detail page, in place of the
+requested URL — never an extra request — because the `/apply` shell reports `false` even for a live job).
+`decideHighFromConfirmation` is the single decision matrix:
+
+| Page check | Accepted ATS host | Employer-owned domain |
+|---|---|---|
+| Title agrees with the expected job | HIGH | HIGH |
+| No usable identity on the page | **REVIEW** | HIGH (existing behavior) |
+| Conflicting title, or a non-matching `hiringOrganization` | dropped | dropped |
+| Closed (Workday `postingAvailable: false`) | REVIEW | REVIEW |
+| Unreachable / blocked / timed out | REVIEW | REVIEW |
+
+An accepted ATS proves the platform is legitimate, not that this requisition is the expected job, so it must
+positively confirm identity; an employer-owned domain keeps its evidence-based HIGH when the page simply
+exposes nothing. "Conflicting" is a veto only (`titlesMateriallyConflict`: below 0.85 overlap in **both**
+directions, punctuation-insensitive, so a page title missing the catalog title's "Job Details / Company"
+suffix is not a conflict). **Dropped** means the URL is stored nowhere — not as HIGH and not as a REVIEW
+candidate. The REVIEW→HIGH promotion path (employer-domain REVIEW candidate + page `hiringOrganization` and
+title both confirming) is unchanged and shares the same extractor; nothing in the confirmation step can
+promote a candidate.
+
+**Revalidating stored HIGH rows.** `npm run discovery:revalidate-high -- --max 100 [--dry-run]` re-runs the
+same page confirmation against each stored `canonical_apply_url` — no Tavily, one bounded fetch per row,
+downgrades only. Confirmed rows are untouched (no write). A closed page, or an accepted-ATS page with no
+confirmable identity, becomes `RESOLVED_REVIEW` (old URL kept as `resolution_candidate_url`, canonical
+cleared, never reset to the Jobright URL); a positively different job becomes `UNRESOLVED`; an unreachable
+page only records a link failure under the existing two-strike check, so one network blip never demotes a
+stored row. Re-running is idempotent. The report prints the final host when a redirect crossed hosts. There
+is no catalog audit/event table, so the printed report and the preserved candidate URL are the trail.
+
+**Redirect-safe, bounded page fetching** (`safe-page-fetch.ts`, used by every candidate-page and liveness
+fetch). Redirects are followed manually: at most 5, every `Location` resolved against the previous URL, and
+**every destination validated before it is requested** — `isSafeExternalUrl` (http/https only, no userinfo,
+no `localhost`/`.local`/`.internal`, no loopback/RFC1918/link-local incl. 169.254.169.254/CGNAT/unspecified/
+multicast IPv4, and no `::1`, `fe80::/10`, `fc00::/7`, `::`, IPv4-mapped/6to4/NAT64 IPv6) plus a DNS lookup of
+the hostname before each hop, refusing the hop if **any** resolved address is non-public
+(`isNonPublicIpAddress`). One 10-second timeout spans the whole chain (DNS included); page bodies are read
+only up to 2 MB, then the stream is cancelled; only a `User-Agent` header is ever sent. A legitimate
+cross-host redirect (e.g. `careers.tiktok.com` → `lifeattiktok.com`) is allowed and read from its destination.
+
+*Known limitation — DNS rebinding.* The address check resolves the name separately from the connection the
+global `fetch` then makes, and `fetch` offers no hook to pin that connection to the validated address, so a
+hostile DNS server that answers differently the second time can still steer one request to a private
+address. Closing it needs a connection-level guard (an `undici` dispatcher with a validating
+`connect.lookup`, or `http(s).request` with a custom `lookup`). Not done. Also unchanged: a redirect's
+destination host is not re-scored against the employer (only fetched safely and reported).

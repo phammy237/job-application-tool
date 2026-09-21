@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { validateOfficialPostingCandidate } from './official-posting-validator';
+import { titlesMateriallyConflict, validateOfficialPostingCandidate } from './official-posting-validator';
 
 const INPUT = {
   companyName: 'Databricks',
@@ -18,15 +18,108 @@ function candidate(overrides: Partial<{ url: string; title: string; content: str
 }
 
 describe('validateOfficialPostingCandidate', () => {
-  it('6. accepts the official employer career domain (with a confirmed employer hint upstream would score EMPLOYER_DOMAIN; unhinted still passes on ACCEPTED_ATS/host-neutral grounds when strong otherwise)', () => {
+  it('6. accepts the official employer career domain at HIGH confidence once its hostname deterministically matches the company name — no classifyJobPostingHost hint needed', () => {
     const result = validateOfficialPostingCandidate(
       INPUT,
       candidate({ url: 'https://careers.databricks.com/jobs/1234' }),
     );
-    // No employer-domain hint is threaded through in V1, so this lands as UNKNOWN host -> REVIEW,
-    // never HIGH and never rejected outright — still a genuinely useful, non-aggregator candidate.
-    expect(result.tier).toBe('REVIEW');
+    // Post-hardening: matchesEmployerDomain("Databricks", "careers.databricks.com") is an exact
+    // root-label match, and every other HIGH-tier signal (company, strong title overlap,
+    // page-type) is already satisfied by this fixture — hostClass itself still reports UNKNOWN
+    // (classifyJobPostingHost is never given a hint), but employerDomainMatch now carries the
+    // evidence that gets this candidate to HIGH.
+    expect(result.tier).toBe('HIGH');
     expect(result.hostClass).toBe('UNKNOWN');
+    expect(result.employerDomainMatch).toBe(true);
+  });
+
+  it('production case: careers.cisco.com reaches HIGH for a Cisco posting with strong title overlap', () => {
+    const result = validateOfficialPostingCandidate(
+      { companyName: 'Cisco', title: 'Business Analyst I Intern', locationText: null },
+      {
+        url: 'https://careers.cisco.com/jobs/ProjectDetail/Business-Analyst-I-Intern/1234567',
+        title: 'Business Analyst I Intern - Cisco Careers',
+        content: 'Cisco is hiring a Business Analyst I Intern.',
+      },
+    );
+    expect(result.tier).toBe('HIGH');
+    expect(result.employerDomainMatch).toBe(true);
+  });
+
+  it('production case: careers.rtx.com reaches HIGH for an RTX posting with strong title overlap', () => {
+    const result = validateOfficialPostingCandidate(
+      { companyName: 'RTX', title: 'Software Engineer I', locationText: null },
+      {
+        url: 'https://careers.rtx.com/global/en/job/1234567/Software-Engineer-I',
+        title: 'Software Engineer I - RTX Careers',
+        content: 'RTX is hiring a Software Engineer I.',
+      },
+    );
+    expect(result.tier).toBe('HIGH');
+    expect(result.employerDomainMatch).toBe(true);
+  });
+
+  it('production case: careers.manulife.com reaches HIGH for a Manulife posting with strong title overlap', () => {
+    const result = validateOfficialPostingCandidate(
+      { companyName: 'Manulife', title: 'Data Analyst', locationText: null },
+      {
+        url: 'https://careers.manulife.com/us/en/job/1234567/Data-Analyst',
+        title: 'Data Analyst - Manulife Careers',
+        content: 'Manulife is hiring a Data Analyst.',
+      },
+    );
+    expect(result.tier).toBe('HIGH');
+    expect(result.employerDomainMatch).toBe(true);
+  });
+
+  it('an employer-looking domain with only weak title evidence stays REVIEW, never promoted just for matching the domain', () => {
+    const result = validateOfficialPostingCandidate(
+      { companyName: 'Cisco', title: 'Business Analyst I Intern', locationText: null },
+      {
+        url: 'https://careers.cisco.com/jobs/ProjectDetail/Business-Analyst-I-Intern/1234567',
+        // Weaker title overlap than the HIGH case above (missing "Intern") — clears the REVIEW
+        // bar (company confirmed, most tokens overlap) but not the stricter HIGH bar.
+        title: 'Business Analyst I - Cisco Careers',
+        content: 'Cisco is hiring for a Business Analyst I role.',
+      },
+    );
+    expect(result.tier).toBe('REVIEW');
+    expect(result.employerDomainMatch).toBe(true);
+  });
+
+  it('employer-domain-match evidence never promotes a third-party mirror, even with a matching title, because the domain itself never matches the company', () => {
+    const bebee = validateOfficialPostingCandidate(
+      { companyName: 'Cisco', title: 'Business Analyst I Intern', locationText: null },
+      {
+        url: 'https://www.bebee.com/job/cisco-business-analyst-i-intern',
+        title: 'Business Analyst I Intern - Cisco',
+        content: 'Cisco is hiring a Business Analyst I Intern.',
+      },
+    );
+    expect(bebee.tier).toBe('UNRESOLVED');
+    expect(bebee.hostClass).toBe('REJECTED_AGGREGATOR');
+
+    const university = validateOfficialPostingCandidate(
+      { companyName: 'Cisco', title: 'Business Analyst I Intern', locationText: null },
+      {
+        url: 'https://careerservices.stjohns.edu/jobs/cisco-business-analyst-i-intern',
+        title: 'Business Analyst I Intern - Cisco',
+        content: 'Cisco is hiring a Business Analyst I Intern.',
+      },
+    );
+    expect(university.tier).toBe('UNRESOLVED');
+    expect(university.hostClass).toBe('REJECTED_AGGREGATOR');
+
+    const prosple = validateOfficialPostingCandidate(
+      { companyName: 'Cisco', title: 'Business Analyst I Intern', locationText: null },
+      {
+        url: 'https://www.prosple.com/graduate-employers/cisco/jobs/business-analyst-i-intern',
+        title: 'Business Analyst I Intern - Cisco',
+        content: 'Cisco is hiring a Business Analyst I Intern.',
+      },
+    );
+    expect(prosple.tier).toBe('UNRESOLVED');
+    expect(prosple.employerDomainMatch).toBe(false);
   });
 
   it('7. a Greenhouse result is accepted at HIGH confidence when company/title/location all line up', () => {
@@ -256,5 +349,46 @@ describe('validateOfficialPostingCandidate', () => {
       candidate({ content: 'Databricks is hiring a remote Product Management Intern for Summer 2027.' }),
     );
     expect(result.tier).toBe('HIGH');
+  });
+});
+
+describe('titlesMateriallyConflict', () => {
+  it('flags the real QTS shape: same employer, different requisition title', () => {
+    expect(
+      titlesMateriallyConflict(
+        'Summer 2027 Internship: Process Analytics - Technology Delivery Team',
+        'Summer 2026 Internship: IT Asset Management',
+      ),
+    ).toBe(true);
+  });
+
+  it('flags a sibling role (Product Design vs Product Manager)', () => {
+    expect(titlesMateriallyConflict('Summer 2027: Product Manager Intern', 'Summer 2027: Product Design Intern')).toBe(true);
+  });
+
+  it('does not flag identical or reordered titles', () => {
+    expect(titlesMateriallyConflict('Product Manager Intern - Summer 2027', 'Summer 2027 Product Manager Intern')).toBe(false);
+  });
+
+  it('does not flag a page title that merely lacks the catalog title\'s boilerplate suffix', () => {
+    expect(
+      titlesMateriallyConflict('IT Analyst Intern- Minnesota Job Details / Boston Scientific', 'IT Analyst Intern- Minnesota'),
+    ).toBe(false);
+  });
+
+  it('does not flag a page title that adds boilerplate around the expected title', () => {
+    expect(titlesMateriallyConflict('Data Science Intern', 'Data Science Intern | Careers at Acme')).toBe(false);
+  });
+});
+
+describe('titlesMateriallyConflict — punctuation', () => {
+  it('ignores parentheses, colons and pipes that the shared tokenizer does not split on', () => {
+    expect(titlesMateriallyConflict('Product Management Intern (Summer 2027)', 'Product Management Intern - Summer 2027')).toBe(false);
+    expect(
+      titlesMateriallyConflict(
+        'Summer 2027 Internship: Process Analytics - Technology Delivery Team',
+        'Summer 2027 Internship - Process Analytics - Technology Delivery Team',
+      ),
+    ).toBe(false);
   });
 });

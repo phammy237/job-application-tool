@@ -559,6 +559,8 @@ export async function recordOfficialPostingResolutionAttempt(
 
 export interface OfficialPostingRevalidationCandidate {
   jobCatalogId: string;
+  companyName: string;
+  title: string;
   canonicalApplyUrl: string;
   linkCheckFailures: number;
 }
@@ -580,6 +582,8 @@ export async function listResolvedPostingsForRevalidation(
 
   const rows: {
     id: string;
+    company_name: string;
+    title: string;
     canonical_apply_url: string | null;
     resolution_last_attempt_at: string | null;
     resolution_link_check_failures: number;
@@ -587,7 +591,9 @@ export async function listResolvedPostingsForRevalidation(
   for (const idsChunk of chunk(jobrightSourceIds, EXISTING_LOOKUP_CHUNK_SIZE)) {
     const { data, error } = await supabase
       .from('job_catalog')
-      .select('id, canonical_apply_url, resolution_last_attempt_at, resolution_link_check_failures')
+      .select(
+        'id, company_name, title, canonical_apply_url, resolution_last_attempt_at, resolution_link_check_failures',
+      )
       .eq('status', 'ACTIVE')
       .eq('resolution_status', 'RESOLVED_HIGH_CONFIDENCE')
       .eq('resolution_strategy', 'SEARCH')
@@ -606,9 +612,51 @@ export async function listResolvedPostingsForRevalidation(
     .slice(0, options.maxCount)
     .map((row) => ({
       jobCatalogId: row.id,
+      companyName: row.company_name,
+      title: row.title,
       canonicalApplyUrl: row.canonical_apply_url as string,
       linkCheckFailures: row.resolution_link_check_failures,
     }));
+}
+
+export type OfficialPostingRevalidationDemotion =
+  | { to: 'RESOLVED_REVIEW'; candidateUrl: string; confidence: number }
+  | { to: 'UNRESOLVED' };
+
+/**
+ * Demotes a RESOLVED_HIGH_CONFIDENCE row whose stored `canonical_apply_url` failed page
+ * revalidation. Strictly a downgrade, never a promotion: the update is guarded on the row still
+ * being RESOLVED_HIGH_CONFIDENCE (so a concurrent change or a re-run is a no-op), and it always
+ * clears `canonical_apply_url` back to null (never to the Jobright source URL). REVIEW keeps the
+ * old URL as `resolution_candidate_url` — that is the only audit trail this schema has for it; an
+ * UNRESOLVED demotion (the page positively identified a different job) keeps nothing, matching the
+ * resolver's own MISMATCH handling. `resolution_last_attempt_at` is bumped so the ordinary
+ * retry-window cost control applies; `resolution_attempt_count` is not (this isn't a search).
+ */
+export async function recordOfficialPostingRevalidationDemotion(
+  supabase: CareerOsSupabaseClient,
+  jobCatalogId: string,
+  demotion: OfficialPostingRevalidationDemotion,
+  now: Date = new Date(),
+): Promise<void> {
+  const payload: Database['public']['Tables']['job_catalog']['Update'] = {
+    canonical_apply_url: null,
+    resolution_link_check_failures: 0,
+    resolution_last_attempt_at: now.toISOString(),
+    ...(demotion.to === 'RESOLVED_REVIEW'
+      ? {
+          resolution_status: 'RESOLVED_REVIEW',
+          resolution_candidate_url: demotion.candidateUrl,
+          resolution_confidence: demotion.confidence,
+        }
+      : { resolution_status: 'UNRESOLVED', resolution_candidate_url: null, resolution_confidence: 0 }),
+  };
+  const { error } = await supabase
+    .from('job_catalog')
+    .update(payload)
+    .eq('id', jobCatalogId)
+    .eq('resolution_status', 'RESOLVED_HIGH_CONFIDENCE');
+  assertNoError(error, 'recordOfficialPostingRevalidationDemotion');
 }
 
 const LINK_CHECK_FAILURE_THRESHOLD = 2;

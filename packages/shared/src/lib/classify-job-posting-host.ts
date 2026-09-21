@@ -50,8 +50,42 @@ const ACCEPTED_ATS_BASE_DOMAINS = [
  * preferred apply destination (docs task §2 "Reject as canonical destinations"). `jobright.ai` is
  * here deliberately — Jobright is the discovery source, never the apply destination, which is the
  * entire point of D7.1. Also matched by suffix, for the same reason as above.
+ *
+ * `bebee.com`/`supportfinity.com`/`prosple.com`/`accaglobal.com` added after a live production
+ * resolver run surfaced them as REVIEW-tier candidates that are, in fact, third-party reposts of
+ * someone else's posting — never the target employer's own domain, so they'd never pass
+ * `matchesEmployerDomain` either, but an explicit reject is more direct than relying solely on
+ * that omission, and gives a clearer diagnostic reason. Extending this existing, maintained list
+ * — not a new, separate hardcoded set — per this repo's own established mechanism for this kind
+ * of domain.
  */
-const REJECTED_AGGREGATOR_BASE_DOMAINS = ['jobright.ai', 'linkedin.com', 'indeed.com', 'glassdoor.com', 'ziprecruiter.com', 'simplify.jobs'];
+const REJECTED_AGGREGATOR_BASE_DOMAINS = [
+  'jobright.ai',
+  'linkedin.com',
+  'indeed.com',
+  'glassdoor.com',
+  'ziprecruiter.com',
+  'simplify.jobs',
+  'bebee.com',
+  'supportfinity.com',
+  'prosple.com',
+  'accaglobal.com',
+];
+
+/**
+ * A genuinely pattern-based rejection, rather than one more hardcoded domain: `.edu` career-
+ * services portals repost postings for many unrelated outside employers (a live example:
+ * `careerservices.stjohns.edu` carrying a third-party company's job) — there is no useful sense
+ * in which any specific university's domain is ever the *target employer's* own apply
+ * destination in this product's context (job_catalog employers are companies, not the
+ * universities whose career centers happen to list their openings). Generalizing by TLD avoids
+ * hardcoding every individual university's domain, the one category here where that's both safe
+ * and tractable (unlike "professional job board," which has no comparably safe structural
+ * signal and stays a hardcoded, reviewed list above).
+ */
+function isUniversityCareerPortal(hostname: string): boolean {
+  return hostname === 'edu' || hostname.endsWith('.edu');
+}
 
 /** Exported so callers that need a host-shape decision *finer* than the four-way classification
  * above (e.g. the validator's per-ATS page-type rules for iCIMS/Taleo) can reuse the exact same
@@ -79,6 +113,7 @@ export function classifyJobPostingHost(
   if (!domain) return 'UNKNOWN';
 
   if (matchesRegistrableSuffix(domain, REJECTED_AGGREGATOR_BASE_DOMAINS)) return 'REJECTED_AGGREGATOR';
+  if (isUniversityCareerPortal(domain)) return 'REJECTED_AGGREGATOR';
   if (matchesRegistrableSuffix(domain, ACCEPTED_ATS_BASE_DOMAINS)) return 'ACCEPTED_ATS';
   if (employerDomainHint && matchesRegistrableSuffix(domain, [employerDomainHint])) {
     return 'EMPLOYER_DOMAIN';
