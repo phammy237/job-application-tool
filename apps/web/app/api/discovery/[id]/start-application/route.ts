@@ -7,10 +7,10 @@ import {
   startApplicationFromCatalogJob,
 } from '@career-os/database';
 import {
-  classifyJobPostingHost,
   computeJobSnapshotFingerprint,
   discoveryHandoffEventMetadataSchema,
   sanitizeJobSnapshotInput,
+  selectCanonicalHandoffUrl,
   uuidSchema,
   type JobSnapshotSanitizableInput,
 } from '@career-os/shared';
@@ -127,18 +127,15 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   });
 
   // Bug fix (post-D7.1) — `job.canonicalApplyUrl` is raw catalog data, not a confirmed apply
-  // destination (the Discover UI's own selectJobApplyActions never trusts it un-classified
-  // either). Without this check, an unresolved/REVIEW/UNRESOLVED Jobright row whose
+  // destination. Without this, an unresolved/REVIEW/UNRESOLVED Jobright row whose
   // canonical_apply_url still (or again) holds the Jobright detail URL would get snapshotted onto
   // the application as its "canonical employer posting" — exactly the bug this endpoint must not
-  // reproduce. Only ever nulls out a known-rejected aggregator host; every other value (including
-  // an unlisted-but-legitimate employer ATS domain) still passes through unchanged, so this stays
-  // narrower than the Discover UI's stricter EMPLOYER_DOMAIN/ACCEPTED_ATS allowlist.
-  const canonicalUrlHostClass = job.canonicalApplyUrl
-    ? classifyJobPostingHost(job.canonicalApplyUrl)
-    : 'UNKNOWN';
-  const canonicalUrl =
-    canonicalUrlHostClass === 'REJECTED_AGGREGATOR' ? null : job.canonicalApplyUrl;
+  // reproduce. `selectCanonicalHandoffUrl` (packages/shared, next to the Discover UI's own
+  // `selectJobApplyActions`) is the one named place this handoff-specific precedence decision
+  // lives, so this route and the Discover UI can never silently drift apart on what counts as a
+  // confirmed-bad URL — see that function's own doc comment for why it's deliberately narrower
+  // than `selectJobApplyActions`'s stricter EMPLOYER_DOMAIN/ACCEPTED_ATS allowlist.
+  const canonicalUrl = selectCanonicalHandoffUrl(job.canonicalApplyUrl);
 
   try {
     const result = await startApplicationFromCatalogJob(admin, user.id, {

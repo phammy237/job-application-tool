@@ -1,5 +1,6 @@
 import { jobExtractionPayloadSchema, type JobExtractionPayload } from '@career-os/shared';
 import type { JobPageAdapter } from './adapter';
+import { extractApplyUrl } from './apply-url';
 
 interface JsonLdJobPosting {
   title?: string;
@@ -12,6 +13,9 @@ interface JsonLdJobPosting {
   skills?: string | string[];
   qualifications?: string | string[];
   responsibilities?: string | string[];
+  /** Not a standardized "apply URL" per schema.org — see apply-url.ts's doc comment for how this
+   * is used as a heuristic candidate, never trusted blindly. */
+  url?: string;
 }
 
 function stripHtml(value: string): string {
@@ -175,6 +179,10 @@ export const GenericHtmlAdapter: JobPageAdapter = {
       getMetaContent(document, 'og:description') ||
       null;
 
+    const sourceUrl = document.location?.href || null;
+    const pageUrl = document.location?.href ?? '';
+    const applyUrl = extractApplyUrl(document, pageUrl, sourceUrl, jsonLd?.url);
+
     const payload = {
       company: company?.trim() || null,
       title: title?.trim() || null,
@@ -191,7 +199,8 @@ export const GenericHtmlAdapter: JobPageAdapter = {
       ]),
       preferredQualifications: dedupe(sections.preferredQualifications),
       skills: dedupe([...toStringArray(jsonLd?.skills), ...sections.skills]),
-      sourceUrl: document.location?.href || null,
+      sourceUrl,
+      applyUrl,
       platformType: 'GENERIC' as const,
       rawExtraction: jsonLd ? { jsonLd } : null,
     };

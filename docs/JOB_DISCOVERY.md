@@ -1460,3 +1460,64 @@ enough that this becomes a real cost or duration problem, the future fix is per-
 incremental recomputation (e.g. only re-score users whose preferences changed, or only re-score
 jobs new/changed since the last run) — flagged as a future scaling concern only, not implemented
 now.
+
+## 54. Quality-gate hardening (post-D7.1 audit)
+
+An architecture audit ("does a catalog job ever reach `/discover` before it's fully, correctly
+processed") found three real gaps against this document's own stated invariants — all fixed as
+small, additive changes, no new tables, no new workflow engine:
+
+**Closed/merged jobs never became invisible.** `list_own_discovery_feed` (§29, §34) inner-joins
+`job_catalog` → `job_catalog_features` → `user_job_match_scores` with no `job_catalog.status`
+filter at all. `upsertUserJobMatchScoresBatch` only ever inserts/updates a score row for a
+currently-`ACTIVE` job (mirroring `listActiveJobsWithFeatures`'s own `status = 'ACTIVE'` read) —
+it never deletes one for a job that has since left that set. Net effect: a job that transitions to
+`POSSIBLY_CLOSED`/`CLOSED` (§9 reconciliation) kept its last-computed score row forever, and the
+feed had nothing to exclude it with — the mirror image of §53's "newly-synced jobs never become
+visible" gap, on the opposite end of a job's lifecycle. (`MERGED` rows were already safe —
+`mergeJobCatalogRowIntoAtsMatch` explicitly deletes the Jobright row's own match scores as part of
+merging — this is the one case the gap didn't reach.) **Fix** (migration `0043`): the feed function
+now also filters `jc.status = 'ACTIVE'`, the exact predicate scoring already uses to decide whether
+to keep refreshing a job — applied symmetrically to reading it. Deliberately excludes
+`POSSIBLY_CLOSED` too, not just `CLOSED`: a job Career OS already suspects may be closed should not
+be freshly recommended as a live opportunity while that uncertainty stands. Covered by
+`supabase/tests/database/0040_discovery_feed_active_only.test.sql`.
+
+**Feature extraction lacked the failure isolation every other stage already has.**
+`runDiscoverySync`, `runJobrightEnrichment`, and `runOfficialPostingResolution` each isolate one
+item's failure from the rest (§10, and each stage's own module doc). `extractFeaturesForStaleJobs`
+(§29, `packages/discovery/src/ranking/extract-features.ts`) did not — a single candidate whose
+title/description tripped an unexpected exception inside `extractJobCatalogFeatures` threw out of
+a plain `.map()`, aborting the *entire* batch. Since `scripts/discovery/rank.ts` always runs
+feature extraction before re-scoring every user (§32), one bad candidate would have silently
+blocked the whole day's ranking recompute for *every* user — reintroducing §53's gap by a different
+path. **Fix**: each candidate's extraction is now wrapped individually; a failure is skipped
+(its existing `job_catalog_features` row, if any, is left untouched, never persisted
+half-computed) and reported in the summary's new `failed`/`failures` fields, which both CLI
+scripts (`discovery:extract-features`, `discovery:rank`) now log. Covered by
+`packages/discovery/src/ranking/extract-features.test.ts`.
+
+**The Discovery → Application handoff had its own, undocumented URL-selection logic.** The
+card/detail page's `selectJobApplyActions` (§6 above) and
+`POST /api/discovery/[id]/start-application`'s canonical-URL decision are deliberately *different*
+questions (a wide-audience "should this be a trusted primary CTA" allowlist vs. a single user's
+own "what should this tracked application record" blocklist) — but the handoff route expressed its
+answer as three lines of inline `classifyJobPostingHost(...) === 'REJECTED_AGGREGATOR' ? ... : ...`
+rather than a named function, risking silent drift between the two decisions over time with no
+single place documenting why they're allowed to differ. **Fix**: extracted, unchanged in behavior,
+into `selectCanonicalHandoffUrl` next to `selectJobApplyActions` in
+`packages/shared/src/lib/select-job-apply-actions.ts`, with a doc comment cross-referencing its
+sibling and explaining the intentional narrower-vs-wider difference. The route now calls it by
+name instead of reimplementing it. Covered by `select-job-apply-actions.test.ts`; the existing
+`start-application/route.test.ts` assertions pass unchanged (behavior-preserving refactor).
+
+**Explicitly not changed by this audit**: no separate description-fetch was added for a resolved
+Jobright job's official employer URL — `jobright-enrichment.ts` already obtains the richest
+reliable description directly from Jobright's own detail-page JSON-LD (§9-10 there), independently
+of URL resolution (§ above), and duplicating that with a second fetch of the *resolved* URL would
+be a second parser for no confirmed benefit. Backfilling existing pre-D7.1 Jobright rows needs no
+new tooling either — `discovery:enrich-jobright`/`discovery:resolve-postings`/`discovery:rank` are
+already idempotent and already prioritize never-processed rows first (`listJobrightEnrichmentCandidates`
+sorts `description IS NULL` rows before stale-but-already-enriched ones); catching up a backlog
+larger than one run's bound (30 enrichments, a handful of resolutions) is simply a matter of
+running the existing CLI commands again, or letting the daily schedule cycle through it.

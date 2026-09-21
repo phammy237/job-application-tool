@@ -14,6 +14,12 @@ async function main(): Promise<void> {
   const summary = await extractFeaturesForStaleJobs(supabase);
   console.log(`Candidates needing (re)computation: ${summary.candidatesFound}`);
   console.log(`Features extracted/updated: ${summary.extracted}`);
+  if (summary.failed > 0) {
+    console.error(`Failed (isolated, other candidates unaffected): ${summary.failed}`);
+    for (const failure of summary.failures) {
+      console.error(`  - ${failure.jobCatalogId}: ${failure.reason}`);
+    }
+  }
 }
 
 main().catch((error) => {

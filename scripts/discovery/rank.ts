@@ -26,6 +26,14 @@ async function main(): Promise<void> {
   console.log(
     `Feature extraction: ${featureSummary.candidatesFound} candidate(s), ${featureSummary.extracted} (re)computed.`,
   );
+  if (featureSummary.failed > 0) {
+    console.error(
+      `Feature extraction: ${featureSummary.failed} candidate(s) failed (isolated, ranking continues):`,
+    );
+    for (const failure of featureSummary.failures) {
+      console.error(`  - ${failure.jobCatalogId}: ${failure.reason}`);
+    }
+  }
 
   const userIds = userId
     ? [userId]

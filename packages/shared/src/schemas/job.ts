@@ -28,6 +28,10 @@ export const jobSchema = z.object({
   preferredQualifications: z.array(z.string()).default([]),
   skills: z.array(z.string()).default([]),
   sourceUrl: z.string().url().nullable(),
+  /** The direct official application destination (e.g. an ATS apply link), distinct from
+   * `sourceUrl` (the job-description page itself) — see docs/DATA_MODEL.md "jobs". Absent
+   * rather than guessed when no reliable Apply link/JSON-LD was found on the page. */
+  applyUrl: z.string().url().nullable(),
   platformType: jobPlatformTypeSchema.nullable(),
   rawExtraction: z.record(z.unknown()).nullable(),
   createdAt: isoDateTimeSchema,

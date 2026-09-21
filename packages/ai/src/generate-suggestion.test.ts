@@ -48,6 +48,7 @@ const JOB: Job = {
   preferredQualifications: [],
   skills: ['TypeScript', 'Postgres'],
   sourceUrl: null,
+  applyUrl: null,
   platformType: null,
   rawExtraction: null,
   createdAt: '2026-01-01T00:00:00.000Z',

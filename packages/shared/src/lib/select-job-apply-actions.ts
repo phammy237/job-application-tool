@@ -48,6 +48,28 @@ export function buildOfficialPostingSearchUrl(companyName: string, title: string
   return `https://www.google.com/search?q=${encodeURIComponent(query)}`;
 }
 
+/**
+ * The Discovery → Application handoff's (D6, `POST /api/discovery/[id]/start-application`) own
+ * canonical-URL decision — deliberately a *different*, narrower question from
+ * `selectJobApplyActions` above, not a duplicate of it: that function decides whether to show a
+ * trusted "Apply on employer site" button to a wide audience (an allowlist — only
+ * `EMPLOYER_DOMAIN`/`ACCEPTED_ATS` qualify, everything else falls back to a search action, since
+ * showing a wrong destination as a primary CTA is worse than showing no direct link at all). This
+ * function instead decides what URL a user's own tracked application record should snapshot for
+ * later reference — an already-narrower audience (one user, about a job they explicitly chose to
+ * track) — so it only needs to reject a confirmed-bad value (`REJECTED_AGGREGATOR`, e.g. an
+ * unresolved Jobright detail-page URL that would otherwise get snapshotted as if it were the
+ * employer's own posting) rather than requiring an allowlisted host. An unlisted-but-legitimate
+ * employer ATS domain (`UNKNOWN` host class) still passes through here, unlike in
+ * `selectJobApplyActions`. Both functions read only `canonicalApplyUrl`'s own host classification,
+ * never `resolution_status`/provenance — same reasoning as `selectJobApplyActions`'s own doc
+ * comment.
+ */
+export function selectCanonicalHandoffUrl(canonicalApplyUrl: string | null): string | null {
+  if (!canonicalApplyUrl) return null;
+  return classifyJobPostingHost(canonicalApplyUrl) === 'REJECTED_AGGREGATOR' ? null : canonicalApplyUrl;
+}
+
 export function selectJobApplyActions(job: JobApplyActionsInput): JobApplyActions {
   const canonicalUrlIsSafe = job.canonicalApplyUrl ? isSafeExternalUrl(job.canonicalApplyUrl) : false;
   const hostClass =

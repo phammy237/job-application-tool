@@ -53,14 +53,43 @@ async function authorizedFetch(path: string, init: RequestInit): Promise<Respons
  * Persists the extraction (docs/EXTENSION_DESIGN.md §3 runtime flow) — no AI ranking, no field
  * persistence, matching Phase 2's boundary exactly (the backend route enforces this too; see
  * apps/web/app/api/jobs/analyze/route.ts).
+ *
+ * Distinguishes three failure shapes the popup previously collapsed into one generic message —
+ * useful for telling "the token is stale/wrong-environment" apart from "the API is unreachable"
+ * apart from "the request reached the server and it rejected it" without exposing the token
+ * itself in any of them:
+ *   - the fetch call itself throwing (network unreachable, DNS failure, CORS rejection — most
+ *     commonly a dev/prod environment mismatch, e.g. a production-mode build talking to
+ *     apply.mypham.space while the token was minted by a local dev server)
+ *   - a 401 (the bearer token was rejected server-side — expired, revoked, or minted by a
+ *     different environment's database than the one this build's API_BASE_URL points at)
+ *   - any other non-2xx status (the request reached the server and its own logic rejected it)
  */
 export async function analyzeJob(
   job: JobExtractionPayload,
 ): Promise<{ jobId: string; created: boolean }> {
-  const res = await authorizedFetch('/api/jobs/analyze', {
-    method: 'POST',
-    body: JSON.stringify(job),
-  });
+  let res: Response;
+  try {
+    res = await authorizedFetch('/api/jobs/analyze', {
+      method: 'POST',
+      body: JSON.stringify(job),
+    });
+  } catch (error) {
+    if (error instanceof NotConnectedError) throw error;
+    throw new Error(
+      `Could not reach the Career OS API at ${API_BASE_URL} — check your network connection ` +
+        `and that the server is running there.`,
+      { cause: error },
+    );
+  }
+
+  if (res.status === 401) {
+    throw new Error(
+      'Authentication was rejected (401) — reconnect the extension from Career OS Settings. ' +
+        'This also happens when the extension build points at a different environment than the ' +
+        'one that issued its stored token.',
+    );
+  }
   if (!res.ok) {
     throw new Error(`Failed to save the analyzed job (status ${res.status}).`);
   }

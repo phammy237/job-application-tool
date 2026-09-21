@@ -5,6 +5,24 @@ import { setStoredAuth } from '../lib/storage';
 import type { ExtensionMessage } from '../types/chrome-messages';
 
 /**
+ * `error.message` from a chrome.scripting/chrome.tabs failure (e.g. "Cannot access a chrome://
+ * URL", "The extensions gallery cannot be scripted", "Could not establish connection. Receiving
+ * end does not exist.") is genuinely useful for telling injection-failure apart from every other
+ * stage of the analyze/autofill pipeline — but it's a browser-internal string, never anything
+ * derived from page content or the user's bearer token, so surfacing it in development carries no
+ * secret-exposure risk. Production still gets the plain, stage-only message: a real user hitting
+ * "Cannot access a chrome:// URL" doesn't need the raw API name, and collapsing it there matches
+ * this repo's existing posture of not leaking internals to end users. `import.meta.env.DEV` is
+ * Vite's own build-time flag (same mechanism api-client.ts already uses for VITE_CAREER_OS_API_URL),
+ * so this entire branch is dead code eliminated from a production build, not a runtime toggle.
+ */
+function describeError(stageMessage: string, error: unknown): string {
+  if (!import.meta.env.DEV) return stageMessage;
+  const detail = error instanceof Error ? error.message : String(error);
+  return `${stageMessage} (${detail})`;
+}
+
+/**
  * Popup -> background -> content script relay (docs/EXTENSION_DESIGN.md §3 runtime flow). The
  * background worker is the only place chrome.scripting.executeScript is called — this is what
  * makes "content script only runs after an explicit user action" a fact enforced by which code
@@ -37,7 +55,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
           sendResponse({
             type: 'ANALYZE_JOB_ERROR',
             requestId: analyzeRequest.requestId,
-            message: 'Could not analyze this page.',
+            message: describeError('Could not analyze this page.', error),
           });
         });
     });
@@ -64,7 +82,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
           sendResponse({
             type: 'AUTOFILL_ERROR',
             requestId: fillRequest.requestId,
-            message: 'Could not autofill this page.',
+            message: describeError('Could not autofill this page.', error),
           });
         });
     });

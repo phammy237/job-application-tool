@@ -310,7 +310,8 @@ because it captures the DOM at the time that user's extension ran.
 | `qualifications`           | `text[] not null default '{}'`                              |                                                                   |
 | `preferred_qualifications` | `text[] not null default '{}'`                              |                                                                   |
 | `skills`                   | `text[] not null default '{}'`                              |                                                                   |
-| `source_url`               | `text`                                                      |                                                                   |
+| `source_url`               | `text`                                                      | the job-description page's own URL                                |
+| `apply_url`                | `text`                                                      | direct official application destination, when reliably detected — distinct from `source_url`; absent (not guessed) otherwise |
 | `platform_type`            | `text`                                                      | `GENERIC, GREENHOUSE, LEVER, WORKDAY`                             |
 | `raw_extraction`           | `jsonb`                                                     | full adapter output, for debugging/re-ranking without re-scraping |
 

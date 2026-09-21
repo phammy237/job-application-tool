@@ -37,6 +37,10 @@ describe('GenericHtmlAdapter', () => {
     expect(result.preferredQualifications).toEqual(['Experience with Kubernetes']);
     expect(result.sourceUrl).toBe('https://acme.example/jobs/1');
     expect(result.platformType).toBe('GENERIC');
+
+    // Apply URL is a distinct concept from sourceUrl (page provenance) — both must survive.
+    expect(result.applyUrl).toBe('https://acme.example/careers/apply/backend-engineer/8127182');
+    expect(result.sourceUrl).not.toBe(result.applyUrl);
   });
 
   it('falls back to <meta> tags when no JobPosting JSON-LD is present', () => {
@@ -47,9 +51,11 @@ describe('GenericHtmlAdapter', () => {
     expect(result.company).toBe('Globex Corporation');
     expect(result.description).toBe('Join our frontend team building delightful UIs.');
     expect(result.qualifications).toEqual(['3+ years with React', 'Comfortable with TypeScript']);
+    // No JSON-LD url and no Apply control on this fixture — absent, not guessed.
+    expect(result.applyUrl).toBeNull();
   });
 
-  it('falls back to heading + list heuristics when neither JSON-LD nor meta tags are present', () => {
+  it('falls back to heading + list heuristics when neither JSON-LD nor meta tags are present, and finds the semantic Apply link while ignoring the nav decoy', () => {
     const doc = loadFixture('heuristic-fallback.html', 'https://smallco.example/jobs/3');
     const result = GenericHtmlAdapter.extract(doc);
 
@@ -61,6 +67,7 @@ describe('GenericHtmlAdapter', () => {
     ]);
     expect(result.qualifications).toEqual(['7+ years of product design experience']);
     expect(result.preferredQualifications).toEqual(['Experience in B2B SaaS']);
+    expect(result.applyUrl).toBe('https://smallco.example/apply/staff-product-designer/42');
   });
 
   it('produces a schema-valid payload even with nothing extractable', () => {
@@ -73,5 +80,6 @@ describe('GenericHtmlAdapter', () => {
     expect(result.company).toBeNull();
     expect(result.responsibilities).toEqual([]);
     expect(result.sourceUrl).toBe('https://empty.example/');
+    expect(result.applyUrl).toBeNull();
   });
 });

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buildOfficialPostingSearchUrl, selectJobApplyActions } from './select-job-apply-actions';
+import {
+  buildOfficialPostingSearchUrl,
+  selectCanonicalHandoffUrl,
+  selectJobApplyActions,
+} from './select-job-apply-actions';
 
 const BASE = {
   companyName: 'Acme Corp',
@@ -68,6 +72,41 @@ describe('selectJobApplyActions', () => {
     });
     expect(resolved.primary).not.toBeNull();
     expect(resolved.fallbackSearchUrl).toBeNull();
+  });
+});
+
+describe('selectCanonicalHandoffUrl', () => {
+  it('returns null for a rejected-aggregator host (e.g. an unresolved Jobright detail URL)', () => {
+    expect(selectCanonicalHandoffUrl('https://jobright.ai/jobs/info/abc123')).toBeNull();
+  });
+
+  it('returns null when there is no canonicalApplyUrl at all', () => {
+    expect(selectCanonicalHandoffUrl(null)).toBeNull();
+  });
+
+  it('passes through an accepted ATS host, same as selectJobApplyActions', () => {
+    expect(selectCanonicalHandoffUrl('https://boards.greenhouse.io/acme/jobs/1234')).toBe(
+      'https://boards.greenhouse.io/acme/jobs/1234',
+    );
+  });
+
+  it('unlike selectJobApplyActions, passes through an unlisted-but-not-rejected host (a legitimate employer domain not on the ACCEPTED_ATS allowlist, classified UNKNOWN)', () => {
+    const unlistedEmployerUrl = 'https://careers.some-smaller-employer.example/jobs/42';
+    expect(selectCanonicalHandoffUrl(unlistedEmployerUrl)).toBe(unlistedEmployerUrl);
+
+    // Confirms this really is a deliberate divergence, not an oversight: the same UNKNOWN-host
+    // URL does NOT qualify as selectJobApplyActions' primary action (no EMPLOYER_DOMAIN hint is
+    // ever passed anywhere in this codebase today, so this URL classifies UNKNOWN, not
+    // EMPLOYER_DOMAIN) — the Discover UI falls back to search instead.
+    const actions = selectJobApplyActions({
+      companyName: 'Some Smaller Employer',
+      title: 'Engineer',
+      sourceUrl: null,
+      applyUrl: unlistedEmployerUrl,
+      canonicalApplyUrl: unlistedEmployerUrl,
+    });
+    expect(actions.primary).toBeNull();
+    expect(actions.fallbackSearchUrl).not.toBeNull();
   });
 });
 

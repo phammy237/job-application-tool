@@ -19,6 +19,7 @@ function rowToJob(row: Row): Job {
     preferredQualifications: row.preferred_qualifications ?? [],
     skills: row.skills ?? [],
     sourceUrl: row.source_url,
+    applyUrl: row.apply_url,
     platformType: row.platform_type,
     rawExtraction: (row.raw_extraction as Record<string, unknown> | null) ?? null,
     createdAt: row.created_at,
@@ -104,6 +105,7 @@ export async function createOwnJobFromExtraction(
       preferred_qualifications: input.preferredQualifications,
       skills: input.skills,
       source_url: input.sourceUrl,
+      apply_url: input.applyUrl,
       platform_type: input.platformType,
       raw_extraction: input.rawExtraction as Json | null,
     })
@@ -132,6 +134,7 @@ export async function updateOwnJobFromExtraction(
       preferred_qualifications: input.preferredQualifications,
       skills: input.skills,
       source_url: input.sourceUrl,
+      apply_url: input.applyUrl,
       platform_type: input.platformType,
       raw_extraction: input.rawExtraction as Json | null,
     })

@@ -14,8 +14,14 @@ spec.
 ## Development
 
 ```
-npm run dev --workspace=@career-os/extension     # Vite dev server with HMR
-npm run build --workspace=@career-os/extension   # production build to dist/
+npm run dev --workspace=@career-os/extension       # Vite dev server with HMR
+npm run build --workspace=@career-os/extension     # PRODUCTION build to dist/ — always
+                                                    # points at https://apply.mypham.space,
+                                                    # regardless of any local .env file (see
+                                                    # scripts/verify-production-build.mjs)
+npm run build:dev --workspace=@career-os/extension # DEVELOPMENT build to dist/ — loads
+                                                    # .env.development.local, so it points at
+                                                    # VITE_CAREER_OS_API_URL instead
 ```
 
 Load `apps/extension/dist` as an unpacked extension via `chrome://extensions` (enable Developer
@@ -24,6 +30,15 @@ so the extension ID stays stable across rebuilds — it must match
 `NEXT_PUBLIC_EXTENSION_ID` in `apps/web/.env.local` for the `/extension-connect` handoff to
 reach the right extension.
 
-`src/lib/api-client.ts` defaults to `https://apply.mypham.space`; override with
-`VITE_CAREER_OS_API_URL` (e.g. in `apps/extension/.env.local`) to point at a local dev server
-instead.
+`src/lib/api-client.ts` defaults to `https://apply.mypham.space`; `.env.development.local` (not
+`.env.local` — Vite loads `.env.local` in *every* mode, including a plain `vite build`, which is
+exactly the bug `scripts/verify-production-build.mjs` exists to catch) sets
+`VITE_CAREER_OS_API_URL=http://localhost:3003` for local testing against `apps/web`'s dev server
+(`next dev -p 3003`).
+
+**Plain `npm run build` always ignores `.env.development.local`** — `vite build` defaults to
+`mode: production`, which never loads a `.env.development.local` file. If you're testing against
+your local `apps/web` dev server, use `npm run build:dev` instead (or `npm run dev` for HMR); if
+`dist/` was built with plain `npm run build`, the extension is silently talking to production,
+which reliably manifests as `Analyze Job` failing with a generic error even though the code path
+is correct — check by grepping `dist/assets/*.js` for `apply.mypham.space` vs `localhost`.

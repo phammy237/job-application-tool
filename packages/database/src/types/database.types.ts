@@ -272,6 +272,7 @@ export interface Database {
           preferred_qualifications: string[];
           skills: string[];
           source_url: string | null;
+          apply_url: string | null;
           platform_type: string | null;
           raw_extraction: Json | null;
           created_at: string;
