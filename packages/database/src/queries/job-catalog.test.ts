@@ -158,6 +158,35 @@ function job(overrides: Partial<NormalizedDiscoveredJob> & { sourceJobId: string
 }
 
 describe('upsertDiscoveredJobsForSource', () => {
+  it.each([false, true])('clears legacy aggregator canonical URLs on resync (content changed: %s)', async (changed) => {
+    const store = new FakeStore();
+    const client = fakeSupabase(store);
+    const sourceUrl = 'https://jobright.ai/jobs/info/123';
+    await upsertDiscoveredJobsForSource(client, SOURCE_ID, [job({
+      sourceJobId: '1', applyUrl: sourceUrl, sourceUrl, canonicalApplyUrl: sourceUrl,
+    })], new Date('2026-01-01'));
+    await upsertDiscoveredJobsForSource(client, SOURCE_ID, [job({
+      sourceJobId: '1', applyUrl: sourceUrl, sourceUrl, canonicalApplyUrl: null,
+      contentHash: changed ? 'v1:changed' : 'v1:hash1',
+    })], new Date('2026-01-02'));
+    expect(store.rows[0]?.canonical_apply_url).toBeNull();
+    expect(store.rows[0]?.source_url).toBe(sourceUrl);
+    expect(store.rows[0]?.apply_url).toBe(sourceUrl);
+  });
+
+  it('preserves a resolved employer URL across changed Jobright content', async () => {
+    const store = new FakeStore();
+    const client = fakeSupabase(store);
+    const url = 'https://boards.greenhouse.io/acme/jobs/123';
+    await upsertDiscoveredJobsForSource(client, SOURCE_ID, [job({
+      sourceJobId: '1', canonicalApplyUrl: url,
+    })], new Date('2026-01-01'));
+    await upsertDiscoveredJobsForSource(client, SOURCE_ID, [job({
+      sourceJobId: '1', canonicalApplyUrl: null, contentHash: 'v1:changed',
+    })], new Date('2026-01-02'));
+    expect(store.rows[0]?.canonical_apply_url).toBe(url);
+  });
+
   it('scenario A: first crawl creates 3 ACTIVE rows with first_seen == last_seen and misses 0', async () => {
     const store = new FakeStore();
     const supabase = fakeSupabase(store);
@@ -228,6 +257,66 @@ describe('upsertDiscoveredJobsForSource', () => {
     expect(store.rows[0]?.title).toBe('Staff Backend Engineer');
     expect(store.rows[0]?.content_updated_at).toBe(secondCrawl.toISOString());
     expect(store.rows[0]?.first_seen_at).toBe(originalFirstSeen);
+  });
+
+  it('bug fix: a resolved canonical_apply_url survives a later content-changed resync whose own freshly-normalized value is null (post-D7.1 Jobright regression)', async () => {
+    const store = new FakeStore();
+    const supabase = fakeSupabase(store);
+    const firstCrawl = new Date('2026-01-01T00:00:00.000Z');
+
+    // Insert as if genuinely new (canonicalApplyUrl null, as normalize.ts now produces for a
+    // Jobright row whose raw applyUrl is a rejected-aggregator host).
+    await upsertDiscoveredJobsForSource(
+      supabase,
+      SOURCE_ID,
+      [job({ sourceJobId: '1', canonicalApplyUrl: null, contentHash: 'v1:hash1' })],
+      firstCrawl,
+    );
+    // Simulate official-posting-resolution.ts having since resolved this row to the real employer
+    // ATS URL — a write this ingestion path must never own or revert.
+    store.rows[0]!.canonical_apply_url = 'https://boards.greenhouse.io/acme/jobs/999';
+
+    // A later resync whose content genuinely changed (e.g. Jobright enrichment updated the
+    // description) still normalizes canonicalApplyUrl to null for this source — must not clobber
+    // the resolved value.
+    const summary = await upsertDiscoveredJobsForSource(
+      supabase,
+      SOURCE_ID,
+      [job({ sourceJobId: '1', canonicalApplyUrl: null, description: 'Updated.', contentHash: 'v1:hash2' })],
+      new Date('2026-01-02T00:00:00.000Z'),
+    );
+
+    expect(summary).toEqual({ new: 0, updated: 1, unchanged: 0, reopened: 0 });
+    expect(store.rows[0]?.canonical_apply_url).toBe('https://boards.greenhouse.io/acme/jobs/999');
+  });
+
+  it('no regression: an ATS-native canonical_apply_url still refreshes normally on a content-changed resync', async () => {
+    const store = new FakeStore();
+    const supabase = fakeSupabase(store);
+    const firstCrawl = new Date('2026-01-01T00:00:00.000Z');
+
+    await upsertDiscoveredJobsForSource(
+      supabase,
+      SOURCE_ID,
+      [job({ sourceJobId: '1', canonicalApplyUrl: 'https://boards.greenhouse.io/acme/jobs/1', contentHash: 'v1:hash1' })],
+      firstCrawl,
+    );
+
+    const summary = await upsertDiscoveredJobsForSource(
+      supabase,
+      SOURCE_ID,
+      [
+        job({
+          sourceJobId: '1',
+          canonicalApplyUrl: 'https://boards.greenhouse.io/acme/jobs/1-reposted',
+          contentHash: 'v1:hash2',
+        }),
+      ],
+      new Date('2026-01-02T00:00:00.000Z'),
+    );
+
+    expect(summary).toEqual({ new: 0, updated: 1, unchanged: 0, reopened: 0 });
+    expect(store.rows[0]?.canonical_apply_url).toBe('https://boards.greenhouse.io/acme/jobs/1-reposted');
   });
 
   it('scenario G: a closed job reappearing reopens the same row (ACTIVE, misses 0, closed_at null)', async () => {

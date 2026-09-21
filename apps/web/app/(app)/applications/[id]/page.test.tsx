@@ -98,6 +98,39 @@ afterEach(() => {
 });
 
 describe('ApplicationDetailPage — D6 discovery provenance', () => {
+  it('opens the resolved employer posting while retaining Jobright as a separate source', async () => {
+    mocks.getOwnApplication.mockResolvedValue({
+      ...BASE_APPLICATION,
+      jobCatalogId: JOB_CATALOG_ID,
+      sourceUrl: 'https://jobright.ai/jobs/info/123',
+      canonicalUrl: 'https://boards.greenhouse.io/acme/jobs/123',
+    });
+    await renderPage();
+    expect(screen.getByRole('link', { name: 'Apply on employer site' }))
+      .toHaveAttribute('href', 'https://boards.greenhouse.io/acme/jobs/123');
+    expect(screen.getByRole('link', { name: 'View source' }))
+      .toHaveAttribute('href', 'https://jobright.ai/jobs/info/123');
+  });
+
+  it.each([null, 'https://jobright.ai/jobs/info/123'])('offers official posting search for unresolved legacy applications (%s)', async (canonicalUrl) => {
+    mocks.getOwnApplication.mockResolvedValue({
+      ...BASE_APPLICATION, jobCatalogId: JOB_CATALOG_ID,
+      sourceUrl: 'https://jobright.ai/jobs/info/123', canonicalUrl,
+    });
+    await renderPage();
+    expect(screen.queryByRole('link', { name: 'Apply on employer site' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Find official posting' })).toHaveAttribute(
+      'href', expect.stringContaining('https://www.google.com/search?'),
+    );
+    expect(screen.getByRole('link', { name: 'View source' })).toHaveAttribute('href', 'https://jobright.ai/jobs/info/123');
+  });
+
+  it('preserves the original posting link for manually saved applications', async () => {
+    mocks.getOwnApplication.mockResolvedValue({ ...BASE_APPLICATION, sourceUrl: 'https://careers.example.com/job/123' });
+    await renderPage();
+    expect(screen.getByRole('link', { name: 'Original job posting' })).toHaveAttribute('href', 'https://careers.example.com/job/123');
+  });
+
   it('shows no discovery provenance for an application with no catalog linkage', async () => {
     mocks.getOwnApplication.mockResolvedValue(BASE_APPLICATION);
     await renderPage();

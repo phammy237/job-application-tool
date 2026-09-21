@@ -240,6 +240,32 @@ describe('POST /api/discovery/[id]/start-application', () => {
     const [, , input] = mocks.startApplicationFromCatalogJob.mock.calls[0]!;
     expect(input.eventMetadata.sourceType).toBe('JOBRIGHT_GITHUB');
     expect(input.snapshot.sourceUrl).toContain('jobright.ai');
+    expect(input.canonicalUrl).toBeNull();
+  });
+
+  it('bug fix: an unresolved/stale Jobright canonical_apply_url is never snapshotted onto the application as canonicalUrl — does not snapshot Jobright as the employer/original posting', async () => {
+    mocks.getJobCatalogEntryById.mockResolvedValue({
+      ...BASE_JOB,
+      sourceUrl: 'https://jobright.ai/jobs/info/abc123',
+      applyUrl: 'https://jobright.ai/jobs/info/abc123',
+      canonicalApplyUrl: 'https://jobright.ai/jobs/info/abc123', // stale/never resolved
+    });
+    mocks.getJobSource.mockResolvedValue({ ...BASE_JOB_SOURCE, sourceType: 'JOBRIGHT_GITHUB' });
+
+    await POST(postRequest(), paramsFor(JOB_CATALOG_ID));
+    const [, , input] = mocks.startApplicationFromCatalogJob.mock.calls[0]!;
+    expect(input.canonicalUrl).toBeNull();
+  });
+
+  it('bug fix: an unlisted-but-legitimate employer ATS host still passes through unchanged — only known rejected aggregators are nulled', async () => {
+    mocks.getJobCatalogEntryById.mockResolvedValue({
+      ...BASE_JOB,
+      canonicalApplyUrl: 'https://acme.example.com/apply/1', // not on the ACCEPTED_ATS allowlist, but not an aggregator either
+    });
+
+    await POST(postRequest(), paramsFor(JOB_CATALOG_ID));
+    const [, , input] = mocks.startApplicationFromCatalogJob.mock.calls[0]!;
+    expect(input.canonicalUrl).toBe('https://acme.example.com/apply/1');
   });
 
   it('builds discovery-handoff event metadata from the real match score, never fabricated', async () => {

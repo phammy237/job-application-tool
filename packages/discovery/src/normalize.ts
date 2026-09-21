@@ -1,5 +1,6 @@
 import {
   canonicalizeUrl,
+  classifyJobPostingHost,
   computeJobCatalogContentHash,
   computeJobCatalogDedupeFingerprint,
   normalizeJobTitle,
@@ -29,7 +30,20 @@ export async function normalizeDiscoveredJob(
     ? parseLocation(locationText)
     : { city: null, stateRegion: null, country: null };
 
-  const canonicalApplyUrl = canonicalizeUrl(raw.applyUrl);
+  // Bug fix (post-D7.1): a raw applyUrl is only ever a real apply destination when its own host
+  // isn't a known aggregator/discovery site -- true for every ATS adapter's applyUrl, but never
+  // true for JOBRIGHT_GITHUB, whose applyUrl is always Jobright's own detail page
+  // (jobright.ai/jobs/info/<id>). Deciding this by host classification, not by source type,
+  // reuses the exact same REJECTED_AGGREGATOR list selectJobApplyActions and the official-posting
+  // validator already key off (classify-job-posting-host.ts's own doc comment), so this can never
+  // disagree with either of them about what counts as a real apply destination. canonical_apply_url
+  // instead stays null (matching migration 0039's invariant: "NULL until HIGH-confidence employer
+  // resolution") until official-posting-resolution.ts fills it in.
+  const canonicalizedApplyUrl = canonicalizeUrl(raw.applyUrl);
+  const canonicalApplyUrl =
+    canonicalizedApplyUrl && classifyJobPostingHost(canonicalizedApplyUrl) === 'REJECTED_AGGREGATOR'
+      ? null
+      : canonicalizedApplyUrl;
   const normalizedTitle = normalizeJobTitle(raw.title);
 
   const workplaceType = raw.workplaceType ?? null;

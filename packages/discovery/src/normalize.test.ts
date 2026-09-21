@@ -22,6 +22,14 @@ const RAW: RawDiscoveredJob = {
 };
 
 describe('normalizeDiscoveredJob', () => {
+  it('keeps Jobright as provenance without promoting it to an employer destination', async () => {
+    const url = 'https://jobright.ai/jobs/info/123';
+    const result = await normalizeDiscoveredJob({ ...RAW, applyUrl: url, sourceUrl: url });
+    expect(result.canonicalApplyUrl).toBeNull();
+    expect(result.applyUrl).toBe(url);
+    expect(result.sourceUrl).toBe(url);
+  });
+
   it('derives normalizedTitle/normalizedLocation deterministically', async () => {
     const result = await normalizeDiscoveredJob(RAW);
     expect(result.normalizedTitle).toBe('backend engineer');
@@ -38,6 +46,27 @@ describe('normalizeDiscoveredJob', () => {
   it('canonicalizes the apply URL (strips tracking query params)', async () => {
     const result = await normalizeDiscoveredJob(RAW);
     expect(result.canonicalApplyUrl).toBe('https://boards.example.com/acme/jobs/123');
+  });
+
+  it('bug fix: never sets canonicalApplyUrl to a rejected-aggregator host (e.g. Jobright\'s own detail URL) — stays null until official-posting-resolution.ts resolves it', async () => {
+    const result = await normalizeDiscoveredJob({
+      ...RAW,
+      applyUrl: 'https://jobright.ai/jobs/info/aaaaaaaaaaaaaaaaaaaaaaaa?utm_campaign=x',
+      sourceUrl: 'https://jobright.ai/jobs/info/aaaaaaaaaaaaaaaaaaaaaaaa',
+    });
+    expect(result.canonicalApplyUrl).toBeNull();
+    // applyUrl/sourceUrl themselves are untouched — Jobright provenance is preserved, only
+    // canonical_apply_url (the apply-destination field) is affected.
+    expect(result.applyUrl).toBe('https://jobright.ai/jobs/info/aaaaaaaaaaaaaaaaaaaaaaaa?utm_campaign=x');
+    expect(result.sourceUrl).toBe('https://jobright.ai/jobs/info/aaaaaaaaaaaaaaaaaaaaaaaa');
+  });
+
+  it('still canonicalizes a non-aggregator apply URL as before (no regression for ATS adapters)', async () => {
+    const result = await normalizeDiscoveredJob({
+      ...RAW,
+      applyUrl: 'https://boards.greenhouse.io/acme/jobs/1?utm_source=x',
+    });
+    expect(result.canonicalApplyUrl).toBe('https://boards.greenhouse.io/acme/jobs/1');
   });
 
   it('computes a non-empty content hash and dedupe fingerprint', async () => {

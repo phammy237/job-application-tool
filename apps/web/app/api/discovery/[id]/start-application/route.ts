@@ -7,6 +7,7 @@ import {
   startApplicationFromCatalogJob,
 } from '@career-os/database';
 import {
+  classifyJobPostingHost,
   computeJobSnapshotFingerprint,
   discoveryHandoffEventMetadataSchema,
   sanitizeJobSnapshotInput,
@@ -125,6 +126,20 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     eligibilityVersion: matchScore?.eligibilityVersion ?? null,
   });
 
+  // Bug fix (post-D7.1) — `job.canonicalApplyUrl` is raw catalog data, not a confirmed apply
+  // destination (the Discover UI's own selectJobApplyActions never trusts it un-classified
+  // either). Without this check, an unresolved/REVIEW/UNRESOLVED Jobright row whose
+  // canonical_apply_url still (or again) holds the Jobright detail URL would get snapshotted onto
+  // the application as its "canonical employer posting" — exactly the bug this endpoint must not
+  // reproduce. Only ever nulls out a known-rejected aggregator host; every other value (including
+  // an unlisted-but-legitimate employer ATS domain) still passes through unchanged, so this stays
+  // narrower than the Discover UI's stricter EMPLOYER_DOMAIN/ACCEPTED_ATS allowlist.
+  const canonicalUrlHostClass = job.canonicalApplyUrl
+    ? classifyJobPostingHost(job.canonicalApplyUrl)
+    : 'UNKNOWN';
+  const canonicalUrl =
+    canonicalUrlHostClass === 'REJECTED_AGGREGATOR' ? null : job.canonicalApplyUrl;
+
   try {
     const result = await startApplicationFromCatalogJob(admin, user.id, {
       jobCatalogId,
@@ -132,7 +147,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       snapshotContentFingerprint: contentFingerprint,
       snapshotContentTruncated: contentTruncated,
       snapshotTruncatedFields: truncatedFields,
-      canonicalUrl: job.canonicalApplyUrl,
+      canonicalUrl,
       eventMetadata,
     });
 

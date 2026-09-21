@@ -1,4 +1,5 @@
 import {
+  classifyJobPostingHost,
   jobCatalogEntrySchema,
   type CrossSourceObservation,
   type JobCatalogEntry,
@@ -191,7 +192,13 @@ export async function upsertDiscoveredJobsForSource(
   // Step 1: fetch existing rows for this batch's ids, chunked.
   const existingById = new Map<
     string,
-    { id: string; contentHash: string; status: string; firstSeenAt: string }
+    {
+      id: string;
+      contentHash: string;
+      status: string;
+      firstSeenAt: string;
+      canonicalApplyUrl: string | null;
+    }
   >();
   for (const idsChunk of chunk(
     uniqueJobs.map((j) => j.sourceJobId),
@@ -199,7 +206,7 @@ export async function upsertDiscoveredJobsForSource(
   )) {
     const { data, error } = await supabase
       .from('job_catalog')
-      .select('id, source_job_id, content_hash, status, first_seen_at')
+      .select('id, source_job_id, content_hash, status, first_seen_at, canonical_apply_url')
       .eq('source_id', sourceId)
       .in('source_job_id', idsChunk);
     assertNoError(error, 'upsertDiscoveredJobsForSource (existing lookup)');
@@ -209,6 +216,7 @@ export async function upsertDiscoveredJobsForSource(
         contentHash: row.content_hash,
         status: row.status,
         firstSeenAt: row.first_seen_at,
+        canonicalApplyUrl: row.canonical_apply_url,
       });
     }
   }
@@ -236,12 +244,24 @@ export async function upsertDiscoveredJobsForSource(
     if (existing.status === 'MERGED') continue;
 
     const wasClosed = existing.status === 'CLOSED';
-    if (existing.contentHash === job.contentHash) {
+    const staleAggregatorUrl = existing.canonicalApplyUrl != null &&
+      classifyJobPostingHost(existing.canonicalApplyUrl) === 'REJECTED_AGGREGATOR';
+    if (existing.contentHash === job.contentHash && !staleAggregatorUrl) {
       freshnessOnlyIds.push(existing.id);
       if (wasClosed) summary.reopened += 1;
       else summary.unchanged += 1;
     } else {
-      contentRows.push(normalizedJobToRow(sourceId, job, existing.firstSeenAt, nowIso));
+      const row = normalizedJobToRow(sourceId, job, existing.firstSeenAt, nowIso);
+      // Bug fix (post-D7.1) — a resolved `canonical_apply_url` (set by
+      // official-posting-resolution.ts, never by this ingestion path) must never be regressed to
+      // null by a routine content resync just because this sync's freshly-normalized value came
+      // back null (e.g. a Jobright row whose own applyUrl always normalizes to null now that
+      // normalize.ts rejects aggregator hosts). Only ever falls back to the existing value when
+      // the new one is null — a genuinely new non-null value (an ATS adapter's own applyUrl
+      // changing) always wins, so ATS-native freshness is untouched.
+      row.canonical_apply_url = job.canonicalApplyUrl ??
+        (staleAggregatorUrl ? null : existing.canonicalApplyUrl);
+      contentRows.push(row);
       if (wasClosed) summary.reopened += 1;
       else summary.updated += 1;
     }

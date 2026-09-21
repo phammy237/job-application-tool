@@ -6,7 +6,7 @@ import {
   listOwnCompanyResearchSnapshotsForApplication,
   listOwnRelevantStatusChangeEventsForApplication,
 } from '@career-os/database';
-import { CREATABLE_APPLICATION_STATUSES, formatNextAction } from '@career-os/shared';
+import { CREATABLE_APPLICATION_STATUSES, formatNextAction, isSafeExternalUrl, selectJobApplyActions } from '@career-os/shared';
 import { Button, Label, Select, StatusBadge, Textarea } from '@career-os/ui';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
@@ -81,6 +81,15 @@ export default async function ApplicationDetailPage({
     throw new Error('attachNextActions returned no result for a single application');
   }
   const { nextAction } = applicationWithNextAction;
+  const applyActions = selectJobApplyActions({
+    companyName: application.company,
+    title: application.title,
+    canonicalApplyUrl: application.canonicalUrl,
+    sourceUrl: application.sourceUrl,
+    applyUrl: application.sourceUrl ?? '',
+  });
+  const legacySourceUrl = !application.jobCatalogId && application.sourceUrl &&
+    isSafeExternalUrl(application.sourceUrl) ? application.sourceUrl : null;
 
   return (
     <div className="max-w-2xl space-y-8">
@@ -102,19 +111,31 @@ export default async function ApplicationDetailPage({
         {formatNextAction(nextAction).reason}
       </p>
 
-      {application.sourceUrl || application.autofillSummary || application.jobCatalogId ? (
+      {applyActions.primary || applyActions.sourceUrl || application.autofillSummary || application.jobCatalogId ? (
         <section className="space-y-2">
           <h2 className="text-muted-foreground text-sm font-medium">Source</h2>
           <div className="text-muted-foreground space-y-1 text-sm">
-            {application.sourceUrl ? (
+            {applyActions.primary || application.jobCatalogId || legacySourceUrl ? (
               <p>
                 <a
-                  href={application.sourceUrl}
+                  href={applyActions.primary?.url ?? (application.jobCatalogId ? applyActions.fallbackSearchUrl! : legacySourceUrl!)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="hover:text-primary underline"
                 >
-                  Original job posting
+                  {applyActions.primary?.label ?? (application.jobCatalogId ? 'Find official posting' : 'Original job posting')}
+                </a>
+              </p>
+            ) : null}
+            {applyActions.sourceUrl && applyActions.sourceUrl !== (applyActions.primary?.url ?? legacySourceUrl) ? (
+              <p>
+                <a
+                  href={applyActions.sourceUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hover:text-primary underline"
+                >
+                  View source
                 </a>
                 {application.atsProvider ? ` · ${application.atsProvider}` : ''}
               </p>

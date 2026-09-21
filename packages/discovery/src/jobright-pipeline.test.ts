@@ -10,8 +10,8 @@ import { normalizeDiscoveredJob } from './normalize';
  * does (proven generically provider-agnostic already by `ranking/provider-fairness.test.ts`), the
  * feed RPC's existing internship filter (migration 0031, `normalized_employment_type =
  * 'INTERNSHIP'`) actually matches what a Jobright row normalizes to, and the D6 "Start
- * Application" handoff's own field reads (`sourceUrl ?? applyUrl`, `canonicalApplyUrl`) are always
- * populated for a Jobright row. Full live-database visibility is exercised by the real backfill +
+ * Application" handoff's own field reads (`sourceUrl ?? applyUrl`, `canonicalApplyUrl`) behave
+ * correctly for a Jobright row. Full live-database visibility is exercised by the real backfill +
  * manual `/discover` verification step, not by this file.
  */
 const README = `<!-- TABLE_START -->
@@ -40,13 +40,16 @@ describe('D7 pipeline wiring', () => {
     expect(normalizeEmploymentType('Internship')).toBe('INTERNSHIP');
   });
 
-  it('3. a Jobright row always carries both applyUrl/sourceUrl and canonicalApplyUrl — the exact fields the D6 Start Application handoff reads', async () => {
+  it('3. a Jobright row always carries applyUrl/sourceUrl provenance, but never a Jobright canonicalApplyUrl — the exact fields the D6 Start Application handoff reads', async () => {
     const parsed = parseJobrightReadme(README, new Date('2026-09-18T00:00:00.000Z'));
     const normalized = await normalizeDiscoveredJob(parsed.jobs[0]!);
 
-    // route.ts: `sourceUrl: job.sourceUrl ?? job.applyUrl` and `canonicalUrl: job.canonicalApplyUrl`
+    // route.ts: `sourceUrl: job.sourceUrl ?? job.applyUrl` — always populated, Jobright provenance
+    // is never lost.
     expect(normalized.sourceUrl ?? normalized.applyUrl).toBeTruthy();
-    expect(normalized.canonicalApplyUrl).toBeTruthy();
-    expect(normalized.canonicalApplyUrl).not.toContain('utm_source');
+    // Bug fix (post-D7.1): canonicalApplyUrl must stay null for an unresolved Jobright row — a raw
+    // Jobright detail URL is never a real apply destination (migration 0039's own invariant).
+    // official-posting-resolution.ts is the only process allowed to fill this in.
+    expect(normalized.canonicalApplyUrl).toBeNull();
   });
 });
