@@ -9,6 +9,7 @@ import { generateResumeExtraction } from '@career-os/ai';
 import { parseResumeContactInfo, type ResumeExtractionResult } from '@career-os/shared';
 import { getCurrentUser } from '../../../../../lib/auth';
 import { extractPdfText } from '../../../../../lib/pdf-text-extraction';
+import { createAdminClient } from '../../../../../lib/supabase/admin';
 import { createClient } from '../../../../../lib/supabase/server';
 
 export const maxDuration = 60;
@@ -152,7 +153,9 @@ export async function POST(request: Request) {
 
   const personal = parseResumeContactInfo(sourceText);
 
-  const aiResult = await generateResumeExtraction(supabase, user.id, sourceText);
+  // Service-role client for the AI step only: its quota reserve/refund RPCs are service-role only
+  // (migration 0044). user.id is the session-derived id, never a client-supplied one.
+  const aiResult = await generateResumeExtraction(createAdminClient(), user.id, sourceText);
   if (aiResult.status === 'rate_limited') {
     if (uploadId) await updateOwnResumeUploadExtractionStatus(supabase, user.id, uploadId, 'FAILED');
     return NextResponse.json(

@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   getCurrentUser: vi.fn(),
   createClient: vi.fn(),
+  createAdminClient: vi.fn(),
   createOwnResumeUpload: vi.fn(),
   getOwnResumeUploadByContentHash: vi.fn(),
   updateOwnResumeUploadExtractionStatus: vi.fn(),
@@ -21,6 +22,9 @@ vi.mock('@career-os/ai', () => ({ generateResumeExtraction: mocks.generateResume
 vi.mock('../../../../../lib/auth', () => ({ getCurrentUser: mocks.getCurrentUser }));
 vi.mock('../../../../../lib/pdf-text-extraction', () => ({ extractPdfText: mocks.extractPdfText }));
 vi.mock('../../../../../lib/supabase/server', () => ({ createClient: mocks.createClient }));
+vi.mock('../../../../../lib/supabase/admin', () => ({ createAdminClient: mocks.createAdminClient }));
+
+const ADMIN_CLIENT = { admin: true };
 
 const { POST } = await import('./route');
 
@@ -55,6 +59,7 @@ beforeEach(() => {
     storage: { from: () => ({ upload: mocks.storageUpload }) },
   });
   mocks.storageUpload.mockResolvedValue({ error: null });
+  mocks.createAdminClient.mockReturnValue(ADMIN_CLIENT);
   mocks.getOwnResumeUploadByContentHash.mockResolvedValue(null);
   mocks.createOwnResumeUpload.mockResolvedValue({ id: 'upload-1' });
   mocks.updateOwnResumeUploadExtractionStatus.mockResolvedValue(undefined);
@@ -253,7 +258,8 @@ describe('POST /api/profile/resume-import/analyze — pasted resume text (shares
 
     expect(res.status).toBe(200);
     expect(body.personal.email).toBe('jane@example.com');
-    expect(mocks.generateResumeExtraction).toHaveBeenCalledWith(expect.anything(), USER_ID, text.trim());
+    // Service-role client for the AI step — quota RPCs are service-role only (migration 0044).
+    expect(mocks.generateResumeExtraction).toHaveBeenCalledWith(ADMIN_CLIENT, USER_ID, text.trim());
     expect(mocks.createOwnResumeUpload).not.toHaveBeenCalled();
     expect(mocks.updateOwnResumeUploadExtractionStatus).not.toHaveBeenCalled();
   });

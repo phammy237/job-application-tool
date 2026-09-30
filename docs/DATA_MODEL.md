@@ -742,7 +742,12 @@ Unique: `(email_connection_id, provider_message_id)` — the dedup constraint re
 | `ai_request_limit`             | `int not null default 50`                                      | reserved for future plan-based limits, see `docs/IMPLEMENTATION_PLAN.md` Phase 8      |
 | `theme`                        | `text not null default 'system'`                               |                                                                                       |
 
-RLS: standard.
+RLS: standard, plus column privileges (migration 0044): the three `ai_*` quota columns are
+server-authoritative. `authenticated` may update only `gmail_integration_enabled`/`theme`, may
+insert only a bare row (`user_id`), and may not delete; `increment_ai_request_usage` /
+`decrement_ai_request_usage` are service-role only. Otherwise a user could raise or reset their
+own quota directly through PostgREST — so every AI pipeline reserves/refunds quota through the
+service-role client, always with the session-derived `user_id`.
 
 ## `feature_flags`
 

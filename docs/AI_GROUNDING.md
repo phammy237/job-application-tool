@@ -120,6 +120,10 @@ Every AI request is attributed to `user_settings.ai_requests_this_period` /
 limits are generous during solo/private-beta use, so opening signups later (Phase 8) doesn't
 require retrofitting cost controls.
 
+The quota is enforced below the app (migration 0044): users cannot write the quota columns or
+call the reserve/refund RPCs themselves, so every pipeline passes the service-role client to its
+`incrementOwnAiRequestUsage`/`decrementOwnAiRequestUsage` calls, with the session-derived user id.
+
 ## 8. Requirement-evidence mapping (Phase 5A)
 
 A second pipeline (`packages/ai/src/generate-requirement-mapping.ts`), analyzing a whole job
@@ -264,7 +268,12 @@ influence, the engine's own decision — grounding here is about preventing inve
   fixed denylist of fabrication-risk phrases (`spoke with`, `referred by`, `our interview`,
   `completed the assessment`, etc.), rejecting (with one retry) any match — sound specifically
   because drafting is only reachable while status is `APPLIED`/`APPLICATION_RECEIVED`, strictly
-  before any interview/assessment stage exists to have happened.
+  before any interview/assessment stage exists to have happened. The denylist only covers invented
+  *interactions*, so the draft also carries the same `unsupportedClaims` self-report as every
+  other pipeline (prompt `follow-up-draft-v2`): the system prompt forbids any claim about the
+  candidate's own skills/experience/qualifications (none are given), and a non-empty
+  `unsupportedClaims` is rejected with one retry. The field is stripped before the draft reaches
+  the user.
 - **Citation allowlist, same defense as §8/§9, for interview prep.** Every `sourceFactIds` entry
   must be a fact id actually placed in `<candidate_facts>`; every `sourceRequirementId`/
   `sourceRequirementIds` entry must be a requirement-mapping id actually placed in

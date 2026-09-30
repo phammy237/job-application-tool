@@ -16,8 +16,10 @@ insert into auth.users (id, email, instance_id, aud, role, encrypted_password, e
 values
   ('a0000000-0000-4000-8000-000000000001', 'user-a@test.local', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'x', now(), now(), now());
 
-set local role authenticated;
-set local request.jwt.claims to '{"sub":"a0000000-0000-4000-8000-000000000001","role":"authenticated"}';
+-- Service role, matching production: since migration 0044 only the service-role client may
+-- touch quota columns or call the quota RPCs (0011_user_settings.test.sql proves authenticated
+-- can't).
+set local role service_role;
 
 update public.user_settings
   set ai_request_limit = 3, ai_requests_this_period = 0, ai_request_period_started_at = now()

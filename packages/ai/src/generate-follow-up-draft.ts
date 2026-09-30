@@ -143,7 +143,9 @@ export async function generateFollowUpDraft(
         ? 'the request was declined'
         : outcome.reason === 'fabricated_interaction_claim'
           ? 'the draft implied a conversation, referral, interview, or assessment that was never given to you as a fact'
-          : 'the response was not valid JSON matching the required contract';
+          : outcome.reason === 'unsupported_claims_present'
+            ? 'unsupportedClaims was non-empty — remove every claim that is not literally supported by the given context, then report an empty unsupportedClaims'
+            : 'the response was not valid JSON matching the required contract';
     outcome = await runAttempt(retryReasonText);
   }
 

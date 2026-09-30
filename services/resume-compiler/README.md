@@ -61,6 +61,12 @@ verified-working build. Before deploying:
    trivial warm-up document, and that a *second* compile (simulating a request) succeeds with
    zero network access (e.g. run the container with `--network none` and confirm compiles
    still work).
+3. Confirm the secret is not readable from a document: compile
+   `\documentclass{article}\begin{document}\input{/proc/self/environ}\end{document}` and check
+   the PDF (or the compile error) contains no `RESUME_COMPILER_TOKEN`. `src/server.ts` gives
+   tectonic a minimal environment for exactly this reason. The server process's own original
+   environment (`/proc/<parent pid>/environ`) is still readable by the same user — the token only
+   authorizes this service, but restrict inbound traffic to the Career OS app if that matters.
 
 ## Deploying
 

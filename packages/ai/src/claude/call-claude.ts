@@ -271,8 +271,8 @@ export async function callClaudeForUnsupportedClaimCheck(
 }
 
 /**
- * Mirrors `followUpDraftModelContractSchema` (packages/shared) — deliberately just
- * `subject`/`body`, no `groundingNotes`/`usedContext` field for the model to fill in (see that
+ * Mirrors `followUpDraftModelContractSchema` (packages/shared) — `subject`/`body` plus the
+ * `unsupportedClaims` self-report every pipeline requires, no `groundingNotes`/`usedContext` field for the model to fill in (see that
  * schema's own doc comment for why: provenance here is always server-derived, never a model
  * claim).
  */
@@ -281,8 +281,9 @@ const FOLLOW_UP_DRAFT_JSON_SCHEMA = {
   properties: {
     subject: { type: ['string', 'null'] },
     body: { type: 'string' },
+    unsupportedClaims: { type: 'array', items: { type: 'string' } },
   },
-  required: ['subject', 'body'],
+  required: ['subject', 'body', 'unsupportedClaims'],
   additionalProperties: false,
 } as const;
 

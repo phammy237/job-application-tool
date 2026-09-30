@@ -9,6 +9,67 @@ export type FormControl = HTMLInputElement | HTMLSelectElement | HTMLTextAreaEle
 
 const NON_DATA_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'image', 'reset']);
 
+/** `autocomplete` tokens that only ever mean a credential or sign-in identity. */
+const AUTH_AUTOCOMPLETE_TOKENS = new Set([
+  'current-password',
+  'new-password',
+  'one-time-code',
+  'username',
+]);
+
+/**
+ * Credential/verification wording in a field's own attributes or label. `pass(word|wd|code|phrase)`
+ * needs no boundary (camelCase `userPassword`, snake `user_password`) and can't match "passport";
+ * the short tokens need non-alphanumeric boundaries so e.g. "photo" never matches `otp`.
+ */
+const AUTH_TEXT_PATTERN =
+  /pass(?:word|wd|code|phrase)|(?<![a-z])pwd(?![a-z])|one[\s_-]?time[\s_-]?(?:code|pass)|(?<![a-z0-9])(?:otp|2fa|mfa|totp)(?![a-z0-9])|verification[\s_-]?code|authenticat(?:ion|or)[\s_-]?code/i;
+
+/** A form with a password input and at most this many other data fields is a sign-in/sign-up box,
+ * not an application form — every field in it (usually just the email/username) is excluded.
+ * Application forms that embed a "create a password" step have far more fields than this and are
+ * still scanned, minus the password input itself. */
+const LOGIN_FORM_MAX_OTHER_FIELDS = 2;
+
+function isDataControl(control: FormControl): boolean {
+  return control.tagName !== 'INPUT' || !NON_DATA_INPUT_TYPES.has(getInputType(control));
+}
+
+function isInLoginForm(field: FormControl): boolean {
+  const form = field.closest('form');
+  if (!form || !form.querySelector('input[type="password"]')) return false;
+  const otherDataFields = [
+    ...form.querySelectorAll<FormControl>('input, select, textarea'),
+  ].filter((control) => isDataControl(control) && getInputType(control) !== 'password');
+  return otherDataFields.length <= LOGIN_FORM_MAX_OTHER_FIELDS;
+}
+
+/**
+ * AUTHENTICATION (CLAUDE.md: never read, not extract-then-ignore). Beyond `type="password"`, this
+ * catches a password revealed by a "show password" toggle (now `type="text"` but still named
+ * like one), one-time/2FA codes, and the username/email box of a sign-in form — all excluded
+ * before their value is ever read.
+ */
+function isAuthenticationField(field: FormControl, inputType: string, document: Document): boolean {
+  if (inputType === 'password') return true;
+
+  const autocompleteTokens = (field.getAttribute('autocomplete') ?? '').toLowerCase().split(/\s+/);
+  if (autocompleteTokens.some((token) => AUTH_AUTOCOMPLETE_TOKENS.has(token))) return true;
+
+  const ownText = [
+    field.getAttribute('name'),
+    field.getAttribute('id'),
+    field.getAttribute('aria-label'),
+    field.getAttribute('placeholder'),
+    findLabelText(field, document),
+  ]
+    .filter(Boolean)
+    .join(' ');
+  if (AUTH_TEXT_PATTERN.test(ownText)) return true;
+
+  return isInLoginForm(field);
+}
+
 function findLabelText(field: Element, document: Document): string | null {
   const id = field.getAttribute('id');
   if (id) {
@@ -114,7 +175,8 @@ export interface ScannedControl {
  * classified DetectedField snapshot. Shared by detectFields (Phase 2 analysis — snapshot only,
  * DetectedField[] never carries a live reference) and the Phase 4B fill engine (which needs the
  * live element to re-resolve and write to, matched by fingerprint against a previously-approved
- * DetectedField — see lib/field-fingerprint.ts). AUTHENTICATION fields (password inputs) are
+ * DetectedField — see lib/field-fingerprint.ts). AUTHENTICATION fields (see
+ * isAuthenticationField: passwords, revealed passwords, one-time codes, sign-in forms) are
  * excluded here, before classification ever runs — per CLAUDE.md, "never extract-then-ignore."
  * Non-data controls (hidden/submit/button/image/reset inputs) are skipped too, since they're not
  * something a user answers — and, for the fill engine, this is also what guarantees it can never
@@ -128,10 +190,9 @@ export function scanFormControls(document: Document): ScannedControl[] {
   for (const field of controls) {
     const inputType = getInputType(field);
 
-    if (field.tagName === 'INPUT') {
-      if (inputType === 'password') continue; // AUTHENTICATION — excluded outright, never detected
-      if (NON_DATA_INPUT_TYPES.has(inputType)) continue;
-    }
+    if (field.tagName === 'INPUT' && NON_DATA_INPUT_TYPES.has(inputType)) continue;
+    // AUTHENTICATION — excluded outright, before its value or signals are ever read.
+    if (isAuthenticationField(field, inputType, document)) continue;
 
     const selectOptions =
       field.tagName === 'SELECT'
