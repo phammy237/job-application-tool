@@ -78,6 +78,15 @@ if (!externallyConnectableMatches.includes(`${EXPECTED_PRODUCTION_ORIGIN}/*`)) {
       `— the /extension-connect token handoff would not reach this build.`,
   );
 }
+const nonProductionMatches = externallyConnectableMatches.filter(
+  (match) => match !== `${EXPECTED_PRODUCTION_ORIGIN}/*`,
+);
+if (nonProductionMatches.length > 0) {
+  errors.push(
+    `manifest.json externally_connectable.matches includes ${JSON.stringify(nonProductionMatches)} ` +
+      `— a production build must accept the token handoff from the production origin only.`,
+  );
+}
 if (typeof manifest.key !== 'string' || manifest.key.length === 0) {
   errors.push('manifest.json is missing the pinned "key" — the extension ID would not be stable.');
 }

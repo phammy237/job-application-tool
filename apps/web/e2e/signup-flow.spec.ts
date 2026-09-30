@@ -22,8 +22,9 @@ import { expect, test } from '@playwright/test';
  *   injected secrets (see .github/workflows/ci.yml). The service-role key is used here only to
  *   seed the test account server-side — never sent to the browser.
  *
- * Each run creates a new real account (unique email per run) — expected for a personal/dev
- * project; not meant to run against a project with real user data.
+ * Each run creates a new real account (unique email per run) and deletes it again in afterEach —
+ * whether the test passed or failed — so CI runs don't accumulate throwaway auth users. Still
+ * not meant to run against a project with real user data.
  */
 
 function readEnv(): Record<string, string | undefined> {
@@ -45,6 +46,16 @@ function readEnv(): Record<string, string | undefined> {
   return vars;
 }
 
+/** Set as soon as the test account exists; afterEach deletes it (cascading every row it created). */
+let deleteTestAccount: (() => Promise<void>) | null = null;
+
+test.afterEach(async () => {
+  if (!deleteTestAccount) return;
+  const cleanup = deleteTestAccount;
+  deleteTestAccount = null;
+  await cleanup();
+});
+
 test('login → edit profile → create application → logout', async ({ page }) => {
   const uniqueEmail = `e2e-${Date.now()}@gmail.com`;
   const password = 'TestPassword123!';
@@ -59,12 +70,16 @@ test('login → edit profile → create application → logout', async ({ page }
   const adminClient = createClient(supabaseUrl, serviceRoleKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
-  const { error: createError } = await adminClient.auth.admin.createUser({
+  const { data: created, error: createError } = await adminClient.auth.admin.createUser({
     email: uniqueEmail,
     password,
     email_confirm: true,
   });
   if (createError) throw createError;
+  deleteTestAccount = async () => {
+    const { error } = await adminClient.auth.admin.deleteUser(created.user.id);
+    if (error) throw error;
+  };
 
   // ---- Login ------------------------------------------------------------------------------
   await page.goto('/login');

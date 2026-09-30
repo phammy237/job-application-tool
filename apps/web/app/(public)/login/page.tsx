@@ -1,12 +1,13 @@
 import Link from 'next/link';
+import { safeRedirectPath } from '../../../lib/safe-redirect-path';
 import { LoginForm } from './login-form';
 
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ confirmEmail?: string }>;
+  searchParams: Promise<{ confirmEmail?: string; redirectTo?: string }>;
 }) {
-  const { confirmEmail } = await searchParams;
+  const { confirmEmail, redirectTo } = await searchParams;
 
   return (
     <div className="mx-auto max-w-sm px-6 py-20">
@@ -17,7 +18,7 @@ export default async function LoginPage({
         </p>
       ) : null}
       <div className="mt-6">
-        <LoginForm />
+        <LoginForm redirectTo={safeRedirectPath(redirectTo)} />
       </div>
       <p className="text-muted-foreground mt-6 text-sm">
         No account yet?{' '}

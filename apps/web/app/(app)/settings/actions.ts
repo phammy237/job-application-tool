@@ -3,6 +3,7 @@
 import { revokeOwnExtensionSession } from '@career-os/database';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
+import { purgeAccountExternalData } from '../../../lib/account-deletion';
 import { requireUser } from '../../../lib/auth';
 import { createAdminClient } from '../../../lib/supabase/admin';
 import { createClient } from '../../../lib/supabase/server';
@@ -11,7 +12,9 @@ import { createClient } from '../../../lib/supabase/server';
  * Full account deletion (docs/USER_FLOWS.md §8, docs/SECURITY_AND_PRIVACY.md §5). Deleting
  * the auth.users row cascades through every user-owned table via the `on delete cascade`
  * foreign keys in supabase/migrations/0001_init.sql — there is no manual per-table cleanup
- * to keep in sync as new tables are added in later phases.
+ * to keep in sync as new tables are added in later phases. The two things outside that cascade
+ * (the Gmail grant at Google, résumé PDFs in Storage) are cleaned up first by
+ * purgeAccountExternalData.
  *
  * Uses the service-role client, which is why this lives in a server action rather than a
  * regular RLS-scoped query: a user cannot delete their own auth.users row through the anon/
@@ -22,6 +25,8 @@ export async function deleteAccount() {
   const user = await requireUser();
 
   const admin = createAdminClient();
+  await purgeAccountExternalData(await createClient(), admin, user.id);
+
   const { error } = await admin.auth.admin.deleteUser(user.id);
   if (error) {
     throw new Error(`Failed to delete account: ${error.message}`);

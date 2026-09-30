@@ -4,7 +4,6 @@ import {
   type ApplicationEventSource,
   type ApplicationEventType,
   type ApplicationStatus,
-  type DiscoveryHandoffEventMetadata,
 } from '@career-os/shared';
 import { assertNoError, unwrapRow } from '../errors';
 import type { Database } from '../types/database.types';

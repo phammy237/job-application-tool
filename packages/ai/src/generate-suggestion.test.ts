@@ -140,6 +140,23 @@ describe('generateSuggestion — structural refusal (CLAUDE.md enforcement, not 
   });
 });
 
+describe('generateSuggestion — server-side label re-classification', () => {
+  it.each([
+    ['What is your gender?'],
+    ['Are you a protected veteran?'],
+    ['Have you ever been convicted of a crime?'],
+  ])('refuses %j even when the client labels it FREE_RESPONSE', async (fieldLabel) => {
+    const result = await generateSuggestion(FAKE_SUPABASE, USER_ID, {
+      ...BASE_PARAMS,
+      fieldLabel,
+      fieldClassification: 'FREE_RESPONSE',
+    });
+    expect(result).toEqual({ status: 'not_supported_for_field' });
+    expect(mocks.incrementOwnAiRequestUsage).not.toHaveBeenCalled();
+    expect(mocks.callClaudeForSuggestion).not.toHaveBeenCalled();
+  });
+});
+
 describe('generateSuggestion — rate limit', () => {
   it('short-circuits before retrieval or any Claude call when the limit is reached', async () => {
     mocks.incrementOwnAiRequestUsage.mockResolvedValue({ ...ALLOWED_USAGE, allowed: false });

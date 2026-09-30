@@ -3,6 +3,7 @@
 import { isFeatureEnabled } from '@career-os/database';
 import { FEATURE_FLAG_KEYS } from '@career-os/shared';
 import { redirect } from 'next/navigation';
+import { safeRedirectPath } from '../../lib/safe-redirect-path';
 import { createClient } from '../../lib/supabase/server';
 
 export interface AuthFormState {
@@ -26,7 +27,7 @@ export async function signIn(
     return { error: error.message };
   }
 
-  redirect('/dashboard');
+  redirect(safeRedirectPath(formData.get('redirectTo')));
 }
 
 export async function signUp(
@@ -53,9 +54,7 @@ export async function signUp(
   );
   if (!publicSignupsEnabled) {
     return {
-      error:
-        'Sign-ups are currently invite-only. During local development, flip the ' +
-        'public_signups_enabled feature flag (or create your account directly in Supabase Studio).',
+      error: 'Sign-ups are currently invite-only.',
     };
   }
 

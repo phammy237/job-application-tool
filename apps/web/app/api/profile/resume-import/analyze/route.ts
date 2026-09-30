@@ -18,6 +18,10 @@ const MIN_PASTE_TEXT_LENGTH = 100;
 const MAX_PASTE_TEXT_LENGTH = 20_000;
 const BUCKET = 'resume-uploads';
 
+function isAlreadyExistsError(error: { message?: string; statusCode?: string | number }): boolean {
+  return String(error.statusCode) === '409' || /already exists/i.test(error.message ?? '');
+}
+
 /**
  * Resume Import step 1: "Upload resume" / "Paste resume text" -> "Analyze" (Phase B of the
  * onboarding-path hardening pass, extended to support pasted text directly onto /profile).
@@ -75,8 +79,12 @@ export async function POST(request: Request) {
       const storagePath = `${user.id}/${contentHash}.pdf`;
       const { error: uploadError } = await supabase.storage
         .from(BUCKET)
-        .upload(storagePath, buffer, { contentType: 'application/pdf', upsert: true });
-      if (uploadError) {
+        .upload(storagePath, buffer, { contentType: 'application/pdf', upsert: false });
+      // The path is content-addressed, so an object already sitting there (e.g. left behind by an
+      // earlier attempt whose row insert failed) holds these exact bytes — reuse it. Not
+      // `upsert: true`: overwriting needs an UPDATE policy on storage.objects, which this bucket
+      // deliberately doesn't grant, so an upsert onto an existing object always failed RLS.
+      if (uploadError && !isAlreadyExistsError(uploadError)) {
         console.error('[career-os] resume upload to storage failed', uploadError);
         return NextResponse.json(
           { error: 'Could not store your file — please try again.' },

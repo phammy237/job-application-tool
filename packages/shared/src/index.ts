@@ -94,6 +94,7 @@ export * from './lib/job-catalog-dedupe-fingerprint';
 export * from './lib/decode-html-entities';
 export * from './lib/html-to-plain-text';
 export * from './lib/phrase-matcher';
+export * from './lib/classify-field';
 export * from './lib/extract-role-family';
 export * from './lib/extract-seniority';
 export * from './lib/normalize-employment-type';

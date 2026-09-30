@@ -1,5 +1,5 @@
 import type { FieldClassification } from '@career-os/shared';
-import type { FieldSignals } from './classify-field';
+import type { FieldSignals } from '@career-os/shared';
 
 function signals(overrides: Partial<FieldSignals>): FieldSignals {
   return {

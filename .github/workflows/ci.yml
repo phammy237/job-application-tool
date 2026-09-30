@@ -55,3 +55,25 @@ jobs:
           name: playwright-report
           path: apps/web/test-results
           retention-days: 7
+
+  # RLS isolation tests (supabase/tests/database) against a throwaway local Postgres with every
+  # migration applied — CLAUDE.md requires one per table, so they have to actually run. No
+  # secrets: this never touches the hosted project. Only the containers the migrations and
+  # tests need are started (storage-api for migration 0034's bucket/policies, gotrue for auth).
+  db-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.111.0
+
+      - name: Start local Supabase
+        run: >-
+          supabase start
+          -x realtime,imgproxy,kong,mailpit,postgrest,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
+
+      - name: Run pgTAP RLS tests
+        run: supabase test db

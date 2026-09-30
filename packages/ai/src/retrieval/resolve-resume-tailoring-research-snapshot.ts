@@ -1,10 +1,7 @@
 import type { CareerOsSupabaseClient } from '@career-os/database';
 import type { CompanyResearchSnapshot, ResumeTailoringResearchMode } from '@career-os/shared';
 import { RESEARCH_TAILORING_AUTO_RESOLVE_CANDIDATE_LIMIT } from '../config';
-import {
-  resolveCompanyResearchSnapshotForRequest,
-  type ResolveCompanyResearchSnapshotResult,
-} from './resolve-company-research-snapshot';
+import { resolveCompanyResearchSnapshotForRequest } from './resolve-company-research-snapshot';
 
 export interface ResolveResumeTailoringResearchSnapshotParams {
   applicationId: string;

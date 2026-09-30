@@ -18,6 +18,8 @@ const PROTECTED_PREFIXES = [
   '/dashboard',
   '/profile',
   '/applications',
+  '/discover',
+  '/network',
   '/resumes',
   '/settings',
   '/extension-connect',

@@ -1,4 +1,4 @@
-import type { FieldClassification } from '@career-os/shared';
+import type { FieldClassification } from '../schemas/detected-field';
 
 export interface FieldSignals {
   label: string | null;
@@ -103,4 +103,24 @@ export function classifyField(signals: FieldSignals): {
   }
 
   return { classification: 'UNKNOWN', confidence: 0.2 };
+}
+
+/**
+ * Server-side re-classification from the one signal the server actually receives — the field's
+ * label text. The extension classifies with richer DOM signals (name/id/nearby text), but its
+ * classification arrives as a client-supplied value; a bug or a tampered client could label
+ * "Gender" as FREE_RESPONSE. Callers combine this with the client's classification and refuse if
+ * *either* one is a never-suggest classification (CLAUDE.md: "enforcement, not labeling").
+ */
+export function classifyFieldLabel(label: string): FieldClassification {
+  return classifyField({
+    label,
+    name: null,
+    id: null,
+    ariaLabel: null,
+    placeholder: null,
+    nearbyText: null,
+    sectionHeading: null,
+    inputType: 'text',
+  }).classification;
 }

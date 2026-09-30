@@ -18,6 +18,25 @@ const nextConfig = {
   // standard, documented fix for worker-dependent packages under Next.js's App Router) makes Next
   // require it from node_modules at runtime instead, where the worker file resolves correctly.
   serverExternalPackages: ['pdfjs-dist'],
+  // Baseline hardening headers on every response. Deliberately not a full script-src CSP yet:
+  // Next's inline bootstrap scripts, the pdf.js worker, and the Supabase/Google OAuth hops need
+  // nonces/allowlists worked out and tested first — a wrong CSP breaks pages silently.
+  // `frame-ancestors 'none'` + X-Frame-Options block clickjacking (nothing embeds this app, and
+  // the PDF preview renders to <canvas>, not an iframe).
+  async headers() {
+    return [
+      {
+        source: '/:path*',
+        headers: [
+          { key: 'X-Frame-Options', value: 'DENY' },
+          { key: 'Content-Security-Policy', value: "frame-ancestors 'none'" },
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
+          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+        ],
+      },
+    ];
+  },
 };
 
 export default nextConfig;

@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -16,9 +16,9 @@ import { join } from 'node:path';
  * - isolated execution: this process's only job is compiling LaTeX; it shares no filesystem,
  *   database, or credentials with the main app.
  * - no shell escape: `execFile` with an argv array (never a shell string / `exec`).
- * - no network access from the compile process: `--bundle <local path>` + `--only-cached`
- *   below means `tectonic` itself never makes a network call at request time — the bundle is
- *   baked into the image at build time (see Dockerfile).
+ * - no network access from the compile process: `--only-cached` below means `tectonic` itself
+ *   never makes a network call at request time — every resource file it needs is pre-cached
+ *   into TECTONIC_CACHE_DIR at image build time (see Dockerfile).
  * - strict timeout + resource limits: `execFile`'s own `timeout`/`maxBuffer`; container-level
  *   memory/CPU limits are set at the orchestration layer (documented in README.md — they
  *   can't be self-imposed from inside the container).
@@ -36,7 +36,6 @@ import { join } from 'node:path';
 
 const PORT = Number(process.env.PORT ?? 8080);
 const TOKEN = process.env.RESUME_COMPILER_TOKEN;
-const BUNDLE_PATH = process.env.TECTONIC_BUNDLE_PATH ?? '/opt/tectonic-bundle';
 const MAX_SOURCE_BYTES = Number(process.env.MAX_SOURCE_BYTES ?? 200_000);
 const COMPILE_TIMEOUT_MS = Number(process.env.COMPILE_TIMEOUT_MS ?? 20_000);
 const RATE_LIMIT_PER_MINUTE = Number(process.env.RATE_LIMIT_PER_MINUTE ?? 30);
@@ -184,12 +183,10 @@ async function handleCompile(req: IncomingMessage, res: ServerResponse): Promise
 }
 
 /**
- * Invokes `tectonic` with an argv array (never a shell string) against a local, pre-baked
- * bundle. `--only-cached`-style behavior — verify the exact flag name against the pinned
- * Tectonic version's own `--help` output before deploying; this file cannot be exercised
- * against a real `tectonic` binary in the environment that wrote it (no Docker/network
- * access to the upstream project's docs), so treat this argv list as a documented starting
- * point, not a verified-working invocation.
+ * Invokes `tectonic` with an argv array (never a shell string) against the cache the Dockerfile
+ * pre-warms (TECTONIC_CACHE_DIR). No `--bundle` flag: that takes a bundle *file or directory of
+ * resource files*, not a cache location — pointing it at an empty directory made every compile
+ * fail to find article.cls. Still verify against a real `docker build` before deploying.
  */
 function runTectonic(
   inputPath: string,
@@ -198,7 +195,7 @@ function runTectonic(
   return new Promise((resolve, reject) => {
     execFile(
       'tectonic',
-      [inputPath, '--outdir', outDir, '--bundle', BUNDLE_PATH, '--only-cached'],
+      [inputPath, '--outdir', outDir, '--only-cached'],
       { timeout: COMPILE_TIMEOUT_MS, maxBuffer: 10 * 1024 * 1024 },
       (error, _stdout, stderr) => {
         if (error?.killed) {
@@ -238,4 +235,3 @@ server.listen(PORT, () => {
   console.log(JSON.stringify({ event: 'listening', port: PORT }));
 });
 
-void mkdir(BUNDLE_PATH, { recursive: true }).catch(() => {});

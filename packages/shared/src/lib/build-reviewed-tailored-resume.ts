@@ -5,7 +5,6 @@ import {
   type StructuredResumeV1,
 } from '../schemas/resume-content';
 import type {
-  ResumeSectionName,
   ResumeTailoringCoverage,
   ResumeTailoringOperationView,
 } from '../schemas/resume-tailoring';
@@ -15,13 +14,6 @@ import type {
 } from '../schemas/resume-tailoring-review';
 import { findUngroundedNumericClaims } from './resume-tailoring-numeric-guard';
 import { findUngroundedTechnologyTokens } from './resume-tailoring-technology-guard';
-
-const SECTIONS: ResumeSectionName[] = [
-  'education',
-  'experience',
-  'projects',
-  'leadership',
-];
 
 /**
  * One operation from a Phase 7E proposal, tagged with the stable id this review is tracked by.

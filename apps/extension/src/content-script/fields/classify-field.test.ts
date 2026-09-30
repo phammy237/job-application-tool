@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifyField } from './classify-field';
+import { classifyField } from '@career-os/shared';
 import { classificationFixtures } from './fixtures';
 
 describe('classifyField', () => {

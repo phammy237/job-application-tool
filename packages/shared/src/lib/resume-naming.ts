@@ -34,7 +34,8 @@ export function buildMasterResumeDisplayName(ownerFullName: string | null): stri
  * forward slash, colon, asterisk, question mark, double quote, angle brackets, pipe — plus every
  * ASCII control character. Deliberately narrow: ordinary punctuation (apostrophes, en/em dashes,
  * commas, ampersands, etc.) is meaningful and is never stripped. */
-const ILLEGAL_FILENAME_CHARS = /[\\/:*?"<>|\x00-\x1f]/g;
+// eslint-disable-next-line no-control-regex -- stripping control characters is the point
+const ILLEGAL_FILENAME_CHARS =/[\\/:*?"<>|\x00-\x1f]/g;
 
 export function sanitizeResumeFileNameSegment(segment: string): string {
   return segment.replace(ILLEGAL_FILENAME_CHARS, '').trim();

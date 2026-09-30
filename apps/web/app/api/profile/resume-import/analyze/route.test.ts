@@ -158,6 +158,38 @@ describe('POST /api/profile/resume-import/analyze', () => {
     expect(mocks.createOwnResumeUpload).not.toHaveBeenCalled();
   });
 
+  it('reuses an orphaned storage object (no row yet) instead of failing on "already exists"', async () => {
+    mocks.storageUpload.mockResolvedValue({
+      error: { message: 'The resource already exists', statusCode: '409' },
+    });
+    mocks.extractPdfText.mockResolvedValue({ status: 'ok', text: 'Jane Doe' });
+    mocks.generateResumeExtraction.mockResolvedValue({
+      status: 'ok',
+      result: { experience: [], education: [], projects: [], skills: [] },
+      droppedCount: 0,
+    });
+
+    const res = await POST(requestWithFile(pdfFile(1000)));
+
+    expect(res.status).toBe(200);
+    expect(mocks.storageUpload).toHaveBeenCalledWith(
+      expect.stringMatching(new RegExp(`^${USER_ID}/[0-9a-f]{64}\\.pdf$`)),
+      expect.anything(),
+      expect.objectContaining({ upsert: false }),
+    );
+    expect(mocks.createOwnResumeUpload).toHaveBeenCalled();
+  });
+
+  it('still fails loudly on any other storage error', async () => {
+    mocks.storageUpload.mockResolvedValue({ error: { message: 'bucket offline', statusCode: '500' } });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const res = await POST(requestWithFile(pdfFile(1000)));
+
+    expect(res.status).toBe(500);
+    expect(mocks.createOwnResumeUpload).not.toHaveBeenCalled();
+  });
+
   it('10. no AI-grounded path can use an extracted item before confirmation — this route imports no Candidate Profile write function at all (structural, not just behavioral)', async () => {
     // Two independent guarantees: (a) the mock module above never provides
     // createOwnExperience/createOwnEducation/createOwnProject/createOwnSkill/upsertOwnProfile —

@@ -17,7 +17,7 @@ import { defineManifest } from '@crxjs/vite-plugin';
  *   change every time the extension is reloaded unpacked. Generated once for local dev; a real
  *   Chrome Web Store listing gets its own key/ID at publish time and this one stops mattering.
  */
-export default defineManifest({
+export default defineManifest(({ mode }) => ({
   manifest_version: 3,
   name: 'Career OS',
   version: '0.1.0',
@@ -38,11 +38,16 @@ export default defineManifest({
   permissions: ['activeTab', 'scripting', 'storage'],
   host_permissions: [],
   externally_connectable: {
-    // No port on the localhost entry — Chrome match patterns without an explicit port match
-    // any port on that host, so the dev server can run on whatever port is free locally rather
-    // than requiring exactly 3000. Still scoped to localhost (this machine only) and the real
-    // production origin; not a broadening of what's reachable, just which local port works.
-    matches: ['http://localhost/*', 'https://apply.mypham.space/*'],
+    // The localhost entry exists only in development builds (`vite` / `build:dev`). In a
+    // production build it would let *any* local web server on any port hand the extension a
+    // token for an account it controls, silently redirecting the user's saved jobs/answers into
+    // that account — so production accepts the handoff from the real origin only
+    // (scripts/verify-production-build.mjs fails the build otherwise). No port on the localhost
+    // entry: Chrome match patterns without an explicit port match any port on that host.
+    matches:
+      mode === 'development'
+        ? ['http://localhost/*', 'https://apply.mypham.space/*']
+        : ['https://apply.mypham.space/*'],
   },
   key: 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA6Oh4jBUmG++l9YK1p1y5Nu+LfkUfY97e31ZCZ3M8HmHSLdjAJzifg+Rsqbks4cAskSqM7TE9Vpb9KnCoGM6fpB8cPb37jEYPmn7FsiNbK4J13tQOZWbOVVwsYYSKMwwCLpYgL8Ld8SydHN4QV5Di5IDXNUDT2N9bg5jN2qim2lVw3GzFgn76fYKNYm2V4j19IbzEGNQ7J9uEq4AQlIDkmtXWq30fQ1+YUWkoZ7IZuXwZuWG3A/2ZoC7NhlmdgaxoM1I/PcjdbHrXG1iYwCkFvhcy1N5Z+XveYkLxXPxUpmxvbCkfbJ8ts5gsjI1Jq7Fy5wpyREEKKs8bn7K9dMkjMwIDAQAB',
-});
+}));

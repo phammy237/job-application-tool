@@ -1,5 +1,9 @@
-import { detectedFieldSchema, type DetectedField } from '@career-os/shared';
-import { classifyField, type FieldSignals } from './classify-field';
+import {
+  classifyField,
+  detectedFieldSchema,
+  type DetectedField,
+  type FieldSignals,
+} from '@career-os/shared';
 
 export type FormControl = HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
 

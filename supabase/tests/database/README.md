@@ -14,7 +14,8 @@ supabase test db
 ```
 
 `supabase test db` runs every `*.test.sql` file in this directory with `pg_prove` against a
-fresh local database that already has `supabase/migrations/` applied.
+fresh local database that already has `supabase/migrations/` applied. CI runs exactly this on
+every push/PR (the `db-tests` job in `.github/workflows/ci.yml`).
 
 Without Docker (e.g. this environment), each file can be run individually against a linked
 remote project instead, via `supabase db query --linked -f <file>`. That command only surfaces

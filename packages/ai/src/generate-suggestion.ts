@@ -8,11 +8,12 @@ import {
   type AiUsageCheck,
   type CareerOsSupabaseClient,
 } from '@career-os/database';
-import type {
-  FieldClassification,
-  GeneratedAnswer,
-  GeneratedAnswerContract,
-  GeneratedAnswerRejectionReason,
+import {
+  classifyFieldLabel,
+  type FieldClassification,
+  type GeneratedAnswer,
+  type GeneratedAnswerContract,
+  type GeneratedAnswerRejectionReason,
 } from '@career-os/shared';
 import { callClaudeForSuggestion } from './claude/call-claude';
 import { NEVER_SUGGEST_CLASSIFICATIONS } from './config';
@@ -57,7 +58,12 @@ export async function generateSuggestion(
 ): Promise<GenerateSuggestionResult> {
   // Step 0 — structural refusal, before any DB read or Claude call. This is where CLAUDE.md's
   // "enforcement, not labeling" rule for DEMOGRAPHIC/LEGAL/AUTHENTICATION fields lives in code.
-  if (NEVER_SUGGEST_CLASSIFICATIONS.has(params.fieldClassification)) {
+  // `fieldClassification` is client-supplied, so the server also classifies the label itself and
+  // refuses if either one says never-suggest — a mislabeled "Gender" field still gets nothing.
+  if (
+    NEVER_SUGGEST_CLASSIFICATIONS.has(params.fieldClassification) ||
+    NEVER_SUGGEST_CLASSIFICATIONS.has(classifyFieldLabel(params.fieldLabel))
+  ) {
     return { status: 'not_supported_for_field' };
   }
 
