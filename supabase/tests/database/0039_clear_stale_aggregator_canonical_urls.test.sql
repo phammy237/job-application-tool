@@ -123,24 +123,25 @@ insert into pgtap_log(line) select is(
 );
 
 -- 5. Idempotent: re-running the exact same UPDATE again matches (and therefore alters) zero rows.
-insert into pgtap_log(line) select is(
-  (
-    with affected as (
-      update public.job_catalog
-      set canonical_apply_url = null
-      where canonical_apply_url is not null
-        and (
-          canonical_apply_url ~* '^https?://([a-z0-9-]+\.)*jobright\.ai(/|$|\?)'
-          or canonical_apply_url ~* '^https?://([a-z0-9-]+\.)*linkedin\.com(/|$|\?)'
-          or canonical_apply_url ~* '^https?://([a-z0-9-]+\.)*indeed\.com(/|$|\?)'
-          or canonical_apply_url ~* '^https?://([a-z0-9-]+\.)*glassdoor\.com(/|$|\?)'
-          or canonical_apply_url ~* '^https?://([a-z0-9-]+\.)*ziprecruiter\.com(/|$|\?)'
-          or canonical_apply_url ~* '^https?://([a-z0-9-]+\.)*simplify\.jobs(/|$|\?)'
-        )
-      returning 1
+-- The data-modifying CTE must be the top-level statement (Postgres rejects one nested inside a
+-- select is(...) subquery) -- so the WITH prefixes this INSERT directly, rather than being passed
+-- as is()'s first argument the way every other assertion in this file is written.
+with affected as (
+  update public.job_catalog
+  set canonical_apply_url = null
+  where canonical_apply_url is not null
+    and (
+      canonical_apply_url ~* '^https?://([a-z0-9-]+\.)*jobright\.ai(/|$|\?)'
+      or canonical_apply_url ~* '^https?://([a-z0-9-]+\.)*linkedin\.com(/|$|\?)'
+      or canonical_apply_url ~* '^https?://([a-z0-9-]+\.)*indeed\.com(/|$|\?)'
+      or canonical_apply_url ~* '^https?://([a-z0-9-]+\.)*glassdoor\.com(/|$|\?)'
+      or canonical_apply_url ~* '^https?://([a-z0-9-]+\.)*ziprecruiter\.com(/|$|\?)'
+      or canonical_apply_url ~* '^https?://([a-z0-9-]+\.)*simplify\.jobs(/|$|\?)'
     )
-    select count(*)::int from affected
-  ),
+  returning 1
+)
+insert into pgtap_log(line) select is(
+  (select count(*)::int from affected),
   0,
   '5. rerunning the same cleanup a second time affects zero rows -- idempotent'
 );
