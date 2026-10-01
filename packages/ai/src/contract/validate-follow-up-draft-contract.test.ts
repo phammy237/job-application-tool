@@ -5,7 +5,12 @@ import {
 } from './validate-follow-up-draft-contract';
 
 function json(overrides: Record<string, unknown> = {}): string {
-  return JSON.stringify({ subject: 'Hi', body: 'A polite follow-up.', ...overrides });
+  return JSON.stringify({
+    subject: 'Hi',
+    body: 'A polite follow-up.',
+    unsupportedClaims: [],
+    ...overrides,
+  });
 }
 
 describe('validateFollowUpDraftContract', () => {
@@ -13,8 +18,25 @@ describe('validateFollowUpDraftContract', () => {
     const result = validateFollowUpDraftContract(json());
     expect(result).toEqual({
       status: 'ok',
-      draft: { subject: 'Hi', body: 'A polite follow-up.' },
+      draft: { subject: 'Hi', body: 'A polite follow-up.', unsupportedClaims: [] },
     });
+  });
+
+  it('rejects a draft whose own unsupportedClaims self-report is non-empty', () => {
+    expect(
+      validateFollowUpDraftContract(
+        json({
+          body: 'With my 5 years of Go experience, I am a strong fit.',
+          unsupportedClaims: ['5 years of Go experience'],
+        }),
+      ),
+    ).toEqual({ status: 'rejected', reason: 'unsupported_claims_present' });
+  });
+
+  it('rejects a draft missing the unsupportedClaims field entirely', () => {
+    expect(
+      validateFollowUpDraftContract(JSON.stringify({ subject: 'Hi', body: 'A polite follow-up.' })),
+    ).toEqual({ status: 'rejected', reason: 'validation_failed' });
   });
 
   it('accepts a null subject', () => {

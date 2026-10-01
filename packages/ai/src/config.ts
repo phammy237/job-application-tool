@@ -81,7 +81,7 @@ export const ANSWER_TEXT_CHAR_CAP = 2000;
  * The actual cost lever available today is a smaller `max_tokens` budget, applied here.
  */
 export const FOLLOW_UP_DRAFT_MAX_OUTPUT_TOKENS = 1024;
-export const FOLLOW_UP_DRAFT_PROMPT_VERSION = 'follow-up-draft-v1';
+export const FOLLOW_UP_DRAFT_PROMPT_VERSION = 'follow-up-draft-v2';
 
 /**
  * Phase 5C.3B explicit, user-triggered interview preparation

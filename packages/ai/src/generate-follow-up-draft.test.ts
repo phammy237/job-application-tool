@@ -91,6 +91,7 @@ function draftJson(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({
     subject: 'Checking in on my application',
     body: 'Hello, I wanted to follow up on my application for the Engineer role. Best regards,',
+    unsupportedClaims: [],
     ...overrides,
   });
 }
@@ -273,6 +274,36 @@ describe('generateFollowUpDraft — fabricated-interaction rejection and retry',
 
     expect(result).toEqual({ status: 'validation_failed' });
     expect(mocks.callClaudeForFollowUpDraft).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects a self-reported unsupported claim, retries once, and never exposes unsupportedClaims', async () => {
+    mocks.callClaudeForFollowUpDraft
+      .mockResolvedValueOnce({
+        status: 'ok',
+        rawText: draftJson({
+          body: 'With my 5 years of Go experience, I would love an update.',
+          unsupportedClaims: ['5 years of Go experience'],
+        }),
+      })
+      .mockResolvedValueOnce({ status: 'ok', rawText: draftJson() });
+
+    const result = await generateFollowUpDraft(FAKE_SUPABASE, USER_ID, PARAMS);
+
+    expect(result.status).toBe('ok');
+    expect(mocks.callClaudeForFollowUpDraft).toHaveBeenCalledTimes(2);
+    expect(mocks.callClaudeForFollowUpDraft.mock.calls[1]?.[1]).toContain('unsupportedClaims');
+    if (result.status === 'ok') expect(result.draft).not.toHaveProperty('unsupportedClaims');
+  });
+
+  it('returns validation_failed when both attempts self-report unsupported claims', async () => {
+    mocks.callClaudeForFollowUpDraft.mockResolvedValue({
+      status: 'ok',
+      rawText: draftJson({ unsupportedClaims: ['strong fit for the role'] }),
+    });
+
+    const result = await generateFollowUpDraft(FAKE_SUPABASE, USER_ID, PARAMS);
+
+    expect(result).toEqual({ status: 'validation_failed' });
   });
 
   it('rejects malformed JSON and retries once', async () => {

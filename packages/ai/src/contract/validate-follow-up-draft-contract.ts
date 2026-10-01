@@ -65,7 +65,10 @@ export type FollowUpDraftContractValidationResult =
    * constraint has no more specific value, same precedent as
    * validate-unsupported-claim-contract.ts's 'wrong_length'), but kept as its own distinct reason
    * here so the retry prompt can name the exact problem. */
-  | { status: 'rejected'; reason: 'fabricated_interaction_claim' };
+  | { status: 'rejected'; reason: 'fabricated_interaction_claim' }
+  /** The model itself reported a claim it couldn't support (e.g. a skill or years of experience
+   * it was never given) — rejected exactly like every other pipeline's unsupportedClaims gate. */
+  | { status: 'rejected'; reason: 'unsupported_claims_present' };
 
 export function validateFollowUpDraftContract(
   rawText: string,
@@ -80,6 +83,10 @@ export function validateFollowUpDraftContract(
   const parsed = followUpDraftModelContractSchema.safeParse(parsedJson);
   if (!parsed.success) {
     return { status: 'rejected', reason: 'validation_failed' };
+  }
+
+  if (parsed.data.unsupportedClaims.length > 0) {
+    return { status: 'rejected', reason: 'unsupported_claims_present' };
   }
 
   if (containsFabricationRiskPhrase(parsed.data.body)) {

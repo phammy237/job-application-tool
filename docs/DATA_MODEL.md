@@ -742,7 +742,12 @@ Unique: `(email_connection_id, provider_message_id)` — the dedup constraint re
 | `ai_request_limit`             | `int not null default 50`                                      | reserved for future plan-based limits, see `docs/IMPLEMENTATION_PLAN.md` Phase 8      |
 | `theme`                        | `text not null default 'system'`                               |                                                                                       |
 
-RLS: standard.
+RLS: standard, plus column privileges (migration 0044): the three `ai_*` quota columns are
+server-authoritative. `authenticated` may update only `gmail_integration_enabled`/`theme`, may
+insert only a bare row (`user_id`), and may not delete; `increment_ai_request_usage` /
+`decrement_ai_request_usage` are service-role only. Otherwise a user could raise or reset their
+own quota directly through PostgREST — so every AI pipeline reserves/refunds quota through the
+service-role client, always with the session-derived `user_id`.
 
 ## `feature_flags`
 
@@ -967,6 +972,13 @@ create policy "update own applications" on applications
 create policy "delete own applications" on applications
   for delete using (auth.uid() = user_id);
 ```
+
+Table *privileges* (which roles may touch the table at all, before RLS filters rows) come from
+`supabase/migrations/0000_data_api_default_privileges.sql`, which declares Supabase's legacy
+"auto-expose to anon/authenticated/service_role" defaults explicitly — newer Supabase defaults no
+longer grant anything automatically, and without these a fresh database fails every query with
+"permission denied for table ..." regardless of policies. A table that needs *narrower* privileges
+revokes/grants them in its own migration (e.g. `user_settings`, migration 0044).
 
 `packages/database` wraps every query so `user_id` is never taken from client input — it is
 always read from the verified session server-side, so RLS and the application-layer check

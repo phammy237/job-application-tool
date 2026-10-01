@@ -36,10 +36,16 @@ const AUTO_APPLY_THRESHOLD = 0.85;
  * the throttled auto-check on page load — never unattended). A user needing more just clicks
  * Sync Gmail again; the dedup constraint + last_synced_at make repeated syncs cheap and safe,
  * giving free "pagination."
+ *
+ * `supabase` is the caller's session-scoped (RLS) client and handles every connection/signal
+ * read and write. `aiClient` must be the service-role client: it's used only for the Claude
+ * fallback classifier, whose quota reserve/refund RPCs are service-role only (migration 0044).
+ * Every call on it passes this same session-derived `userId`.
  */
 export async function runGmailSync(
   supabase: CareerOsSupabaseClient,
   userId: string,
+  aiClient: CareerOsSupabaseClient,
 ): Promise<RunGmailSyncResult> {
   const connection = await getOwnEmailConnectionWithToken(supabase, userId);
   if (!connection) {
@@ -86,7 +92,7 @@ export async function runGmailSync(
       let evidence = deterministic?.evidence ?? null;
 
       if (!deterministic) {
-        const claudeResult = await classifyEmail(supabase, userId, {
+        const claudeResult = await classifyEmail(aiClient, userId, {
           sender: metadata.sender ?? '(unknown sender)',
           subject: metadata.subject ?? '(no subject)',
           snippet: metadata.snippet,

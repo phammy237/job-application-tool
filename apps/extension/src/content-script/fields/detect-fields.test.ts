@@ -137,3 +137,71 @@ describe('detectFields', () => {
     });
   });
 });
+
+describe('detectFields — AUTHENTICATION exclusion beyond type="password"', () => {
+  function detect(html: string) {
+    return detectFields(new JSDOM(html).window.document);
+  }
+
+  it('excludes a password revealed by a "show password" toggle (type="text", named like a password)', () => {
+    const fields = detect(`
+      <form>
+        <label for="n">Full name</label><input id="n" name="full_name" />
+        <label for="e">Email</label><input id="e" name="email" type="email" />
+        <label for="p">Password</label><input id="p" name="userPassword" type="text" value="hunter2" />
+        <label for="c">City</label><input id="c" name="city" />
+      </form>`);
+    expect(fields.map((f) => f.htmlName)).toEqual(['full_name', 'email', 'city']);
+    expect(fields.some((f) => f.currentValue === 'hunter2')).toBe(false);
+  });
+
+  it.each([
+    ['autocomplete one-time-code', '<input name="code" autocomplete="one-time-code" value="123456" />'],
+    ['autocomplete new-password', '<input name="x" type="text" autocomplete="new-password" />'],
+    ['autocomplete username', '<input name="login_id" autocomplete="username" />'],
+    ['an OTP name', '<input name="otp_code" value="123456" />'],
+    ['a 2FA label', '<label for="t">Enter your 2FA code</label><input id="t" name="t" />'],
+    ['a verification-code placeholder', '<input name="vc" placeholder="Verification code" />'],
+  ])('excludes a field identified by %s', (_description, input) => {
+    const fields = detect(`
+      <form>
+        <label for="n">Full name</label><input id="n" name="full_name" />
+        ${input}
+        <label for="c">City</label><input id="c" name="city" />
+        <label for="s">School</label><input id="s" name="school" />
+      </form>`);
+    expect(fields.map((f) => f.htmlName)).toEqual(['full_name', 'city', 'school']);
+  });
+
+  it('excludes every field of a sign-in form (password + at most two other fields)', () => {
+    const fields = detect(`
+      <form>
+        <label for="e">Email</label><input id="e" name="email" type="email" value="me@example.com" />
+        <label for="p">Password</label><input id="p" name="pw" type="password" />
+        <label for="r">Remember me</label><input id="r" name="remember" type="checkbox" />
+        <input type="submit" value="Sign in" />
+      </form>`);
+    expect(fields).toEqual([]);
+  });
+
+  it('still scans an application form that embeds a create-account password step', () => {
+    const fields = detect(`
+      <form>
+        <label for="n">Full name</label><input id="n" name="full_name" />
+        <label for="e">Email</label><input id="e" name="email" type="email" />
+        <label for="ph">Phone</label><input id="ph" name="phone" />
+        <label for="p">Create a password</label><input id="p" name="pw" type="password" />
+      </form>`);
+    expect(fields.map((f) => f.htmlName)).toEqual(['full_name', 'email', 'phone']);
+  });
+
+  it('does not over-match look-alike words (passport, photo, stop)', () => {
+    const fields = detect(`
+      <form>
+        <label for="a">Passport number</label><input id="a" name="passport_number" />
+        <label for="b">Photo URL</label><input id="b" name="photo_url" />
+        <label for="c">Bus stop</label><input id="c" name="stop" />
+      </form>`);
+    expect(fields.map((f) => f.htmlName)).toEqual(['passport_number', 'photo_url', 'stop']);
+  });
+});
