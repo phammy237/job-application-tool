@@ -99,7 +99,7 @@ insert into pgtap_log(line) select is(
 -- 2b. ...but source_url/apply_url/resolution_status (provenance and resolution metadata) survive.
 insert into pgtap_log(line) select is(
   (select row(source_url, apply_url, resolution_status) from public.job_catalog where id = 'f1000000-0000-4000-8000-000000000002'),
-  row('https://jobright.ai/jobs/info/aaaaaaaaaaaaaaaaaaaaaaaa', 'https://jobright.ai/jobs/info/aaaaaaaaaaaaaaaaaaaaaaaa', 'RESOLVED_REVIEW'),
+  row('https://jobright.ai/jobs/info/aaaaaaaaaaaaaaaaaaaaaaaa'::text, 'https://jobright.ai/jobs/info/aaaaaaaaaaaaaaaaaaaaaaaa'::text, 'RESOLVED_REVIEW'::text),
   '2b. source_url/apply_url/resolution_status are preserved for the cleaned row'
 );
 
