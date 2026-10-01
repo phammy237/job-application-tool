@@ -973,6 +973,13 @@ create policy "delete own applications" on applications
   for delete using (auth.uid() = user_id);
 ```
 
+Table *privileges* (which roles may touch the table at all, before RLS filters rows) come from
+`supabase/migrations/0000_data_api_default_privileges.sql`, which declares Supabase's legacy
+"auto-expose to anon/authenticated/service_role" defaults explicitly — newer Supabase defaults no
+longer grant anything automatically, and without these a fresh database fails every query with
+"permission denied for table ..." regardless of policies. A table that needs *narrower* privileges
+revokes/grants them in its own migration (e.g. `user_settings`, migration 0044).
+
 `packages/database` wraps every query so `user_id` is never taken from client input — it is
 always read from the verified session server-side, so RLS and the application-layer check
 agree by construction rather than by convention.
