@@ -15,8 +15,8 @@ import {
   type FollowUpDraftUsedContextTag,
   type NextActionType,
 } from '@career-os/shared';
-import { callClaudeForFollowUpDraft } from './claude/call-claude';
-import { FOLLOW_UP_DRAFT_PROMPT_VERSION, MODEL_ID } from './config';
+import { callClaudeForFollowUpDraft, type ClaudeCallUsage } from './claude/call-claude';
+import { estimateCostUsd, FOLLOW_UP_DRAFT_PROMPT_VERSION, MODEL_ID } from './config';
 import { validateFollowUpDraftContract } from './contract/validate-follow-up-draft-contract';
 import { deriveEligibleNextAction } from './derive-eligible-next-action';
 import { buildFollowUpDraftSystemPrompt } from './prompt/build-follow-up-draft-system-prompt';
@@ -123,13 +123,13 @@ export async function generateFollowUpDraft(
       return { kind: 'provider_error' as const, message: callResult.message, latencyMs };
     }
     if (callResult.status === 'refusal') {
-      return { kind: 'rejected' as const, reason: 'refusal' as const, latencyMs };
+      return { kind: 'rejected' as const, reason: 'refusal' as const, latencyMs, usage: callResult.usage };
     }
     const validated = validateFollowUpDraftContract(callResult.rawText);
     if (validated.status === 'ok') {
-      return { kind: 'accepted' as const, draft: validated.draft, latencyMs };
+      return { kind: 'accepted' as const, draft: validated.draft, latencyMs, usage: callResult.usage };
     }
-    return { kind: 'rejected' as const, reason: validated.reason, latencyMs };
+    return { kind: 'rejected' as const, reason: validated.reason, latencyMs, usage: callResult.usage };
   };
 
   // Step 4 — attempt 1, then exactly one retry on rejection only, matching every other pipeline's
@@ -149,7 +149,9 @@ export async function generateFollowUpDraft(
     outcome = await runAttempt(retryReasonText);
   }
 
-  // Best-effort usage telemetry — never fails the user's actual request.
+  // Best-effort usage telemetry — never fails the user's actual request. No usage exists for a
+  // provider_error attempt (the provider was never meaningfully reached).
+  const claudeUsage: ClaudeCallUsage | null = outcome.kind === 'provider_error' ? null : outcome.usage;
   await recordAiUsageEvent(supabase, userId, {
     applicationId: application.id,
     generationRunId,
@@ -173,10 +175,10 @@ export async function generateFollowUpDraft(
         ? 'validation_failed'
         : null,
     escalationReason: null,
-    inputTokens: 0,
+    inputTokens: claudeUsage?.inputTokens ?? 0,
     cachedInputTokens: 0,
-    outputTokens: 0,
-    estimatedCost: null,
+    outputTokens: claudeUsage?.outputTokens ?? 0,
+    estimatedCost: claudeUsage ? estimateCostUsd(claudeUsage) : null,
     latencyMs: outcome.latencyMs,
     promptVersion: FOLLOW_UP_DRAFT_PROMPT_VERSION,
   }).catch(() => {

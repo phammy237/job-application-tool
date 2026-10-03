@@ -5,6 +5,7 @@ import {
   getOwnJob,
   incrementOwnAiRequestUsage,
   listOwnApprovedFactsForGeneration,
+  recordAiUsageEvent,
   type AiUsageCheck,
   type CareerOsSupabaseClient,
 } from '@career-os/database';
@@ -15,8 +16,8 @@ import {
   type GeneratedAnswerContract,
   type GeneratedAnswerRejectionReason,
 } from '@career-os/shared';
-import { callClaudeForSuggestion } from './claude/call-claude';
-import { NEVER_SUGGEST_CLASSIFICATIONS } from './config';
+import { callClaudeForSuggestion, type ClaudeCallUsage } from './claude/call-claude';
+import { estimateCostUsd, MODEL_ID, NEVER_SUGGEST_CLASSIFICATIONS } from './config';
 import { validateContract } from './contract/validate-contract';
 import { buildSystemPrompt } from './prompt/build-system-prompt';
 import { buildUserPrompt } from './prompt/build-user-prompt';
@@ -43,7 +44,19 @@ const REJECTION_REASON_TEXT: Record<string, string> = {
   validation_failed: 'the response was not valid JSON matching the required contract',
   unknown_source_fact_id: 'sourceFactIds included an id outside the provided fact list',
   unsupported_claims_present: 'unsupportedClaims was non-empty — every claim must be fact-backed',
+  reasoning_leak:
+    'reasoningSummary read like internal step-by-step reasoning rather than a short, one-or-two-sentence summary naming which facts you used',
 };
+
+/** generated_answers.rejection_reason (docs/DATA_MODEL.md) has no 'reasoning_leak' value —
+ * validateContract's reasoning-leak check is this pipeline's own internal detail, stored under
+ * the closest real DB reason (same "map an internal-only reason onto a shared DB value" pattern
+ * generate-company-research.ts already uses for its own 'no_findings' reason). */
+function toPersistedRejectionReason(
+  reason: GeneratedAnswerRejectionReason | 'reasoning_leak',
+): GeneratedAnswerRejectionReason {
+  return reason === 'reasoning_leak' ? 'validation_failed' : reason;
+}
 
 /**
  * Orchestrates one suggestion generation end to end: structural refusal -> rate limit ->
@@ -94,11 +107,15 @@ export async function generateSuggestion(
   const availableFactIds = rankedFacts.map(({ fact }) => fact.id);
 
   // Shared by both persist call sites below (rejected-but-audited and accepted) — they differ
-  // only in `rejectionReason`, so a schema field added to GeneratedAnswerInput only needs
-  // wiring up here once, not at two call sites that can silently drift out of sync.
+  // only in `rejectionReason`/`attemptNumber`, so a schema field added to GeneratedAnswerInput
+  // only needs wiring up here once, not at call sites that can silently drift out of sync.
+  // `attemptNumber` is an explicit parameter (never closed over a mutable outer variable) so a
+  // persist call always records the attempt it actually came from, even after later code has
+  // moved on to a different attempt number.
   const buildAnswerInput = (
     answer: GeneratedAnswerContract,
-    rejectionReason: GeneratedAnswerRejectionReason | null,
+    rejectionReason: GeneratedAnswerRejectionReason | 'reasoning_leak' | null,
+    attemptNum: number,
   ) => ({
     applicationId: params.applicationId,
     jobId: job.id,
@@ -113,10 +130,10 @@ export async function generateSuggestion(
     userDecision: null,
     finalText: null,
     insufficientData: answer.insufficientData,
-    rejectionReason,
+    rejectionReason: rejectionReason === null ? null : toPersistedRejectionReason(rejectionReason),
     availableFactIds,
     generationRunId,
-    attemptNumber,
+    attemptNumber: attemptNum,
   });
 
   const runAttempt = async (retryReason?: string) => {
@@ -127,30 +144,100 @@ export async function generateSuggestion(
       rankedFacts,
       retryReason,
     });
+    const started = Date.now();
     const callResult = await callClaudeForSuggestion(systemPrompt, userText);
+    const latencyMs = Date.now() - started;
 
     if (callResult.status === 'provider_error') {
-      return { kind: 'provider_error' as const, message: callResult.message };
+      return { kind: 'provider_error' as const, message: callResult.message, latencyMs };
     }
     if (callResult.status === 'refusal') {
-      return { kind: 'rejected' as const, reason: 'refusal', answer: null };
+      return {
+        kind: 'rejected' as const,
+        reason: 'refusal' as const,
+        answer: null,
+        latencyMs,
+        usage: callResult.usage,
+      };
     }
     const validated = validateContract(callResult.rawText, allowedFactIds);
     if (validated.status === 'ok') {
-      return { kind: 'accepted' as const, answer: validated.answer };
+      return {
+        kind: 'accepted' as const,
+        answer: validated.answer,
+        latencyMs,
+        usage: callResult.usage,
+      };
     }
-    return { kind: 'rejected' as const, reason: validated.reason, answer: validated.answer };
+    return {
+      kind: 'rejected' as const,
+      reason: validated.reason,
+      answer: validated.answer,
+      latencyMs,
+      usage: callResult.usage,
+    };
   };
 
   // Step 3 — attempt 1.
+  const firstOutcome = await runAttempt();
   let attemptNumber = 1;
-  let outcome = await runAttempt();
+  let outcome = firstOutcome;
 
   // Step 4 — exactly one retry, on any failure (refusal or contract rejection).
+  let retried = false;
   if (outcome.kind === 'rejected') {
     attemptNumber = 2;
+    retried = true;
     outcome = await runAttempt(REJECTION_REASON_TEXT[outcome.reason] ?? outcome.reason);
   }
+
+  // Attempt 1's own rejected-but-structurally-valid answer is never silently dropped, even when
+  // the retry goes on to succeed (or fails a different way) — previously this was only persisted
+  // when the *final* outcome was itself a rejection, losing attempt 1's record entirely on a
+  // reject-then-succeed sequence.
+  if (retried && firstOutcome.kind === 'rejected' && firstOutcome.answer) {
+    await createOwnGeneratedAnswer(
+      supabase,
+      userId,
+      buildAnswerInput(firstOutcome.answer, firstOutcome.reason, 1),
+    ).catch(() => {});
+  }
+
+  // Best-effort usage telemetry for the final attempt — never fails the user's actual request.
+  // No usage exists for a provider_error attempt (the provider was never meaningfully reached).
+  const claudeUsage: ClaudeCallUsage | null = outcome.kind === 'provider_error' ? null : outcome.usage;
+  await recordAiUsageEvent(supabase, userId, {
+    applicationId: params.applicationId,
+    generationRunId,
+    attemptNumber,
+    ladder: 'normal',
+    fieldClassification: params.fieldClassification,
+    provider: 'anthropic',
+    model: MODEL_ID,
+    taskType: 'field_suggestion',
+    providerSucceeded: outcome.kind !== 'provider_error',
+    outcome:
+      outcome.kind === 'accepted'
+        ? 'accepted'
+        : outcome.kind === 'provider_error'
+          ? 'provider_error'
+          : outcome.reason === 'refusal'
+            ? 'refusal'
+            : 'rejected',
+    rejectionReason:
+      outcome.kind === 'rejected' && outcome.reason !== 'refusal'
+        ? toPersistedRejectionReason(outcome.reason)
+        : null,
+    escalationReason: null,
+    inputTokens: claudeUsage?.inputTokens ?? 0,
+    cachedInputTokens: 0,
+    outputTokens: claudeUsage?.outputTokens ?? 0,
+    estimatedCost: claudeUsage ? estimateCostUsd(claudeUsage) : null,
+    latencyMs: outcome.latencyMs,
+    promptVersion: null,
+  }).catch(() => {
+    // Telemetry loss must never fail the user's actual request.
+  });
 
   // Step 5 — final disposition.
   if (outcome.kind === 'provider_error') {
@@ -170,7 +257,7 @@ export async function generateSuggestion(
       await createOwnGeneratedAnswer(
         supabase,
         userId,
-        buildAnswerInput(outcome.answer, outcome.reason),
+        buildAnswerInput(outcome.answer, outcome.reason, attemptNumber),
       );
     }
     return { status: 'no_suggestion' };
@@ -179,7 +266,7 @@ export async function generateSuggestion(
   const created = await createOwnGeneratedAnswer(
     supabase,
     userId,
-    buildAnswerInput(outcome.answer, null),
+    buildAnswerInput(outcome.answer, null, attemptNumber),
   );
 
   return { status: 'generated', answer: created };

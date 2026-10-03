@@ -1,4 +1,4 @@
-import { containsPhrase } from './phrase-matcher';
+import { containsPhraseOutsideNegation } from './phrase-matcher';
 
 export type ClearanceRequirement =
   | 'ACTIVE_CLEARANCE_REQUIRED'
@@ -68,11 +68,13 @@ export function extractClearanceRequirement(plainText: string): ClearanceExtract
   const sentences = splitSentences(plainText);
 
   for (const sentence of sentences) {
-    const mentionsActive = ACTIVE_REQUIRED_PHRASES.some((phrase) => containsPhrase(sentence, phrase));
+    const mentionsActive = ACTIVE_REQUIRED_PHRASES.some((phrase) =>
+      containsPhraseOutsideNegation(sentence, phrase),
+    );
     if (!mentionsActive) continue;
 
     const alsoOffersEligibilityAlternative = ELIGIBILITY_QUALIFIER_PHRASES.some((phrase) =>
-      containsPhrase(sentence, phrase),
+      containsPhraseOutsideNegation(sentence, phrase),
     );
     if (alsoOffersEligibilityAlternative) {
       return { requirement: 'CLEARANCE_ELIGIBILITY_REQUIRED', evidence: boundedEvidence(sentence) };
@@ -81,7 +83,7 @@ export function extractClearanceRequirement(plainText: string): ClearanceExtract
   }
 
   for (const sentence of sentences) {
-    if (ELIGIBILITY_REQUIRED_PHRASES.some((phrase) => containsPhrase(sentence, phrase))) {
+    if (ELIGIBILITY_REQUIRED_PHRASES.some((phrase) => containsPhraseOutsideNegation(sentence, phrase))) {
       return { requirement: 'CLEARANCE_ELIGIBILITY_REQUIRED', evidence: boundedEvidence(sentence) };
     }
   }

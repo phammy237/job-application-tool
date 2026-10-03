@@ -1,12 +1,13 @@
 import {
   classifyInitialReviewState,
+  EXPLICIT_APPROVAL_ONLY_CLASSIFICATIONS,
   isDecidable,
   reviewStateForSuggestion,
   type DetectedField,
   type GeneratedAnswer,
   type ReviewableField,
 } from '@career-os/shared';
-import { fingerprintMatches } from '../../lib/field-fingerprint';
+import { fingerprintField, fingerprintKey } from '../../lib/field-fingerprint';
 import type { PersistedReview } from '../../lib/review-storage';
 
 export interface ReviewState {
@@ -93,10 +94,40 @@ export function reviewReducer(state: ReviewState, action: ReviewAction): ReviewS
       // name/id/classification/label/inputType and current-value hash) on this fresh analysis.
       // Anything that drifted (a changed page, a changed field, a value the user typed since
       // last time) gets a fresh classification instead of silently inheriting a stale decision.
+      //
+      // Matching is by fingerprint *key*, never by the stored entry sitting at the same
+      // positional fieldId (`field-${index}`) — index alone is meaningless once the page's field
+      // count or order shifts (a row removed earlier in the form renumbers everything after it).
+      // Repeated, unlabeled controls (e.g. every row of an "Experience" repeater with no
+      // name/id/label) routinely share an identical fingerprint, so a key match is only trusted
+      // when it is unique on *both* sides — exactly one stored entry had this fingerprint, and
+      // exactly one fresh field has it. Otherwise there is no safe way to tell which stored
+      // decision (if any) belongs to which physical field, so every field in the ambiguous group
+      // gets a fresh, unreviewed state instead of risking one field's approved answer silently
+      // reattaching to a different field. Mirrors the fill engine's own "exactly one match or
+      // refuse" rule (fill-engine.ts's resolveIdentity).
+      const storedEntries = Object.values(action.stored ?? {});
+      const storedCountByKey = new Map<string, number>();
+      const storedByKey = new Map<string, PersistedReview[string]>();
+      for (const entry of storedEntries) {
+        const key = fingerprintKey(entry.fingerprint);
+        storedCountByKey.set(key, (storedCountByKey.get(key) ?? 0) + 1);
+        storedByKey.set(key, entry);
+      }
+
+      const freshCountByKey = new Map<string, number>();
+      for (const field of action.freshFields) {
+        const key = fingerprintKey(fingerprintField(field));
+        freshCountByKey.set(key, (freshCountByKey.get(key) ?? 0) + 1);
+      }
+
       const byId: Record<string, ReviewableField> = {};
       for (const field of action.freshFields) {
-        const storedEntry = action.stored?.[field.fieldId];
-        if (storedEntry && fingerprintMatches(storedEntry.fingerprint, field)) {
+        const key = fingerprintKey(fingerprintField(field));
+        const isUnique = storedCountByKey.get(key) === 1 && freshCountByKey.get(key) === 1;
+        const storedEntry = isUnique ? storedByKey.get(key) : undefined;
+
+        if (storedEntry) {
           byId[field.fieldId] = {
             detected: field,
             reviewState: storedEntry.reviewState,
@@ -193,7 +224,16 @@ export function reviewReducer(state: ReviewState, action: ReviewAction): ReviewS
         // checked explicitly anyway as defense in depth: a field must never be bulk-approved
         // without an actual proposed answer attached, even if some future change to this
         // reducer ever lets reviewState and suggestion drift out of sync.
-        if (field.reviewState === 'READY' && field.approvalState === 'PENDING' && field.suggestion) {
+        //
+        // High confidence is not enough on its own: CLAUDE.md requires EXPERIENCE/FREE_RESPONSE/
+        // WORK_AUTHORIZATION/RELOCATION/COMPENSATION to always get an explicit per-field click,
+        // never a bulk approval, regardless of how confident the suggestion is.
+        if (
+          field.reviewState === 'READY' &&
+          field.approvalState === 'PENDING' &&
+          field.suggestion &&
+          !EXPLICIT_APPROVAL_ONLY_CLASSIFICATIONS.has(field.detected.classification)
+        ) {
           byId[fieldId] = { ...field, approvalState: 'APPROVED' };
         }
       }

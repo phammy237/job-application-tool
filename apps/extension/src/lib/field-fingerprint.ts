@@ -67,6 +67,29 @@ export function fingerprintMatches(fingerprint: FieldFingerprint, field: Detecte
 }
 
 /**
+ * A canonical string key for a fingerprint — two fields with the same key are indistinguishable
+ * by signal alone. Repeated, unlabeled controls (e.g. every row of an "Experience" repeater
+ * sharing no name/id/label) commonly collide on this key. Reviewer code must never treat a key
+ * match as sufficient on its own to reuse a stored decision — see `resolveHydratedEntry`, which
+ * additionally requires the key to be globally unique on both sides before reusing anything, the
+ * same "exactly one candidate or refuse" rule the fill engine's `resolveIdentity` already applies
+ * at fill time (fill-engine.ts). Without that uniqueness check, a page-structure change (a row
+ * removed earlier in the form) can shift which physical field a positionally-keyed stored
+ * decision lands on, silently reattaching one field's approved answer to a different field that
+ * merely happens to share its signature.
+ */
+export function fingerprintKey(fingerprint: FieldFingerprint): string {
+  return JSON.stringify([
+    fingerprint.htmlName,
+    fingerprint.htmlId,
+    fingerprint.classification,
+    fingerprint.label,
+    fingerprint.inputType,
+    fingerprint.currentValueHash,
+  ]);
+}
+
+/**
  * Identity-only comparison (everything fingerprintMatches checks except currentValueHash). Used
  * by the Phase 4B fill engine to re-resolve *which* live element a previously-approved field
  * refers to — content drift is checked separately, and more conservatively (see fill-engine.ts's

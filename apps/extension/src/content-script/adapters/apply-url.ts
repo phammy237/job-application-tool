@@ -46,9 +46,18 @@ function isGenericListingUrl(url: URL): boolean {
   return url.searchParams.has('q') || url.searchParams.has('query');
 }
 
+/** True when `url` points at the same page as `pageUrl` (ignoring only the fragment) — a
+ * decorative "Apply" control common on Greenhouse/Lever embeds often has `href="#"` or `href=""`
+ * with the real action wired up via onclick/a modal, not navigation. Resolving that href against
+ * the page just reproduces the page's own URL, which must never be offered as the apply
+ * destination — "Open Application" would just reopen the page the user is already on. */
+function isSamePage(url: URL, pageUrl: URL): boolean {
+  return url.origin === pageUrl.origin && url.pathname === pageUrl.pathname && url.search === pageUrl.search;
+}
+
 /** True only when a candidate URL is worth trusting as a real, specific apply destination. */
-function isPlausibleApplyDestination(url: URL): boolean {
-  return !isExcludedHost(url.hostname) && !isGenericListingUrl(url);
+function isPlausibleApplyDestination(url: URL, pageUrl: URL): boolean {
+  return !isExcludedHost(url.hostname) && !isGenericListingUrl(url) && !isSamePage(url, pageUrl);
 }
 
 function findApplyControlHrefs(document: Document): string[] {
@@ -80,16 +89,22 @@ export function extractApplyUrl(
   sourceUrl: string | null,
   jsonLdUrl: string | undefined,
 ): string | null {
+  const pageUrlParsed = resolveAbsoluteUrl(pageUrl, pageUrl);
+
   if (jsonLdUrl) {
     const resolved = resolveAbsoluteUrl(jsonLdUrl, pageUrl);
-    if (resolved && resolved.href !== sourceUrl && isPlausibleApplyDestination(resolved)) {
+    if (
+      resolved &&
+      resolved.href !== sourceUrl &&
+      (!pageUrlParsed || isPlausibleApplyDestination(resolved, pageUrlParsed))
+    ) {
       return resolved.href;
     }
   }
 
   for (const controlHref of findApplyControlHrefs(document)) {
     const resolved = resolveAbsoluteUrl(controlHref, pageUrl);
-    if (resolved && isPlausibleApplyDestination(resolved)) {
+    if (resolved && (!pageUrlParsed || isPlausibleApplyDestination(resolved, pageUrlParsed))) {
       return resolved.href;
     }
   }

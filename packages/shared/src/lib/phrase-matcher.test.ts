@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { containsPhrase, firstMatchingPhrase } from './phrase-matcher';
+import { containsPhrase, containsPhraseOutsideNegation, firstMatchingPhrase } from './phrase-matcher';
 
 describe('containsPhrase', () => {
   it('matches a whole word', () => {
@@ -34,6 +34,51 @@ describe('containsPhrase', () => {
 
   it('matches multi-word phrases', () => {
     expect(containsPhrase('Strong product strategy background', 'product strategy')).toBe(true);
+  });
+});
+
+describe('containsPhraseOutsideNegation', () => {
+  it('matches a plainly-stated requirement with no negation nearby', () => {
+    expect(containsPhraseOutsideNegation('Active clearance required.', 'active clearance')).toBe(true);
+  });
+
+  it('does not match when immediately preceded by "no"', () => {
+    expect(
+      containsPhraseOutsideNegation(
+        'No active clearance required, but you must be willing to obtain one.',
+        'active clearance',
+      ),
+    ).toBe(false);
+  });
+
+  it('does not match when immediately preceded by "not"', () => {
+    expect(containsPhraseOutsideNegation('Candidates are not required to hold active clearance', 'active clearance')).toBe(
+      false,
+    );
+  });
+
+  it('does not match when preceded by "without"', () => {
+    expect(containsPhraseOutsideNegation('We can proceed without active clearance for this role.', 'active clearance')).toBe(
+      false,
+    );
+  });
+
+  it('ignores a negation that is too far before the match to plausibly apply to it', () => {
+    expect(
+      containsPhraseOutsideNegation(
+        'No prior relocation assistance is offered; active clearance is required for this role.',
+        'active clearance',
+      ),
+    ).toBe(true);
+  });
+
+  it('matches a later, un-negated occurrence even when an earlier one in the same text was negated', () => {
+    expect(
+      containsPhraseOutsideNegation(
+        'No active clearance is needed to apply. An active clearance will be required before the start date.',
+        'active clearance',
+      ),
+    ).toBe(true);
   });
 });
 

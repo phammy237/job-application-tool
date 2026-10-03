@@ -119,6 +119,30 @@ describe('normalizeCompanyName + namesAreEquivalent', () => {
       ),
     ).toBe(false);
   });
+
+  it('does not treat "Square" and "Squarespace" as equivalent — the bug this guards against (a raw substring test would wrongly equate two distinct real companies)', () => {
+    expect(
+      namesAreEquivalent(normalizeCompanyName('Square'), normalizeCompanyName('Squarespace')),
+    ).toBe(false);
+  });
+
+  it('does not treat "Block" and "Blockchain Solutions" as equivalent', () => {
+    expect(
+      namesAreEquivalent(
+        normalizeCompanyName('Block'),
+        normalizeCompanyName('Blockchain Solutions'),
+      ),
+    ).toBe(false);
+  });
+
+  it('still treats a genuine word-boundary containment as equivalent ("Deloitte" vs "Deloitte Consulting")', () => {
+    expect(
+      namesAreEquivalent(
+        normalizeCompanyName('Deloitte'),
+        normalizeCompanyName('Deloitte Consulting'),
+      ),
+    ).toBe(true);
+  });
 });
 
 describe('normalizeTitle', () => {

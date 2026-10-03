@@ -14,6 +14,13 @@ import { normalizeLocationText } from './normalize-location';
  * so it's excluded from the fingerprint entirely when it isn't more specific than the board root
  * — callers pass `canonicalApplyUrl` already computed via `canonicalizeUrl`.
  */
+/** Joined with a null byte, never `|` — job titles routinely contain a literal pipe (e.g.
+ * "Software Engineer | Backend", a common real posting format), so a `|`-joined fingerprint can
+ * collide between two different (company, title) pairs whenever a pipe lands at a field boundary
+ * (e.g. company "Acme | Co" + title "X" vs. company "Acme" + title "Co | X"). A null byte can't
+ * appear in any of these normalized parts in practice, so this delimiter is unambiguous. */
+const FINGERPRINT_DELIMITER = '\u0000';
+
 export function computeJobCatalogDedupeFingerprint(input: {
   companyName: string;
   title: string;
@@ -26,5 +33,5 @@ export function computeJobCatalogDedupeFingerprint(input: {
     input.locationText ? normalizeLocationText(input.locationText) : '',
     input.canonicalApplyUrl ?? '',
   ];
-  return parts.join('|');
+  return parts.join(FINGERPRINT_DELIMITER);
 }

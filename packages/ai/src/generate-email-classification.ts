@@ -7,8 +7,8 @@ import {
   type CareerOsSupabaseClient,
 } from '@career-os/database';
 import type { EmailClassification } from '@career-os/shared';
-import { callClaudeForEmailClassification } from './claude/call-claude';
-import { EMAIL_CLASSIFICATION_PROMPT_VERSION, MODEL_ID } from './config';
+import { callClaudeForEmailClassification, type ClaudeCallUsage } from './claude/call-claude';
+import { EMAIL_CLASSIFICATION_PROMPT_VERSION, estimateCostUsd, MODEL_ID } from './config';
 import { validateEmailClassificationContract } from './contract/validate-email-classification-contract';
 import { buildEmailClassificationSystemPrompt } from './prompt/build-email-classification-system-prompt';
 import { buildEmailClassificationUserPrompt } from './prompt/build-email-classification-user-prompt';
@@ -63,13 +63,13 @@ export async function classifyEmail(
       return { kind: 'provider_error' as const, message: callResult.message, latencyMs };
     }
     if (callResult.status === 'refusal') {
-      return { kind: 'rejected' as const, reason: 'refusal' as const, latencyMs };
+      return { kind: 'rejected' as const, reason: 'refusal' as const, latencyMs, usage: callResult.usage };
     }
     const validated = validateEmailClassificationContract(callResult.rawText);
     if (validated.status === 'ok') {
-      return { kind: 'accepted' as const, result: validated.result, latencyMs };
+      return { kind: 'accepted' as const, result: validated.result, latencyMs, usage: callResult.usage };
     }
-    return { kind: 'rejected' as const, reason: validated.reason, latencyMs };
+    return { kind: 'rejected' as const, reason: validated.reason, latencyMs, usage: callResult.usage };
   };
 
   // Step 2 — attempt 1, then exactly one retry, only on a rejection (refusal or contract
@@ -85,7 +85,9 @@ export async function classifyEmail(
     outcome = await runAttempt(retryReasonText);
   }
 
-  // Best-effort usage telemetry — never fails the user's actual request.
+  // Best-effort usage telemetry — never fails the user's actual request. No usage exists for a
+  // provider_error attempt (the provider was never meaningfully reached).
+  const claudeUsage: ClaudeCallUsage | null = outcome.kind === 'provider_error' ? null : outcome.usage;
   await recordAiUsageEvent(supabase, userId, {
     applicationId: null,
     generationRunId,
@@ -107,10 +109,10 @@ export async function classifyEmail(
     rejectionReason:
       outcome.kind === 'rejected' && outcome.reason !== 'refusal' ? outcome.reason : null,
     escalationReason: null,
-    inputTokens: 0,
+    inputTokens: claudeUsage?.inputTokens ?? 0,
     cachedInputTokens: 0,
-    outputTokens: 0,
-    estimatedCost: null,
+    outputTokens: claudeUsage?.outputTokens ?? 0,
+    estimatedCost: claudeUsage ? estimateCostUsd(claudeUsage) : null,
     latencyMs: outcome.latencyMs,
     promptVersion: EMAIL_CLASSIFICATION_PROMPT_VERSION,
   }).catch(() => {

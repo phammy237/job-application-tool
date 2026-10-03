@@ -5,6 +5,19 @@
  */
 export const MODEL_ID = 'claude-sonnet-5';
 
+/** Per-token pricing for MODEL_ID ($2/$10 per million input/output tokens) — update alongside
+ * MODEL_ID if it ever changes. Feeds only `ai_usage_events.estimated_cost` for cost visibility;
+ * never affects quota enforcement (`user_settings.ai_request_limit`) or any user-facing gate. */
+const INPUT_COST_PER_MILLION_TOKENS = 2;
+const OUTPUT_COST_PER_MILLION_TOKENS = 10;
+
+export function estimateCostUsd(usage: { inputTokens: number; outputTokens: number }): number {
+  return (
+    (usage.inputTokens / 1_000_000) * INPUT_COST_PER_MILLION_TOKENS +
+    (usage.outputTokens / 1_000_000) * OUTPUT_COST_PER_MILLION_TOKENS
+  );
+}
+
 /** Non-streaming call, short structured JSON output — well under the ~16k threshold that
  * would require streaming to avoid HTTP timeouts. */
 export const MAX_OUTPUT_TOKENS = 4096;

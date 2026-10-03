@@ -111,6 +111,49 @@ describe('extractApplyUrl', () => {
     expect(result).toBeNull();
   });
 
+  it('rejects a decorative href="#" Apply control (JS-only button, real action wired via onclick/modal) — the bug this guards against', () => {
+    const doc = docFromHtml(
+      `<a href="#" onclick="openApplyModal()">Apply now</a>`,
+      'https://acme.example/careers/backend-engineer',
+    );
+    const result = extractApplyUrl(
+      doc,
+      'https://acme.example/careers/backend-engineer',
+      'https://acme.example/careers/backend-engineer',
+      undefined,
+    );
+    expect(result).toBeNull();
+  });
+
+  it('rejects an empty href="" Apply control for the same reason', () => {
+    const doc = docFromHtml(
+      `<a href="" onclick="openApplyModal()">Apply now</a>`,
+      'https://acme.example/careers/backend-engineer',
+    );
+    const result = extractApplyUrl(
+      doc,
+      'https://acme.example/careers/backend-engineer',
+      'https://acme.example/careers/backend-engineer',
+      undefined,
+    );
+    expect(result).toBeNull();
+  });
+
+  it('still finds a real apply link when a decorative "#" control appears first', () => {
+    const doc = docFromHtml(
+      `<button href="#">Apply now</button>
+       <a href="/apply/8127182">Apply now</a>`,
+      'https://acme.example/careers/backend-engineer',
+    );
+    const result = extractApplyUrl(
+      doc,
+      'https://acme.example/careers/backend-engineer',
+      'https://acme.example/careers/backend-engineer',
+      undefined,
+    );
+    expect(result).toBe('https://acme.example/apply/8127182');
+  });
+
   it('returns null (never a guess) when there is nothing reliable on the page', () => {
     const doc = docFromHtml(`<p>No apply link here.</p>`, 'https://acme.example/careers/1');
     const result = extractApplyUrl(

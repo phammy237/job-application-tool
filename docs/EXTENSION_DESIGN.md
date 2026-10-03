@@ -199,7 +199,11 @@ Sections, top to bottom:
    unsupported — see `packages/shared`'s `field-review.ts`), each with edit / approve / skip
    controls per §6, plus bulk "Suggest all eligible" and "Approve all ready" actions
    (READY-confidence fields only — never a bulk approval for a lower-confidence draft or a
-   sensitive/unsupported field). A standalone ranked "job-match summary" /
+   sensitive/unsupported field. Confidence alone is also not sufficient: EXPERIENCE,
+   FREE_RESPONSE, WORK_AUTHORIZATION, RELOCATION, and COMPENSATION fields are excluded from
+   "Approve all ready" even at READY confidence, and always require an individual approve click
+   — see `EXPLICIT_APPROVAL_ONLY_CLASSIFICATIONS` in `packages/shared`'s `detected-field.ts`).
+   A standalone ranked "job-match summary" /
    "suggested candidate experiences" section, distinct from the per-field list, is not
    currently implemented — deferred, not a documentation error going forward.
 5. **Autofill Approved Fields** button — writes only approved values to the page; per-field

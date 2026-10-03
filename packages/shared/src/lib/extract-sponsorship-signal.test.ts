@@ -45,6 +45,16 @@ describe('extractSponsorshipSignal', () => {
     expect(result.signal).toBe('UNKNOWN');
   });
 
+  it('does not treat a generic "we sponsor" with no visa context as AVAILABLE — the bug this guards against', () => {
+    const result = extractSponsorshipSignal('We sponsor local hackathons and open-source meetups.');
+    expect(result.signal).toBe('UNKNOWN');
+  });
+
+  it('does treat "we sponsor" as AVAILABLE when the same sentence has visa context', () => {
+    const result = extractSponsorshipSignal('We sponsor work visas for exceptional candidates.');
+    expect(result.signal).toBe('AVAILABLE');
+  });
+
   it('bounds evidence length', () => {
     const longSentence = `We are unable to sponsor visas. ${'x'.repeat(500)}.`;
     const result = extractSponsorshipSignal(longSentence);

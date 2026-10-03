@@ -12,8 +12,8 @@ import {
   type Json,
 } from '@career-os/database';
 import { computeRequirementFingerprint, type MatchedFactProvenance } from '@career-os/shared';
-import { callClaudeForRequirementMapping } from './claude/call-claude';
-import { MODEL_ID, REQUIREMENT_MAPPING_PROMPT_VERSION } from './config';
+import { callClaudeForRequirementMapping, type ClaudeCallUsage } from './claude/call-claude';
+import { estimateCostUsd, MODEL_ID, REQUIREMENT_MAPPING_PROMPT_VERSION } from './config';
 import { validateRequirementMappingContract } from './contract/validate-requirement-mapping-contract';
 import { buildRequirementMappingSystemPrompt } from './prompt/build-requirement-mapping-system-prompt';
 import { buildRequirementMappingUserPrompt } from './prompt/build-requirement-mapping-user-prompt';
@@ -90,13 +90,13 @@ export async function generateRequirementMapping(
       return { kind: 'provider_error' as const, message: callResult.message, latencyMs };
     }
     if (callResult.status === 'refusal') {
-      return { kind: 'rejected' as const, reason: 'refusal' as const, latencyMs };
+      return { kind: 'rejected' as const, reason: 'refusal' as const, latencyMs, usage: callResult.usage };
     }
     const validated = validateRequirementMappingContract(callResult.rawText, allowedFactIds);
     if (validated.status === 'ok') {
-      return { kind: 'accepted' as const, mappings: validated.mappings, latencyMs };
+      return { kind: 'accepted' as const, mappings: validated.mappings, latencyMs, usage: callResult.usage };
     }
-    return { kind: 'rejected' as const, reason: validated.reason, latencyMs };
+    return { kind: 'rejected' as const, reason: validated.reason, latencyMs, usage: callResult.usage };
   };
 
   // Step 4 — attempt 1, then exactly one retry — but only on a rejection (refusal or contract
@@ -121,6 +121,7 @@ export async function generateRequirementMapping(
   // outcomes computed sequentially; record only the final outcome's attempt to keep this simple,
   // matching the minimal Phase 5A scope (full per-attempt-1-and-2 telemetry is not required by
   // the approved design).
+  const claudeUsage: ClaudeCallUsage | null = outcome.kind === 'provider_error' ? null : outcome.usage;
   await recordAiUsageEvent(supabase, userId, {
     applicationId: null,
     generationRunId,
@@ -142,10 +143,10 @@ export async function generateRequirementMapping(
     rejectionReason:
       outcome.kind === 'rejected' && outcome.reason !== 'refusal' ? outcome.reason : null,
     escalationReason: null,
-    inputTokens: 0,
+    inputTokens: claudeUsage?.inputTokens ?? 0,
     cachedInputTokens: 0,
-    outputTokens: 0,
-    estimatedCost: null,
+    outputTokens: claudeUsage?.outputTokens ?? 0,
+    estimatedCost: claudeUsage ? estimateCostUsd(claudeUsage) : null,
     latencyMs: outcome.latencyMs,
     promptVersion: REQUIREMENT_MAPPING_PROMPT_VERSION,
   }).catch(() => {

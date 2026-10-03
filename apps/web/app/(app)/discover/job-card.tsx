@@ -1,4 +1,4 @@
-import { Card, CardContent, CardHeader } from '@career-os/ui';
+import { buttonVariants, Card, CardContent, CardHeader } from '@career-os/ui';
 import { selectJobApplyActions, type DiscoveryFeedResultItem } from '@career-os/shared';
 import Link from 'next/link';
 import { EMPLOYMENT_LABELS, WORKPLACE_LABELS } from './discovery-display-labels';
@@ -58,26 +58,33 @@ export function JobCard({ job, now }: { job: DiscoveryFeedResultItem; now: Date 
           coverage={job.coverage}
           eligibilityStatus={job.eligibilityStatus}
         />
-        <div className="flex flex-wrap items-center gap-3 text-sm">
+        <div className="flex flex-wrap items-center gap-2">
           {applyActions.primary ? (
             <a
               href={applyActions.primary.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-primary hover:underline"
+              className={buttonVariants({ variant: 'default', size: 'sm' })}
             >
-              {applyActions.primary.label} →
+              {applyActions.primary.label}
+              <span aria-hidden="true">↗</span>
             </a>
           ) : (
             <a
               href={applyActions.fallbackSearchUrl ?? '#'}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-primary hover:underline"
+              className={buttonVariants({ variant: 'outline', size: 'sm' })}
             >
-              Find official posting →
+              Find official posting
+              <span aria-hidden="true">↗</span>
             </a>
           )}
+          <StartApplicationButton
+            jobCatalogId={job.jobCatalogId}
+            trackedApplicationId={job.trackedApplicationId}
+            trackedApplicationStatus={job.trackedApplicationStatus}
+          />
           {applyActions.sourceUrl ? (
             <a
               href={applyActions.sourceUrl}
@@ -89,11 +96,6 @@ export function JobCard({ job, now }: { job: DiscoveryFeedResultItem; now: Date 
             </a>
           ) : null}
         </div>
-        <StartApplicationButton
-          jobCatalogId={job.jobCatalogId}
-          trackedApplicationId={job.trackedApplicationId}
-          trackedApplicationStatus={job.trackedApplicationStatus}
-        />
       </CardContent>
     </Card>
   );

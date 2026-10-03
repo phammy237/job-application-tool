@@ -1,4 +1,4 @@
-import { containsPhrase } from './phrase-matcher';
+import { containsPhraseOutsideNegation } from './phrase-matcher';
 
 export type WorkAuthorizationRequirement = 'AUTHORIZATION_REQUIRED' | 'UNKNOWN';
 
@@ -40,7 +40,7 @@ export function extractWorkAuthorizationRequirement(plainText: string): WorkAuth
     // "sponsoring", and a false-positive exclusion here only ever falls back to the always-safe
     // UNKNOWN, never a wrong requirement.
     if (/sponsor/i.test(sentence)) continue;
-    if (AUTHORIZATION_PHRASES.some((phrase) => containsPhrase(sentence, phrase))) {
+    if (AUTHORIZATION_PHRASES.some((phrase) => containsPhraseOutsideNegation(sentence, phrase))) {
       return { requirement: 'AUTHORIZATION_REQUIRED', evidence: boundedEvidence(sentence) };
     }
   }

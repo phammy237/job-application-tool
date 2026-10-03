@@ -107,6 +107,10 @@ export async function listOwnMatchScoresRanked(
     .select('*')
     .eq('user_id', userId)
     .order('match_score', { ascending: false })
+    // Tiebreaker on a stable, unique column — `match_score` is a bounded/rounded number, so ties
+    // are plausible, and `.range()` paging needs a fully deterministic order to avoid skipping or
+    // duplicating a tied row across page boundaries.
+    .order('job_catalog_id', { ascending: true })
     .range(offset, offset + limit - 1);
   assertNoError(error, 'listOwnMatchScoresRanked');
   return (data ?? []).map(rowToMatchScore);

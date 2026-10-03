@@ -39,6 +39,23 @@ export const NEVER_SUGGEST_CLASSIFICATIONS: ReadonlySet<FieldClassification> = n
 ]);
 
 /**
+ * CLAUDE.md: "Fields classified EXPERIENCE, FREE_RESPONSE, WORK_AUTHORIZATION, RELOCATION, and
+ * COMPENSATION always require an explicit per-field user approval click before autofill — never
+ * pre-checked, never bulk-approved by default." A suggestion for one of these can still reach
+ * the popup's READY review state (it's a legitimate, usable suggestion), but "approve all
+ * eligible" must skip it regardless of confidence — only an individual approve click may move it
+ * to APPROVED. Lives here, next to NEVER_SUGGEST_CLASSIFICATIONS, as the same kind of single
+ * shared source the bulk-approval reducer and any future surface must both consult.
+ */
+export const EXPLICIT_APPROVAL_ONLY_CLASSIFICATIONS: ReadonlySet<FieldClassification> = new Set([
+  'EXPERIENCE',
+  'FREE_RESPONSE',
+  'WORK_AUTHORIZATION',
+  'RELOCATION',
+  'COMPENSATION',
+]);
+
+/**
  * A single form field detected on a job application page by the extension's content script.
  * Lives only in the extension (popup state / chrome.storage.local) in Phase 2 — never sent to
  * or persisted by the backend, since nothing server-side consumes field data until Phase 3's

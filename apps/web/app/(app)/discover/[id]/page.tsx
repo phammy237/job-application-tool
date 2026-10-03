@@ -1,6 +1,6 @@
 import { getOwnDiscoveryFeedJobDetail } from '@career-os/database';
 import { selectJobApplyActions } from '@career-os/shared';
-import { Badge, Card, CardContent, CardHeader, CardTitle } from '@career-os/ui';
+import { Badge, buttonVariants, Card, CardContent, CardHeader, CardTitle } from '@career-os/ui';
 import { notFound } from 'next/navigation';
 import { requireUser } from '../../../../lib/auth';
 import { createClient } from '../../../../lib/supabase/server';
@@ -66,41 +66,43 @@ export default async function DiscoverJobDetailPage({
         <p className="text-muted-foreground text-sm">
           {workplaceLabel} · {employmentLabel}
         </p>
-        <div className="flex flex-wrap items-center gap-4">
+        <div className="flex flex-wrap items-center gap-2">
           {applyActions.primary ? (
             <a
               href={applyActions.primary.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-primary inline-block text-sm hover:underline"
+              className={buttonVariants({ variant: 'default', size: 'sm' })}
             >
-              {applyActions.primary.label} →
+              {applyActions.primary.label}
+              <span aria-hidden="true">↗</span>
             </a>
           ) : (
             <a
               href={applyActions.fallbackSearchUrl ?? '#'}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-primary inline-block text-sm hover:underline"
+              className={buttonVariants({ variant: 'outline', size: 'sm' })}
             >
-              Find official posting →
+              Find official posting
+              <span aria-hidden="true">↗</span>
             </a>
           )}
-          {applyActions.sourceUrl ? (
-            <a
-              href={applyActions.sourceUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-muted-foreground inline-block text-sm hover:underline"
-            >
-              View source
-            </a>
-          ) : null}
           <StartApplicationButton
             jobCatalogId={job.id}
             trackedApplicationId={trackedApplication?.id ?? null}
             trackedApplicationStatus={trackedApplication?.status ?? null}
           />
+          {applyActions.sourceUrl ? (
+            <a
+              href={applyActions.sourceUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-muted-foreground text-xs hover:underline"
+            >
+              View source
+            </a>
+          ) : null}
         </div>
       </div>
 
