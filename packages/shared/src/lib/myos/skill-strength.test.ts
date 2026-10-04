@@ -74,7 +74,7 @@ describe('computeSkillStrength levels', () => {
 
   it('is STRONG only with 3 entities, verified evidence, and recent activity', () => {
     const { s, projects, edges } = setup(3);
-    const ev = evidence({ verificationState: 'VERIFIED' });
+    const ev = evidence({ verificationState: 'VERIFIED', title: 'Python service README' });
     const g = graphOf({
       skills: [s],
       projects,
@@ -225,7 +225,7 @@ describe('computeSkillStrength levels', () => {
     const p = project({ startDate: '2025-01-01', endDate: '2025-06-01' });
     const a = achievement({ occurredOn: '2025-07-01' });
     const st = story();
-    const ev = evidence({ verificationState: 'VERIFIED' });
+    const ev = evidence({ verificationState: 'VERIFIED', title: 'Skill README' });
     const g = graphOf({
       skills: [s],
       projects: [p],

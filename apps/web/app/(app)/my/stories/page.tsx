@@ -2,6 +2,7 @@ import { loadOwnEvidenceGraph } from '@career-os/database';
 import { COMPETENCIES, type MyosStory } from '@career-os/shared';
 import { Badge, Label, Select, buttonVariants } from '@career-os/ui';
 import Link from 'next/link';
+import { Feedback, firstParam } from '../projects/_components/feedback';
 import { requireUser } from '../../../../lib/auth';
 import { createClient } from '../../../../lib/supabase/server';
 import { EmptyState, VerificationBadge, VisibilityBadge } from '../_components/badges';
@@ -33,7 +34,9 @@ export default async function StoriesPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const filter = parseStoryFilter(await searchParams);
+  const sp = await searchParams;
+  const filter = parseStoryFilter(sp);
+  const notice = firstParam(sp.notice);
   const user = await requireUser();
   const supabase = await createClient();
   const graph = await loadOwnEvidenceGraph(supabase, user.id);
@@ -55,6 +58,7 @@ export default async function StoriesPage({
 
   return (
     <div className="space-y-6">
+      <Feedback notice={notice} />
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Stories</h1>
         <p className="text-muted-foreground mt-1 text-sm">

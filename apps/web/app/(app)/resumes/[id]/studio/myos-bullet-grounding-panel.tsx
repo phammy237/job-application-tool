@@ -1,6 +1,6 @@
 'use client';
 
-import type { StructuredResumeV1 } from '@career-os/shared';
+import { safeHttpHref, type StructuredResumeV1 } from '@career-os/shared';
 import Link from 'next/link';
 import { useMemo } from 'react';
 import {
@@ -136,7 +136,7 @@ function BulletDetails({ g }: { g: BulletGrounding }) {
                       <li key={ev.evidenceId} className="flex items-center gap-1">
                         {ev.sourceUrl ? (
                           <a
-                            href={ev.sourceUrl}
+                            href={safeHttpHref(ev.sourceUrl) ?? undefined}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="hover:text-primary underline"

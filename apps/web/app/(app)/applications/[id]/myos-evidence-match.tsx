@@ -1,5 +1,6 @@
 import {
   matchRequirementsToEvidence,
+  safeHttpHref,
   type EvidenceGraphData,
   type RequirementInput,
   type RequirementLevel,
@@ -175,7 +176,7 @@ function MatchBody({
                             <li key={ev.evidenceId} className="flex items-center gap-1">
                               {ev.sourceUrl ? (
                                 <a
-                                  href={ev.sourceUrl}
+                                  href={safeHttpHref(ev.sourceUrl) ?? undefined}
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   className="hover:text-primary underline"

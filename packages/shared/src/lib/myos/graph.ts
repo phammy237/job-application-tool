@@ -38,6 +38,19 @@ export function parseNodeKey(key: string): { type: NodeType; id: string } | null
   return { type: key.slice(0, i) as NodeType, id: key.slice(i + 1) };
 }
 
+function evidenceSearchText(ev: {
+  title: string;
+  excerpt: string | null;
+  metadata: Record<string, unknown>;
+}): string {
+  const parts: string[] = [ev.title, ev.excerpt ?? ''];
+  for (const v of Object.values(ev.metadata ?? {})) {
+    if (typeof v === 'string') parts.push(v);
+    else if (Array.isArray(v)) for (const x of v) if (typeof x === 'string') parts.push(x);
+  }
+  return parts.join('\n');
+}
+
 export type NodeMetaValue = string | number | boolean | null;
 
 export interface IndexedNode {
@@ -48,6 +61,8 @@ export interface IndexedNode {
   sublabel: string | null;
   verificationHint: VerificationState;
   meta: Record<string, NodeMetaValue>;
+  /** Evidence only: title + excerpt + string metadata values, for skill-specific text matching. Never sent to clients. */
+  searchText?: string;
 }
 
 export interface IndexedEdge {
@@ -188,6 +203,7 @@ export function buildGraphIndex(graph: EvidenceGraphData): GraphIndex {
       label: ev.title,
       sublabel: ev.sourceType,
       verificationHint: ev.verificationState,
+      searchText: evidenceSearchText(ev),
       meta: {
         sourceType: ev.sourceType,
         visibility: ev.visibility,

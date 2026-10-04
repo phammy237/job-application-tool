@@ -233,6 +233,29 @@ export async function setOwnGithubRepositoryProject(
   return rowToGithubRepository(unwrapRow(data, error, 'setOwnGithubRepositoryProject'));
 }
 
+/**
+ * Atomically links a repository to a project only if it has none yet
+ * (update ... where project_id is null returning). Returns null when another request already
+ * claimed it, so a double submit can never attach two projects.
+ */
+export async function claimOwnGithubRepositoryProject(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+  id: string,
+  projectId: string,
+): Promise<GithubRepository | null> {
+  const { data, error } = await supabase
+    .from('github_repositories')
+    .update({ project_id: projectId })
+    .eq('id', id)
+    .eq('user_id', userId)
+    .is('project_id', null)
+    .select('*')
+    .maybeSingle();
+  assertNoError(error, 'claimOwnGithubRepositoryProject');
+  return data ? rowToGithubRepository(data) : null;
+}
+
 export async function markOwnGithubRepositorySyncError(
   supabase: CareerOsSupabaseClient,
   userId: string,

@@ -14,15 +14,21 @@ const mocks = vi.hoisted(() => ({
   rejectOwnCandidate: vi.fn(),
   updateOwnProject: vi.fn(),
   deleteOwnProject: vi.fn(),
+  createOwnProject: vi.fn(),
+  updateOwnProjectDetail: vi.fn(),
+  createOwnEvidence: vi.fn(),
+  createOwnEdge: vi.fn(),
+  deleteOwnEvidence: vi.fn(),
 }));
 
 vi.mock('@career-os/database', () => ({
   acceptOwnCandidate: mocks.acceptOwnCandidate,
   rejectOwnCandidate: mocks.rejectOwnCandidate,
   createOwnAchievement: vi.fn(),
-  createOwnEdge: vi.fn(),
-  createOwnEvidence: vi.fn(),
-  createOwnProject: vi.fn(),
+  createOwnEdge: mocks.createOwnEdge,
+  createOwnEvidence: mocks.createOwnEvidence,
+  createOwnProject: mocks.createOwnProject,
+  deleteOwnEvidence: mocks.deleteOwnEvidence,
   createOwnSkill: vi.fn(),
   deleteOwnAchievement: vi.fn(),
   deleteOwnEdge: mocks.deleteOwnEdge,
@@ -33,7 +39,7 @@ vi.mock('@career-os/database', () => ({
   listOwnEdgesForNode: mocks.listOwnEdgesForNode,
   listOwnSkills: vi.fn(),
   updateOwnProject: mocks.updateOwnProject,
-  updateOwnProjectDetail: vi.fn(),
+  updateOwnProjectDetail: mocks.updateOwnProjectDetail,
 }));
 vi.mock('../../../../lib/auth', () => ({ requireUser: mocks.requireUser }));
 vi.mock('../../../../lib/supabase/server', () => ({ createClient: mocks.createClient }));
@@ -78,7 +84,7 @@ describe('project actions', () => {
     const url = await redirected(
       actions.setProjectApprovalAction(fd({ id: PROJECT, userApproved: 'on' })),
     );
-    expect(url).toContain('error=Project not found');
+    expect(url).toContain('error=not_found');
     expect(mocks.updateOwnProject).not.toHaveBeenCalled();
   });
 
@@ -131,5 +137,47 @@ describe('project actions', () => {
     mocks.getOwnProjectDetail.mockResolvedValue(null);
     await redirected(actions.deleteProjectAction(fd({ id: PROJECT })));
     expect(mocks.deleteOwnProject).not.toHaveBeenCalled();
+  });
+
+  it('uses fixed notice codes, never free text', async () => {
+    const url = await redirected(
+      actions.setProjectVisibilityAction(fd({ id: PROJECT, visibility: 'PUBLIC' })),
+    );
+    expect(url).toContain('notice=visibility_saved');
+  });
+
+  it('createProject deletes the just-created project when the detail update fails', async () => {
+    mocks.createOwnProject.mockResolvedValue({ id: PROJECT });
+    mocks.updateOwnProjectDetail.mockRejectedValue(new Error('boom'));
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const url = await redirected(actions.createProjectAction(fd({ name: 'X' })));
+    expect(url).toContain('error=create_failed');
+    expect(mocks.deleteOwnProject).toHaveBeenCalledWith(CLIENT, USER, PROJECT);
+    spy.mockRestore();
+  });
+
+  it('addProjectEvidence deletes the evidence row when linking it fails', async () => {
+    mocks.createOwnEvidence.mockResolvedValue({ id: CAND });
+    mocks.createOwnEdge.mockRejectedValue(new Error('boom'));
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const url = await redirected(
+      actions.addProjectEvidenceAction(fd({ id: PROJECT, title: 'T', excerpt: 'note' })),
+    );
+    expect(url).toContain('error=failed');
+    expect(mocks.deleteOwnEvidence).toHaveBeenCalledWith(CLIENT, USER, CAND);
+    spy.mockRestore();
+  });
+
+  it('deleteProjectEvidence only deletes evidence linked to the project', async () => {
+    mocks.listOwnEdgesForNode.mockResolvedValue([]);
+    const bad = await redirected(
+      actions.deleteProjectEvidenceAction(fd({ id: PROJECT, evidenceId: CAND })),
+    );
+    expect(bad).toContain('error=evidence_mismatch');
+    expect(mocks.deleteOwnEvidence).not.toHaveBeenCalled();
+
+    mocks.listOwnEdgesForNode.mockResolvedValue([{ id: EDGE, fromType: 'EVIDENCE', fromId: CAND }]);
+    await redirected(actions.deleteProjectEvidenceAction(fd({ id: PROJECT, evidenceId: CAND })));
+    expect(mocks.deleteOwnEvidence).toHaveBeenCalledWith(CLIENT, USER, CAND);
   });
 });

@@ -9,6 +9,7 @@ import {
   createOwnSkill,
   deleteOwnAchievement,
   deleteOwnEdge,
+  deleteOwnEvidence,
   deleteOwnProject,
   getOwnAchievement,
   getOwnCandidate,
@@ -24,6 +25,7 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { requireUser } from '../../../../lib/auth';
 import { createClient } from '../../../../lib/supabase/server';
+import type { ErrorCode, NoticeCode } from './_components/feedback-messages';
 import {
   parseAddAchievement,
   parseAddEvidence,
@@ -45,29 +47,42 @@ import {
  *  - the FormData is validated with zod before any write;
  *  - the target project is re-checked to belong to that user (RLS is the backstop, not the only
  *    check), and child rows (edges, achievements, candidates) are re-checked to belong to it;
- *  - the outcome is reported by redirecting back with `?notice=` or `?error=` so the page can
- *    render it in an aria-live region without client JavaScript.
+ *  - the outcome is reported by redirecting back with a fixed `?notice=` / `?error=` CODE (never
+ *    free text) that the page maps to a message in an aria-live region.
  */
 
-class ActionError extends Error {}
+class ActionError extends Error {
+  constructor(readonly code: ErrorCode) {
+    super(code);
+  }
+}
 
 interface Ctx {
   supabase: CareerOsSupabaseClient;
   userId: string;
 }
 
-function back(path: string, key: 'notice' | 'error', message: string): never {
-  redirect(`${path}?${key}=${encodeURIComponent(message)}#feedback`);
+function back(path: string, key: 'notice' | 'error', code: NoticeCode | ErrorCode): never {
+  redirect(`${path}?${key}=${code}#feedback`);
 }
 
 function must<T>(r: ParseResult<T>): T {
-  if (!r.ok) throw new ActionError(r.error);
+  if (!r.ok) throw new ActionError('invalid');
   return r.data;
+}
+
+/** Compensating cleanup must never mask the original failure. */
+async function bestEffort(fn: () => Promise<unknown>): Promise<void> {
+  try {
+    await fn();
+  } catch {
+    console.error('[career-os] myos compensating cleanup failed');
+  }
 }
 
 async function assertOwnsProject(ctx: Ctx, projectId: string): Promise<void> {
   const project = await getOwnProjectDetail(ctx.supabase, ctx.userId, projectId);
-  if (!project) throw new ActionError('Project not found');
+  if (!project) throw new ActionError('not_found');
 }
 
 /**
@@ -76,32 +91,32 @@ async function assertOwnsProject(ctx: Ctx, projectId: string): Promise<void> {
  */
 async function withProject(
   fd: FormData,
-  fn: (ctx: Ctx, projectId: string) => Promise<string>,
+  fn: (ctx: Ctx, projectId: string) => Promise<NoticeCode>,
 ): Promise<never> {
   const user = await requireUser();
   const rawId = fd.get('id');
   const path = typeof rawId === 'string' && /^[0-9a-f-]{36}$/i.test(rawId) ? `/my/projects/${rawId}` : '/my/projects';
-  let outcome: { key: 'notice' | 'error'; message: string };
+  let outcome: { key: 'notice' | 'error'; code: NoticeCode | ErrorCode };
   try {
     const supabase = await createClient();
     const ctx: Ctx = { supabase, userId: user.id };
     const id = must(parseIdOnly(fd)).id;
     await assertOwnsProject(ctx, id);
-    const message = await fn(ctx, id);
+    const code = await fn(ctx, id);
     revalidatePath(`/my/projects/${id}`);
     revalidatePath('/my/projects');
     revalidatePath('/my');
-    outcome = { key: 'notice', message };
+    outcome = { key: 'notice', code };
   } catch (error) {
     if (!(error instanceof ActionError)) {
       console.error('[career-os] myos project action failed', (error as Error)?.name);
     }
     outcome = {
       key: 'error',
-      message: error instanceof ActionError ? error.message : 'Something went wrong. Please try again.',
+      code: error instanceof ActionError ? error.code : 'failed',
     };
   }
-  return back(path, outcome.key, outcome.message);
+  return back(path, outcome.key, outcome.code);
 }
 
 // --------------------------------------------------------------------------------------------
@@ -109,10 +124,12 @@ async function withProject(
 export async function createProjectAction(fd: FormData): Promise<never> {
   const user = await requireUser();
   let projectId: string | null = null;
-  let error: string | null = null;
+  let createdId: string | null = null;
+  let supabase: CareerOsSupabaseClient | null = null;
+  let error: ErrorCode | null = null;
   try {
     const input = must(parseCreateProject(fd));
-    const supabase = await createClient();
+    supabase = await createClient();
     const project = await createOwnProject(supabase, user.id, {
       name: input.name,
       description: null,
@@ -127,6 +144,7 @@ export async function createProjectAction(fd: FormData): Promise<never> {
       approvedForApplications: false,
       visibleOnPublicProfile: false,
     });
+    createdId = project.id;
     await updateOwnProjectDetail(supabase, user.id, project.id, {
       status: input.status,
       summary: input.summary,
@@ -138,10 +156,16 @@ export async function createProjectAction(fd: FormData): Promise<never> {
     if (!(e instanceof ActionError)) {
       console.error('[career-os] myos create project failed', (e as Error)?.name);
     }
-    error = e instanceof ActionError ? e.message : 'Could not create the project. Please try again.';
+    error = e instanceof ActionError ? e.code : 'create_failed';
+    // Compensate: do not leave a half-created project (no status/summary) behind.
+    if (createdId && supabase) {
+      const client = supabase;
+      const orphan = createdId;
+      await bestEffort(() => deleteOwnProject(client, user.id, orphan));
+    }
   }
-  if (projectId) redirect(`/my/projects/${projectId}?notice=${encodeURIComponent('Project created')}`);
-  return back('/my/projects', 'error', error ?? 'Could not create the project');
+  if (projectId) redirect(`/my/projects/${projectId}?notice=project_created`);
+  return back('/my/projects', 'error', error ?? 'create_failed');
 }
 
 export async function updateProjectAction(fd: FormData): Promise<never> {
@@ -160,7 +184,7 @@ export async function updateProjectAction(fd: FormData): Promise<never> {
       summary: input.summary,
       collaborators: input.collaborators,
     });
-    return 'Project details saved';
+    return 'project_saved';
   });
 }
 
@@ -171,7 +195,7 @@ export async function setProjectApprovalAction(fd: FormData): Promise<never> {
       userApproved: input.userApproved,
       approvedForApplications: input.approvedForApplications,
     });
-    return 'Approval saved';
+    return 'approval_saved';
   });
 }
 
@@ -179,7 +203,7 @@ export async function setProjectVisibilityAction(fd: FormData): Promise<never> {
   return withProject(fd, async (ctx, id) => {
     const input = must(parseVisibility(fd));
     await updateOwnProjectDetail(ctx.supabase, ctx.userId, id, { visibility: input.visibility });
-    return 'Visibility saved';
+    return 'visibility_saved';
   });
 }
 
@@ -189,7 +213,7 @@ export async function saveTalkingPointsAction(fd: FormData): Promise<never> {
     await updateOwnProjectDetail(ctx.supabase, ctx.userId, id, {
       talkingPoints: input.talkingPoints,
     });
-    return 'Talking points saved';
+    return 'talking_points_saved';
   });
 }
 
@@ -223,14 +247,14 @@ export async function addProjectSkillAction(fd: FormData): Promise<never> {
       relation: 'DEMONSTRATES',
       verificationState: 'USER_PROVIDED',
     });
-    return `Added ${skill}`;
+    return 'skill_added';
   });
 }
 
 /** Deletes an edge only after confirming it is attached to this project. */
 async function removeProjectEdge(ctx: Ctx, projectId: string, edgeId: string): Promise<void> {
   const edges = await listOwnEdgesForNode(ctx.supabase, ctx.userId, 'PROJECT', projectId);
-  if (!edges.some((e) => e.id === edgeId)) throw new ActionError('That link does not belong to this project');
+  if (!edges.some((e) => e.id === edgeId)) throw new ActionError('edge_mismatch');
   await deleteOwnEdge(ctx.supabase, ctx.userId, edgeId);
 }
 
@@ -238,7 +262,7 @@ export async function removeProjectSkillAction(fd: FormData): Promise<never> {
   return withProject(fd, async (ctx, id) => {
     const { edgeId } = must(parseEdgeRemoval(fd));
     await removeProjectEdge(ctx, id, edgeId);
-    return 'Skill removed from this project';
+    return 'skill_removed';
   });
 }
 
@@ -257,7 +281,7 @@ export async function addProjectAchievementAction(fd: FormData): Promise<never> 
       userApproved: true,
       visibility: 'PRIVATE',
     });
-    return 'Achievement added';
+    return 'achievement_added';
   });
 }
 
@@ -266,10 +290,10 @@ export async function deleteProjectAchievementAction(fd: FormData): Promise<neve
     const { other: achievementId } = must(parseIdPair(fd, 'achievementId'));
     const achievement = await getOwnAchievement(ctx.supabase, ctx.userId, achievementId);
     if (!achievement || achievement.projectId !== id) {
-      throw new ActionError('That achievement does not belong to this project');
+      throw new ActionError('achievement_mismatch');
     }
     await deleteOwnAchievement(ctx.supabase, ctx.userId, achievementId);
-    return 'Achievement deleted';
+    return 'achievement_deleted';
   });
 }
 
@@ -285,15 +309,21 @@ export async function addProjectEvidenceAction(fd: FormData): Promise<never> {
       verificationState: 'USER_PROVIDED',
       visibility: 'PRIVATE',
     });
-    await createOwnEdge(ctx.supabase, ctx.userId, {
-      fromType: 'EVIDENCE',
-      fromId: evidence.id,
-      toType: 'PROJECT',
-      toId: id,
-      relation: 'SUPPORTS',
-      verificationState: 'USER_PROVIDED',
-    });
-    return 'Evidence added';
+    try {
+      await createOwnEdge(ctx.supabase, ctx.userId, {
+        fromType: 'EVIDENCE',
+        fromId: evidence.id,
+        toType: 'PROJECT',
+        toId: id,
+        relation: 'SUPPORTS',
+        verificationState: 'USER_PROVIDED',
+      });
+    } catch (e) {
+      // Compensate: an unlinked evidence row would be an orphan the user cannot see here.
+      await bestEffort(() => deleteOwnEvidence(ctx.supabase, ctx.userId, evidence.id));
+      throw e;
+    }
+    return 'evidence_added';
   });
 }
 
@@ -301,16 +331,32 @@ export async function unlinkProjectEvidenceAction(fd: FormData): Promise<never> 
   return withProject(fd, async (ctx, id) => {
     const { edgeId } = must(parseEdgeRemoval(fd));
     await removeProjectEdge(ctx, id, edgeId);
-    return 'Evidence unlinked (the evidence record itself is kept)';
+    return 'evidence_unlinked';
+  });
+}
+
+/**
+ * Deletes an evidence record, only when it is linked to this project. Its edges cascade, so
+ * anything else it supported loses that support.
+ */
+export async function deleteProjectEvidenceAction(fd: FormData): Promise<never> {
+  return withProject(fd, async (ctx, id) => {
+    const { other: evidenceId } = must(parseIdPair(fd, 'evidenceId'));
+    const edges = await listOwnEdgesForNode(ctx.supabase, ctx.userId, 'PROJECT', id);
+    if (!edges.some((e) => e.fromType === 'EVIDENCE' && e.fromId === evidenceId)) {
+      throw new ActionError('evidence_mismatch');
+    }
+    await deleteOwnEvidence(ctx.supabase, ctx.userId, evidenceId);
+    return 'evidence_deleted';
   });
 }
 
 async function ownPendingCandidate(ctx: Ctx, projectId: string, candidateId: string) {
   const candidate = await getOwnCandidate(ctx.supabase, ctx.userId, candidateId);
   if (!candidate || candidate.projectId !== projectId) {
-    throw new ActionError('That suggestion does not belong to this project');
+    throw new ActionError('candidate_mismatch');
   }
-  if (candidate.status !== 'PENDING') throw new ActionError('That suggestion was already decided');
+  if (candidate.status !== 'PENDING') throw new ActionError('candidate_decided');
   return candidate;
 }
 
@@ -320,9 +366,9 @@ export async function acceptCandidateAction(fd: FormData): Promise<never> {
     await ownPendingCandidate(ctx, id, other);
     const result = await acceptOwnCandidate(ctx.supabase, ctx.userId, other);
     if (result?.status === 'conflict') {
-      throw new ActionError(`${result.message} Reject the suggestion or clear the summary first.`);
+      throw new ActionError('candidate_conflict');
     }
-    return 'Suggestion accepted and added to your profile';
+    return 'candidate_accepted';
   });
 }
 
@@ -331,13 +377,13 @@ export async function rejectCandidateAction(fd: FormData): Promise<never> {
     const { other } = must(parseIdPair(fd, 'candidateId'));
     await ownPendingCandidate(ctx, id, other);
     await rejectOwnCandidate(ctx.supabase, ctx.userId, other);
-    return 'Suggestion rejected';
+    return 'candidate_rejected';
   });
 }
 
 export async function deleteProjectAction(fd: FormData): Promise<never> {
   const user = await requireUser();
-  let error: string | null = null;
+  let error: ErrorCode | null = null;
   try {
     const { id } = must(parseIdOnly(fd));
     const supabase = await createClient();
@@ -349,8 +395,8 @@ export async function deleteProjectAction(fd: FormData): Promise<never> {
     if (!(e instanceof ActionError)) {
       console.error('[career-os] myos delete project failed', (e as Error)?.name);
     }
-    error = e instanceof ActionError ? e.message : 'Could not delete the project';
+    error = e instanceof ActionError ? e.code : 'delete_failed';
   }
   if (error) return back('/my/projects', 'error', error);
-  return back('/my/projects', 'notice', 'Project deleted');
+  return back('/my/projects', 'notice', 'project_deleted');
 }

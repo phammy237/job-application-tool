@@ -104,6 +104,7 @@ function ClaimBlock({ claim, index }: { claim: AskClaim; index: number }) {
 function AnswerCard({ item, heading }: { item: HistoryItem; heading: 'h2' | 'h3' }) {
   const { answer } = item;
   const H = heading;
+  const Sub = heading === 'h2' ? 'h3' : 'h4';
   return (
     <article className="bg-card space-y-4 rounded-lg border p-4" aria-label={`Answer to: ${answer.question}`}>
       <div>
@@ -111,7 +112,7 @@ function AnswerCard({ item, heading }: { item: HistoryItem; heading: 'h2' | 'h3'
         <H className="text-base font-semibold break-words">{answer.question}</H>
       </div>
       <section aria-label="Answer">
-        <h4 className="text-sm font-semibold">Answer</h4>
+        <Sub className="text-sm font-semibold">Answer</Sub>
         {answer.insufficientEvidence ? (
           <div role="status" className="mt-1 rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm">
             <p className="font-medium">Career OS has no evidence for this.</p>
@@ -129,7 +130,7 @@ function AnswerCard({ item, heading }: { item: HistoryItem; heading: 'h2' | 'h3'
       </section>
       {answer.claims.length > 0 && (
         <section aria-label="Supporting claims, evidence and sources">
-          <h4 className="text-sm font-semibold">Supporting claims → Evidence → Source</h4>
+          <Sub className="text-sm font-semibold">Supporting claims → Evidence → Source</Sub>
           <ol className="mt-2 space-y-4">
             {answer.claims.map((c, i) => (
               <ClaimBlock key={`${i}-${c.text}`} claim={c} index={i} />
@@ -139,7 +140,7 @@ function AnswerCard({ item, heading }: { item: HistoryItem; heading: 'h2' | 'h3'
       )}
       {answer.notes.length > 0 && (
         <section aria-label="Notes">
-          <h4 className="text-sm font-semibold">Notes</h4>
+          <Sub className="text-sm font-semibold">Notes</Sub>
           <ul className="text-muted-foreground mt-1 list-disc space-y-1 pl-5 text-sm">
             {answer.notes.map((n, i) => (
               <li key={i}>{n}</li>

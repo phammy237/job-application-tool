@@ -11,6 +11,7 @@ import {
   type GraphIndex,
   type IndexedNode,
 } from './graph';
+import { findTechnologies, techEntryFor } from './tech-dictionary';
 import type { NodeType } from '../../schemas/myos';
 
 /**
@@ -23,8 +24,12 @@ import type { NodeType } from '../../schemas/myos';
  *    a VERIFIED/USER_PROVIDED edge count toward STRONG/MODERATE. Unapproved entities and entities
  *    reached only by INFERRED/AI_GENERATED edges are listed in `supportingEntities` and called out
  *    as "unconfirmed" in `reasons`, but never raise the level.
- *  - Evidence: distinct EVIDENCE nodes joined by a SUPPORTS edge to the skill itself or to any
- *    of its supporting entities.
+ *  - Evidence: distinct EVIDENCE nodes joined by a SUPPORTS edge to the skill itself, or to a
+ *    counted entity AND whose text (title, excerpt, string/array metadata such as languages and
+ *    topics) mentions the skill name or one of its tech-dictionary aliases (case-insensitive,
+ *    whole word). Evidence attached only to an entity and never mentioning the skill is "related
+ *    evidence (not skill-specific)": listed in `reasons`, never counted, never lifts STRONG or
+ *    quality.
  *  - Verified evidence: evidence whose own state is VERIFIED AND whose SUPPORTS link is
  *    user-confirmed (VERIFIED or USER_PROVIDED). An AI-suggested link never makes evidence count
  *    as verified.
@@ -66,12 +71,13 @@ export const SKILL_STRENGTH_RULES = {
     { level: 'MODERATE', rule: 'Two or more distinct confirmed, approved linked items.' },
     {
       level: 'STRONG',
-      rule: 'Three or more distinct confirmed, approved linked items, at least one verified piece of evidence, and activity within the last 36 months.',
+      rule: 'Three or more distinct confirmed, approved linked items, at least one verified piece of skill-specific evidence, and activity within the last 36 months.',
     },
   ],
   notes: [
     'Strength is a count of supporting evidence, not a measure of proficiency.',
     'Evidence only counts as verified when its own state is VERIFIED and its link is confirmed by you.',
+    'Evidence attached to a linked item counts toward a skill only if it is attached to the skill itself or actually mentions the skill (or a known alias); otherwise it is shown as related evidence and does not raise strength.',
     'Recency uses project, experience, and achievement dates; ongoing work counts as current.',
   ],
 } as const;
@@ -152,6 +158,22 @@ function activityDate(node: IndexedNode, now: Date): Date | null {
   }
 }
 
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** True when the evidence text mentions the skill name or a tech-dictionary alias. */
+function evidenceMentionsSkill(text: string, skillName: string): boolean {
+  const name = skillName.trim();
+  if (!name || !text) return false;
+  const entry = techEntryFor(name) ?? techEntryFor(findTechnologies(name)[0]?.canonical ?? '');
+  if (entry) {
+    return findTechnologies(text).some((m) => m.canonical === entry.canonical);
+  }
+  const re = new RegExp(`(?<![A-Za-z0-9_])${escapeRe(name)}(?![A-Za-z0-9_])`, 'i');
+  return re.test(text);
+}
+
 function strengthFromIndex(index: GraphIndex, skillId: string, now: Date): SkillStrength {
   const skillKey = nodeKey('SKILL', skillId);
   const entities = new Map<string, IndexedNode>();
@@ -173,12 +195,18 @@ function strengthFromIndex(index: GraphIndex, skillId: string, now: Date): Skill
     .map((e) => e.label)
     .sort();
 
+  const skillName = index.nodes.get(skillKey)?.label ?? '';
   const evidence = new Map<string, { node: IndexedNode; verified: boolean }>();
+  const related = new Map<string, IndexedNode>();
   for (const anchor of [skillKey, ...counted.keys()]) {
     for (const ie of index.adjacency.get(anchor) ?? []) {
       if (ie.edge.relation !== 'SUPPORTS') continue;
       const ev = index.nodes.get(otherEnd(ie, anchor));
       if (!ev || ev.type !== 'EVIDENCE') continue;
+      if (anchor !== skillKey && !evidenceMentionsSkill(ev.searchText ?? ev.label, skillName)) {
+        related.set(ev.key, ev);
+        continue;
+      }
       const verified =
         ev.verificationHint === 'VERIFIED' && isUserConfirmed(ie.edge.verificationState);
       const prev = evidence.get(ev.key);
@@ -186,6 +214,7 @@ function strengthFromIndex(index: GraphIndex, skillId: string, now: Date): Skill
     }
   }
 
+  for (const k of evidence.keys()) related.delete(k);
   const evidenceCount = evidence.size;
   const verifiedEvidenceCount = [...evidence.values()].filter((e) => e.verified).length;
 
@@ -264,6 +293,12 @@ function strengthFromIndex(index: GraphIndex, skillId: string, now: Date): Skill
           `Latest activity is ${monthsSinceLatest} months old; strong needs 36 or fewer.`,
         );
       }
+    }
+    if (related.size > 0) {
+      const names = [...related.values()].map((e) => e.label).sort();
+      reasons.push(
+        `Related evidence (not skill-specific, not counted): ${names.slice(0, 5).join(', ')}.`,
+      );
     }
     reasons.push(
       evidenceCount === 0

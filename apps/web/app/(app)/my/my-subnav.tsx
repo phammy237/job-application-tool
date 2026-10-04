@@ -8,6 +8,7 @@ const ITEMS = [
   { href: '/my/projects', label: 'Projects' },
   { href: '/my/skills', label: 'Skills' },
   { href: '/my/timeline', label: 'Timeline' },
+  { href: '/my/achievements', label: 'Achievements' },
   { href: '/my/stories', label: 'Stories' },
   { href: '/my/graph', label: 'Graph' },
   { href: '/my/ask', label: 'Ask' },
@@ -32,8 +33,8 @@ export function MySubnav() {
                 aria-current={active ? 'page' : undefined}
                 className={
                   active
-                    ? 'border-primary text-foreground -mb-px block border-b-2 px-3 py-2 text-sm font-medium'
-                    : 'text-muted-foreground hover:text-foreground block px-3 py-2 text-sm font-medium'
+                    ? 'border-primary text-foreground -mb-px block border-b-2 px-3 py-2.5 text-sm font-medium'
+                    : 'text-muted-foreground hover:text-foreground block px-3 py-2.5 text-sm font-medium'
                 }
               >
                 {item.label}

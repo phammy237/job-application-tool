@@ -13,7 +13,7 @@ const VERIFICATION: Record<VerificationState, { label: string; hint: string; cls
   VERIFIED: {
     label: 'Verified',
     hint: 'Directly observed from a source system',
-    cls: 'border-green-300 bg-green-50 text-green-800',
+    cls: 'border-green-300 bg-green-50 text-green-800 dark:border-green-800 dark:bg-green-950 dark:text-green-200',
   },
   USER_PROVIDED: {
     label: 'You confirmed',
@@ -23,7 +23,7 @@ const VERIFICATION: Record<VerificationState, { label: string; hint: string; cls
   INFERRED: {
     label: 'Inferred',
     hint: 'Derived automatically; not yet confirmed by you',
-    cls: 'border-amber-300 bg-amber-50 text-amber-900',
+    cls: 'border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200',
   },
   AI_GENERATED: {
     label: 'AI-generated',
@@ -68,16 +68,24 @@ export function VisibilityBadge({ visibility }: { visibility: Visibility }) {
   );
 }
 
+/** Evidence-based support level, not a proficiency rating. */
 const STRENGTH: Record<SkillStrengthLevel, { label: string; cls: string }> = {
   NONE: { label: 'No evidence', cls: 'border-dashed border-border text-muted-foreground' },
   LIMITED: { label: 'Limited', cls: 'border-border bg-secondary text-secondary-foreground' },
   MODERATE: { label: 'Moderate', cls: 'border-primary/30 bg-accent text-accent-foreground' },
-  STRONG: { label: 'Strong', cls: 'border-green-300 bg-green-50 text-green-800' },
+  STRONG: { label: 'Well supported', cls: 'border-green-300 bg-green-50 text-green-800 dark:border-green-800 dark:bg-green-950 dark:text-green-200' },
 };
 
 export function StrengthBadge({ level }: { level: SkillStrengthLevel }) {
   const v = STRENGTH[level];
-  return <span className={`${BASE} ${v.cls}`}>{v.label}</span>;
+  return (
+    <span
+      className={`${BASE} ${v.cls}`}
+      title="Based on how much approved evidence supports this skill, not a rating of how proficient you are."
+    >
+      {v.label}
+    </span>
+  );
 }
 
 /** Neutral pill for flags such as "Unapproved" or "No evidence". */
@@ -90,7 +98,7 @@ export function FlagBadge({
 }) {
   const cls =
     tone === 'warn'
-      ? 'border-amber-300 bg-amber-50 text-amber-900'
+      ? 'border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200'
       : 'border-border bg-secondary text-secondary-foreground';
   return <span className={`${BASE} ${cls}`}>{children}</span>;
 }

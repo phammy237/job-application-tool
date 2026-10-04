@@ -19,6 +19,10 @@ describe('safeRedirectPath', () => {
     expect(safeRedirectPath(value)).toBe('/dashboard');
   });
 
+  it('keeps a path with a query string and hash', () => {
+    expect(safeRedirectPath('/my/projects?q=api&status=ACTIVE')).toBe('/my/projects?q=api&status=ACTIVE');
+  });
+
   it('falls back for non-strings and honors a custom fallback', () => {
     expect(safeRedirectPath(null)).toBe('/dashboard');
     expect(safeRedirectPath(undefined, '/settings')).toBe('/settings');

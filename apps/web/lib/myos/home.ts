@@ -100,7 +100,7 @@ export function buildChecklist(
     {
       step: 2,
       label: 'Add experiences',
-      href: '/profile',
+      href: '/my/projects',
       done: graph.experiences.length > 0,
       hint: 'Roles and employers live on your profile.',
     },
@@ -131,7 +131,7 @@ export function buildChecklist(
     {
       step: 6,
       label: 'Review your first profile',
-      href: '/profile',
+      href: '/my/projects',
       done: graph.projects.some((p) => p.userApproved && p.approvedForApplications),
       hint: 'Approve at least one project for applications.',
     },

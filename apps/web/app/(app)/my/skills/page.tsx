@@ -11,7 +11,7 @@ import { requireUser } from '../../../../lib/auth';
 import { createClient } from '../../../../lib/supabase/server';
 import { EmptyState, StrengthBadge, VerificationBadge } from '../_components/badges';
 import { ActionForm } from './action-form';
-import { addSkillAction, linkSkillAction } from './actions';
+import { addSkillAction, deleteSkillAction, linkSkillAction } from './actions';
 import {
   categoryLabel,
   detectMissingTechnologies,
@@ -338,6 +338,16 @@ function SkillRow({
               </ul>
             )}
           </div>
+
+          <ActionForm
+            action={deleteSkillAction}
+            submitLabel="Delete skill"
+            pendingLabel="Deleting…"
+            variant="ghost"
+            confirmMessage={`Delete the skill "${skill.name}"? Its links to projects and experience are removed; the projects and evidence themselves are kept.`}
+          >
+            <input type="hidden" name="id" value={skill.id} />
+          </ActionForm>
 
           {linkable.length > 0 ? (
             <ActionForm action={linkSkillAction} submitLabel="Link" variant="outline">

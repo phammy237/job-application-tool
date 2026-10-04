@@ -5,6 +5,7 @@ import { requireUser } from '../../../../lib/auth';
 import { createClient } from '../../../../lib/supabase/server';
 import { EmptyState, VerificationBadge, VisibilityBadge } from '../_components/badges';
 import { ActionForm } from '../skills/action-form';
+import { AchievementSupport } from './achievement-support';
 import { createAchievementAction, deleteAchievementAction } from './actions';
 
 export const metadata = { title: 'Achievements · myOS' };
@@ -17,11 +18,21 @@ export default async function AchievementsPage() {
   const projectName = new Map(graph.projects.map((p) => [p.id, p.name]));
   const experienceName = new Map(graph.experiences.map((e) => [e.id, `${e.title} at ${e.company}`]));
   const evidenceCount = new Map<string, number>();
+  const linkedEvidence = new Map<string, Set<string>>();
   for (const edge of graph.edges) {
     if (edge.relation === 'SUPPORTS' && edge.toType === 'ACHIEVEMENT') {
       evidenceCount.set(edge.toId, (evidenceCount.get(edge.toId) ?? 0) + 1);
+      if (edge.fromType === 'EVIDENCE') {
+        const set = linkedEvidence.get(edge.toId) ?? new Set<string>();
+        set.add(edge.fromId);
+        linkedEvidence.set(edge.toId, set);
+      }
     }
   }
+  const evidenceOptionsFor = (achievementId: string) =>
+    graph.evidence
+      .filter((e) => !linkedEvidence.get(achievementId)?.has(e.id))
+      .map((e) => ({ id: e.id, label: e.title + ' (' + e.sourceType + ')' }));
   const achievements = [...graph.achievements].sort((a, b) =>
     (b.occurredOn ?? '').localeCompare(a.occurredOn ?? '') || a.title.localeCompare(b.title),
   );
@@ -174,6 +185,12 @@ export default async function AchievementsPage() {
                       <VisibilityBadge visibility={a.visibility} />
                     </div>
                   </div>
+                  <AchievementSupport
+                    achievementId={a.id}
+                    evidenceCount={count}
+                    verified={a.verificationState === 'VERIFIED'}
+                    options={evidenceOptionsFor(a.id)}
+                  />
                   <ActionForm
                     action={deleteAchievementAction}
                     submitLabel="Delete"

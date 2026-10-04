@@ -131,6 +131,14 @@ Email integration is optional and separated from the core application workflow.
 
 ---
 
+## myOS — personal evidence layer
+
+myOS (`/my`) sits under Career OS: an evidence graph of projects, skills, experiences,
+achievements and stories, each backed by provenance (`VERIFIED` / `USER_PROVIDED` / `INFERRED` /
+`AI_GENERATED`). It powers evidence-aware job matching, interview prep, Resume Studio bullet
+grounding, GitHub import, an evidence-backed "Ask" interface and an opt-in read-only portfolio API.
+It is deterministic (no LLM, no AI quota) and private by default. See [docs/myos](docs/myos/README.md).
+
 ## Product principles
 
 ### User approval first

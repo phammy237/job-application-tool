@@ -233,6 +233,11 @@ export function GithubPanel({
                 : 'No token: public repositories only.'}{' '}
               Last sync: {day(connection.lastSyncedAt)}.
             </p>
+            {!connection.hasToken ? (
+              <p className="text-sm text-amber-900 dark:text-amber-200" role="note">
+                Username-only connection: repositories are imported as unverified because ownership of this GitHub account cannot be confirmed. Add a read-only token to verify.
+              </p>
+            ) : null}
             {connection.status !== 'CONNECTED' || connection.lastError ? (
               <p className="text-destructive text-sm" role="alert">
                 Connection status {connection.status.toLowerCase()}
@@ -273,7 +278,7 @@ export function GithubPanel({
               Result: {syncResult.status.toLowerCase()}
             </p>
             <p className="text-muted-foreground">{summarizeSync(syncResult.stats)}</p>
-            {syncLimit ? <p role="alert" className="text-amber-900">{syncLimit}</p> : null}
+            {syncLimit ? <p role="alert" className="text-amber-900 dark:text-amber-200">{syncLimit}</p> : null}
           </div>
         ) : null}
 
@@ -300,7 +305,7 @@ export function GithubPanel({
               name="token"
               type="password"
               maxLength={255}
-              autoComplete="off"
+              autoComplete="new-password"
               spellCheck={false}
               aria-describedby="gh-token-help"
             />
@@ -416,7 +421,7 @@ export function GithubPanel({
                   <p className="text-muted-foreground text-xs">{summarizeSync(stats)}</p>
                   {run.error ? <p className="text-destructive text-xs">{run.error}</p> : null}
                   {rateLimitMessage(stats) ? (
-                    <p className="text-xs text-amber-900">{rateLimitMessage(stats)}</p>
+                    <p className="text-xs text-amber-900 dark:text-amber-200">{rateLimitMessage(stats)}</p>
                   ) : null}
                 </li>
               );

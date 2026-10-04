@@ -9,6 +9,7 @@ import {
 } from '@career-os/database';
 import { uuidSchema } from '@career-os/shared';
 import { revalidatePath } from 'next/cache';
+import { redirect } from 'next/navigation';
 import { requireUser } from '../../../../lib/auth';
 import { createClient } from '../../../../lib/supabase/server';
 import {
@@ -54,16 +55,27 @@ export async function createStoryAction(formData: FormData): Promise<ActionResul
   const user = await requireUser();
   const parsed = parseStoryForm(formData);
   if (!parsed.ok) return errorResult(parsed.message);
+  let createdId: string | null = null;
+  let supabase: Supabase | null = null;
   try {
-    const supabase = await createClient();
+    supabase = await createClient();
     const story = await createOwnStory(supabase, user.id, {
       ...parsed.value.input,
       verificationState: 'USER_PROVIDED',
     });
+    createdId = story.id;
     await syncLinks(supabase, user.id, story.id, parsed.value);
     revalidate();
     return okResult('Story saved.');
   } catch (error) {
+    // Compensate: a story whose links failed to save would silently lose its evidence links.
+    if (createdId && supabase) {
+      try {
+        await deleteOwnStory(supabase, user.id, createdId);
+      } catch {
+        console.error('[career-os] myos story cleanup failed');
+      }
+    }
     return toErrorResult(error, 'Could not save the story.');
   }
 }
@@ -96,11 +108,14 @@ export async function deleteStoryAction(formData: FormData): Promise<ActionResul
   try {
     const supabase = await createClient();
     await deleteOwnStory(supabase, user.id, id.data);
-    revalidate(id.data);
-    return okResult('Story deleted.');
   } catch (error) {
     return toErrorResult(error, 'Could not delete the story.');
   }
+  // Redirect (outside the try: redirect() throws) rather than revalidating the open page, which
+  // would 404 when deleting from /my/stories/[id].
+  revalidatePath('/my/stories');
+  revalidatePath('/my');
+  redirect('/my/stories?notice=deleted');
 }
 
 /** "Mark ready for interviews" toggle (user_approved). */

@@ -68,3 +68,10 @@ describe('formatDate', () => {
     expect(formatDate('2025-03-04T10:00:00Z')).toBe('2025-03-04');
   });
 });
+
+describe("buildChecklist step 6", () => {
+  it("points at the projects page where approval toggles live", () => {
+    const step = buildChecklist(emptyEvidenceGraph(), null, []).find((s) => s.step === 6);
+    expect(step?.href).toBe("/my/projects");
+  });
+});

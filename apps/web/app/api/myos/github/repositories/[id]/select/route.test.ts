@@ -20,7 +20,9 @@ const mocks = vi.hoisted(() => ({
   getOwnGithubRepository: vi.fn(),
   setOwnGithubRepositorySelected: vi.fn(),
   setOwnGithubRepositoryProject: vi.fn(),
+  claimOwnGithubRepositoryProject: vi.fn(),
   createOwnProject: vi.fn(),
+  deleteOwnProject: vi.fn(),
   updateOwnProjectDetail: vi.fn(),
   upsertOwnEvidenceBySource: vi.fn(),
   createOwnEdge: vi.fn(),
@@ -40,7 +42,9 @@ vi.mock('@career-os/database', () => ({
   getOwnGithubRepository: mocks.getOwnGithubRepository,
   setOwnGithubRepositorySelected: mocks.setOwnGithubRepositorySelected,
   setOwnGithubRepositoryProject: mocks.setOwnGithubRepositoryProject,
+  claimOwnGithubRepositoryProject: mocks.claimOwnGithubRepositoryProject,
   createOwnProject: mocks.createOwnProject,
+  deleteOwnProject: mocks.deleteOwnProject,
   updateOwnProjectDetail: mocks.updateOwnProjectDetail,
   upsertOwnEvidenceBySource: mocks.upsertOwnEvidenceBySource,
   createOwnEdge: mocks.createOwnEdge,
@@ -75,13 +79,15 @@ beforeEach(() => {
   updateChain.eq2.mockResolvedValue({ error: null });
   mocks.getOwnGithubRepository.mockResolvedValue(repo);
   mocks.setOwnGithubRepositorySelected.mockResolvedValue({ ...repo, selected: true });
-  mocks.setOwnGithubRepositoryProject.mockResolvedValue({
+  mocks.setOwnGithubRepositoryProject.mockResolvedValue({ ...repo, selected: true });
+  mocks.claimOwnGithubRepositoryProject.mockResolvedValue({
     ...repo,
     selected: true,
     projectId: PROJECT_ID,
   });
   mocks.createOwnProject.mockResolvedValue({ id: PROJECT_ID });
   mocks.upsertOwnEvidenceBySource.mockResolvedValue({ id: EVIDENCE_ID });
+  mocks.createOwnEdge.mockResolvedValue({});
 });
 
 describe('POST /api/myos/github/repositories/[id]/select', () => {
@@ -123,6 +129,12 @@ describe('POST /api/myos/github/repositories/[id]/select', () => {
       { status: 'ACTIVE', visibility: 'PRIVATE' },
     );
     expect(updateChain.update).toHaveBeenCalledWith({ origin: 'GITHUB' });
+    expect(mocks.claimOwnGithubRepositoryProject).toHaveBeenCalledWith(
+      expect.anything(),
+      USER_ID,
+      REPO_ID,
+      PROJECT_ID,
+    );
     // evidence creation uses the service-role client with the session user id
     expect(mocks.upsertOwnEvidenceBySource.mock.calls[0]![0]).toEqual({ tag: 'admin' });
     expect(mocks.upsertOwnEvidenceBySource.mock.calls[0]![1]).toBe(USER_ID);
@@ -153,29 +165,64 @@ describe('POST /api/myos/github/repositories/[id]/select', () => {
     });
   });
 
-  it('surfaces an error from the follow-up origin update', async () => {
+  it('compensates (deletes the new project) and returns 500 when the origin update fails', async () => {
     updateChain.eq2.mockResolvedValue({ error: { message: 'boom' } });
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const res = await POST(req({ selected: true }), ctx());
     expect(res.status).toBe(500);
     expect(mocks.upsertOwnEvidenceBySource).not.toHaveBeenCalled();
+    expect(mocks.deleteOwnProject).toHaveBeenCalledWith(expect.anything(), USER_ID, PROJECT_ID);
     spy.mockRestore();
   });
 
-  it('is idempotent: an already-linked repo returns without a new project or evidence', async () => {
+  it('an already-linked repo gets no new project but its REPRESENTS edge is repaired', async () => {
     mocks.getOwnGithubRepository.mockResolvedValue({ ...repo, projectId: PROJECT_ID });
     const res = await POST(req({ selected: true }), ctx());
     expect(res.status).toBe(200);
     expect(mocks.createOwnProject).not.toHaveBeenCalled();
-    expect(mocks.upsertOwnEvidenceBySource).not.toHaveBeenCalled();
+    expect(mocks.claimOwnGithubRepositoryProject).not.toHaveBeenCalled();
+    expect(mocks.createOwnEdge).toHaveBeenCalledWith(
+      expect.anything(),
+      USER_ID,
+      expect.objectContaining({ toId: PROJECT_ID, relation: 'REPRESENTS' }),
+    );
   });
 
-  it('does not create a second project when one is already linked, or when unselecting', async () => {
-    mocks.getOwnGithubRepository.mockResolvedValue({ ...repo, projectId: PROJECT_ID });
-    await POST(req({ selected: true }), ctx());
-    mocks.getOwnGithubRepository.mockResolvedValue(repo);
+  it('when the atomic claim is lost, deletes its project and returns the existing one', async () => {
+    const OTHER = '66666666-6666-4666-8666-666666666666';
+    mocks.claimOwnGithubRepositoryProject.mockResolvedValue(null);
+    mocks.getOwnGithubRepository
+      .mockResolvedValueOnce(repo)
+      .mockResolvedValueOnce({ ...repo, projectId: OTHER });
+    const res = await POST(req({ selected: true }), ctx());
+    expect(res.status).toBe(200);
+    expect(mocks.deleteOwnProject).toHaveBeenCalledWith(expect.anything(), USER_ID, PROJECT_ID);
+    expect(mocks.createOwnEdge).toHaveBeenCalledWith(
+      expect.anything(),
+      USER_ID,
+      expect.objectContaining({ toId: OTHER, relation: 'REPRESENTS' }),
+    );
+    expect((await res.json()).repository.projectId).toBe(OTHER);
+  });
+
+  it('compensates (releases the repo, deletes the project) and returns 500 when linking fails', async () => {
+    mocks.createOwnEdge.mockRejectedValue(new Error('boom'));
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await POST(req({ selected: true }), ctx());
+    expect(res.status).toBe(500);
+    expect(mocks.setOwnGithubRepositoryProject).toHaveBeenCalledWith(
+      expect.anything(),
+      USER_ID,
+      REPO_ID,
+      null,
+    );
+    expect(mocks.deleteOwnProject).toHaveBeenCalledWith(expect.anything(), USER_ID, PROJECT_ID);
+    spy.mockRestore();
+  });
+
+  it('does not create a project when unselecting', async () => {
     await POST(req({ selected: false }), ctx());
     expect(mocks.createOwnProject).not.toHaveBeenCalled();
-    expect(mocks.setOwnGithubRepositorySelected).toHaveBeenCalledTimes(2);
+    expect(mocks.setOwnGithubRepositorySelected).toHaveBeenCalledTimes(1);
   });
 });

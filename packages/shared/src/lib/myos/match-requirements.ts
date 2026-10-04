@@ -34,7 +34,9 @@ import { matchTokensWithRelated, scoreTextMatch } from './text';
  *
  * VERDICT: requirements without a category are treated as REQUIRED (conservative). REQUIRED weighs 2,
  * PREFERRED weighs 1; level scores STRONG 1 / MODERATE 0.65 / LIMITED 0.3 / NONE 0.
- * STRONG_FIT = weighted fit ≥ 0.65 and no REQUIRED gap; WEAK_FIT = fit < 0.35, or at least half of
+ * STRONG_FIT = weighted fit ≥ 0.75 AND at least half of all requirements at STRONG level AND no
+ * REQUIRED gap AND at most one REQUIRED requirement at LIMITED (a posting that is only MODERATE
+ * everywhere is PARTIAL_FIT); WEAK_FIT = fit < 0.35, or at least half of
  * the REQUIRED requirements are gaps, or there are no requirements to judge; else PARTIAL_FIT.
  */
 
@@ -346,6 +348,7 @@ export function matchRequirementsToEvidence(
   let scoreSum = 0;
   const requiredGaps: string[] = [];
   let requiredTotal = 0;
+  let requiredLimited = 0;
   for (const m of matches) {
     counts[m.level] += 1;
     const w = m.category === 'REQUIRED' ? 2 : 1;
@@ -354,13 +357,19 @@ export function matchRequirementsToEvidence(
     if (m.category === 'REQUIRED') {
       requiredTotal += 1;
       if (m.level === 'NONE') requiredGaps.push(m.requirementText);
+      if (m.level === 'LIMITED') requiredLimited += 1;
     }
   }
   const fit = weightSum === 0 ? 0 : scoreSum / weightSum;
   let verdict: RequirementMatchSummary['overallVerdict'];
   if (matches.length === 0 || fit < 0.35 || (requiredTotal > 0 && requiredGaps.length * 2 >= requiredTotal)) {
     verdict = 'WEAK_FIT';
-  } else if (fit >= 0.65 && requiredGaps.length === 0) {
+  } else if (
+    fit >= 0.75 &&
+    counts.STRONG * 2 >= matches.length &&
+    requiredGaps.length === 0 &&
+    requiredLimited <= 1
+  ) {
     verdict = 'STRONG_FIT';
   } else {
     verdict = 'PARTIAL_FIT';

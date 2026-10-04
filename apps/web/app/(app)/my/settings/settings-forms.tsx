@@ -118,7 +118,19 @@ export function ApiKeyPanel({ hasKey }: { hasKey: boolean }) {
           )}
         </p>
       )}
-      <form action={action}>
+      <form
+        action={action}
+        onSubmit={(event) => {
+          if (
+            (hasKey || state.key) &&
+            !window.confirm(
+              'Rotate the API key? The current key stops working immediately and your website must be updated with the new one.',
+            )
+          ) {
+            event.preventDefault();
+          }
+        }}
+      >
         <Button type="submit" variant={hasKey || state.key ? 'outline' : 'default'} disabled={pending}>
           {pending ? 'Working…' : hasKey || state.key ? 'Rotate key' : 'Generate key'}
         </Button>

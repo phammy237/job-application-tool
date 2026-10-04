@@ -221,10 +221,15 @@ export function classifyQuestion(question: string): AskIntent {
   if (q.length === 0 || /^(write|draft|generate|compose|rewrite|create|make)\b/.test(q)) {
     return 'UNSUPPORTED';
   }
-  if (/\b(weak|weakest|weaknesses|gaps?|lacking|missing|improve|improvement)\b/.test(q)) {
+  // WEAK_AREAS only on explicit weakness phrasing; bare "gap", "missing", "improve" do not count.
+  if (
+    /\b(weak|weakest|weaknesses|weakness)\b/.test(q) ||
+    /\bgaps? (in|of) my (profile|portfolio|resume|experience|skills?)\b/.test(q) ||
+    /\b(what am i missing|what'?s missing|what is missing)\b/.test(q) ||
+    /\bimprove my (profile|portfolio|resume)\b/.test(q)
+  ) {
     return 'WEAK_AREAS';
   }
-  if (/\b(interview|interviews|prepare|prep)\b/.test(q)) return 'INTERVIEW_PREP';
   const comps = detectCompetencies(q);
   if (
     comps.length > 0 &&
@@ -237,6 +242,8 @@ export function classifyQuestion(question: string): AskIntent {
   if (/\b(where have i used|evidence|used|demonstrate|shows?|experience)\b/.test(q)) {
     return 'SKILL_EVIDENCE';
   }
+  // Interview prep is the fallback for interview wording with no explicit skill/topic intent.
+  if (/\b(interview|interviews|prepare|prep)\b/.test(q)) return 'INTERVIEW_PREP';
   return 'GENERAL_SEARCH';
 }
 
@@ -496,11 +503,12 @@ function answerWeakAreas(
     notes.push(`No approved story is tagged: ${missing.map(competencyLabel).join(', ')}.`);
   }
   if (claims.length === 0 && missing.length === 0) {
-    return insufficient(question, 'WEAK_AREAS', 'I found no weak areas in the stored profile.', []);
+    // The graph is non-empty (checked by the caller), so "no weak areas" is a valid answer.
+    return { question, intent: 'WEAK_AREAS', answer: 'I found no weak areas in the stored profile.', claims: [], insufficientEvidence: false, notes: [] };
   }
   const intro = 'Weak spots found in your stored profile:';
   if (claims.length === 0) {
-    return { question, intent: 'WEAK_AREAS', answer: composeAnswer(intro, claims, notes), claims, insufficientEvidence: true, notes: [...notes, ...ADD_DATA_NOTES] };
+    return { question, intent: 'WEAK_AREAS', answer: composeAnswer(intro, claims, notes), claims, insufficientEvidence: false, notes };
   }
   return { question, intent: 'WEAK_AREAS', answer: composeAnswer(intro, claims, notes), claims, insufficientEvidence: false, notes };
 }

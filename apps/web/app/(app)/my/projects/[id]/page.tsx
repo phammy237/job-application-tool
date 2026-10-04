@@ -18,6 +18,7 @@ import {
   addProjectSkillAction,
   deleteProjectAchievementAction,
   deleteProjectAction,
+  deleteProjectEvidenceAction,
   rejectCandidateAction,
   removeProjectSkillAction,
   saveTalkingPointsAction,
@@ -26,7 +27,10 @@ import {
   unlinkProjectEvidenceAction,
   updateProjectAction,
 } from '../actions';
+import { AchievementSupport } from '../../achievements/achievement-support';
 import { Feedback, firstParam } from '../_components/feedback';
+import { ConfirmDeleteForm } from '../_components/confirm-delete-form';
+import { VisibilitySelect } from '../_components/visibility-select';
 import { SubmitButton } from '../_components/submit-button';
 import { projectDetailView } from '../detail-helpers';
 
@@ -111,6 +115,18 @@ export default async function ProjectDetailPage({
   if (!view) notFound();
   const { project, skills, achievements, evidence } = view;
   const pending = pendingAll.filter((c) => c.projectId === id);
+  const supportEdges = graph.edges.filter(
+    (e) => e.relation === 'SUPPORTS' && e.fromType === 'EVIDENCE' && e.toType === 'ACHIEVEMENT',
+  );
+  const supportFor = (achievementId: string) => {
+    const linked = new Set(supportEdges.filter((e) => e.toId === achievementId).map((e) => e.fromId));
+    return {
+      count: linked.size,
+      options: graph.evidence
+        .filter((e) => !linked.has(e.id))
+        .map((e) => ({ id: e.id, label: e.title + ' (' + e.sourceType + ')' })),
+    };
+  };
   const repo = repos.find((r) => r.projectId === id) ?? null;
 
   return (
@@ -281,7 +297,7 @@ export default async function ProjectDetailPage({
                 <form action={removeProjectSkillAction}>
                   <IdField id={id} />
                   <input type="hidden" name="edgeId" value={edge.id} />
-                  <Button type="submit" variant="ghost" size="sm" className="h-7 px-2 text-xs" aria-label={`Remove ${skill.name} from this project`}>
+                  <Button type="submit" variant="ghost" size="sm" className="min-h-10 px-2 text-xs" aria-label={`Remove ${skill.name} from this project`}>
                     Remove
                   </Button>
                 </form>
@@ -327,6 +343,14 @@ export default async function ProjectDetailPage({
                     Delete
                   </Button>
                 </form>
+                <div className="w-full">
+                  <AchievementSupport
+                    achievementId={a.id}
+                    evidenceCount={supportFor(a.id).count}
+                    verified={a.verificationState === 'VERIFIED'}
+                    options={supportFor(a.id).options}
+                  />
+                </div>
               </li>
             ))}
           </ul>
@@ -404,13 +428,22 @@ export default async function ProjectDetailPage({
                     ) : null}
                   </p>
                 </div>
-                <form action={unlinkProjectEvidenceAction}>
-                  <IdField id={id} />
-                  <input type="hidden" name="edgeId" value={edge.id} />
-                  <Button type="submit" variant="ghost" size="sm" aria-label={`Unlink evidence ${item.title}`}>
-                    Unlink
-                  </Button>
-                </form>
+                <div className="flex gap-1">
+                  <form action={unlinkProjectEvidenceAction}>
+                    <IdField id={id} />
+                    <input type="hidden" name="edgeId" value={edge.id} />
+                    <Button type="submit" variant="ghost" size="sm" aria-label={`Unlink evidence ${item.title}`}>
+                      Unlink
+                    </Button>
+                  </form>
+                  <ConfirmDeleteForm
+                    action={deleteProjectEvidenceAction}
+                    fields={{ id, evidenceId: item.id }}
+                    label="Delete evidence"
+                    ariaLabel={`Delete evidence ${item.title}`}
+                    message={`Delete the evidence "${item.title}"? It is removed everywhere it is linked (other projects and achievements lose this support). This cannot be undone.`}
+                  />
+                </div>
               </li>
             ))}
           </ul>
@@ -478,13 +511,7 @@ export default async function ProjectDetailPage({
           <IdField id={id} />
           <div className="space-y-1.5">
             <Label htmlFor="visibility">Visibility</Label>
-            <Select id="visibility" name="visibility" defaultValue={project.visibility} aria-describedby="vis-help" className="max-w-xs">
-              {VISIBILITY_OPTIONS.map(([v, l]) => (
-                <option key={v} value={v}>
-                  {l}
-                </option>
-              ))}
-            </Select>
+            <VisibilitySelect defaultValue={project.visibility} options={VISIBILITY_OPTIONS} />
             <p id="vis-help" className="text-muted-foreground text-xs">
               Nothing is public unless you choose PUBLIC and enable the portfolio. Private stays
               visible only to you; Career OS only is used inside the app and is never exported.
