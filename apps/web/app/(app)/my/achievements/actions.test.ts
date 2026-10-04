@@ -52,7 +52,9 @@ describe('achievement actions', () => {
   it('create deletes the achievement when the owner edge fails', async () => {
     mocks.createOwnAchievement.mockResolvedValue({ id: ACH });
     mocks.createOwnEdge.mockRejectedValue(new Error('boom'));
-    const res = await actions.createAchievementAction(fd({ title: 'Won', projectId: PROJECT }));
+    const res = await actions.createAchievementAction(
+      fd({ title: 'Won', projectId: PROJECT }),
+    );
     expect(res.ok).toBe(false);
     expect(mocks.deleteOwnAchievement).toHaveBeenCalledWith(CLIENT, USER, ACH);
   });
@@ -60,7 +62,9 @@ describe('achievement actions', () => {
   it('links existing evidence with a USER_PROVIDED SUPPORTS edge', async () => {
     mocks.getOwnAchievement.mockResolvedValue({ id: ACH });
     mocks.getOwnEvidence.mockResolvedValue({ id: EVID });
-    const res = await actions.linkAchievementEvidenceAction(fd({ id: ACH, evidenceId: EVID }));
+    const res = await actions.linkAchievementEvidenceAction(
+      fd({ id: ACH, evidenceId: EVID }),
+    );
     expect(res.ok).toBe(true);
     expect(mocks.createOwnEdge).toHaveBeenCalledWith(CLIENT, USER, {
       fromType: 'EVIDENCE',
@@ -75,7 +79,9 @@ describe('achievement actions', () => {
   it('refuses to link evidence or achievements the user does not own', async () => {
     mocks.getOwnAchievement.mockResolvedValue(null);
     mocks.getOwnEvidence.mockResolvedValue({ id: EVID });
-    const res = await actions.linkAchievementEvidenceAction(fd({ id: ACH, evidenceId: EVID }));
+    const res = await actions.linkAchievementEvidenceAction(
+      fd({ id: ACH, evidenceId: EVID }),
+    );
     expect(res.ok).toBe(false);
     expect(mocks.createOwnEdge).not.toHaveBeenCalled();
   });

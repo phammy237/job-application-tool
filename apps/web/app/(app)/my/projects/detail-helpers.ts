@@ -18,7 +18,10 @@ export interface ProjectDetailView {
  * Slices the user's evidence graph down to one project. Returns null when the project is not in
  * the graph (so a foreign or unknown id renders as 404 rather than an empty page).
  */
-export function projectDetailView(graph: EvidenceGraphData, projectId: string): ProjectDetailView | null {
+export function projectDetailView(
+  graph: EvidenceGraphData,
+  projectId: string,
+): ProjectDetailView | null {
   const project = graph.projects.find((p) => p.id === projectId);
   if (!project) return null;
   const skillById = new Map(graph.skills.map((s) => [s.id, s]));
@@ -37,7 +40,12 @@ export function projectDetailView(graph: EvidenceGraphData, projectId: string): 
     if (!touchesProject) continue;
 
     if (edge.relation === 'DEMONSTRATES' || edge.relation === 'USES') {
-      const skillId = edge.fromType === 'SKILL' ? edge.fromId : edge.toType === 'SKILL' ? edge.toId : null;
+      const skillId =
+        edge.fromType === 'SKILL'
+          ? edge.fromId
+          : edge.toType === 'SKILL'
+            ? edge.toId
+            : null;
       const skill = skillId ? skillById.get(skillId) : undefined;
       if (skill && !seenSkills.has(skill.id)) {
         seenSkills.add(skill.id);
@@ -53,7 +61,11 @@ export function projectDetailView(graph: EvidenceGraphData, projectId: string): 
         seenEvidence.add(item.id);
         evidence.push({ edge, item });
       }
-    } else if (edge.relation === 'BELONGS_TO' && edge.fromType === 'ACHIEVEMENT' && edge.toType === 'PROJECT') {
+    } else if (
+      edge.relation === 'BELONGS_TO' &&
+      edge.fromType === 'ACHIEVEMENT' &&
+      edge.toType === 'PROJECT'
+    ) {
       achievementIds.add(edge.fromId);
     }
   }

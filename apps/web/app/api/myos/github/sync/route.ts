@@ -88,10 +88,13 @@ export async function POST() {
     return tooMany('Too many username-only syncs are running; try again shortly', 30);
   }
 
+  // Ingestion writes (VERIFIED evidence, GITHUB_* sources, repo rows) and token reads are
+  // service-role only; userId comes from the session and every query filters by it.
+  const admin = createAdminClient();
   let token: string | null = null;
   if (connection.hasToken) {
     try {
-      token = await getGithubAccessToken(createAdminClient(), user.id);
+      token = await getGithubAccessToken(admin, user.id);
     } catch {
       return NextResponse.json(
         { error: 'Stored GitHub token could not be read; reconnect GitHub' },
@@ -100,9 +103,6 @@ export async function POST() {
     }
   }
 
-  // Ingestion writes (VERIFIED evidence, GITHUB_* sources, repo rows) are service-role only;
-  // userId comes from the session and every query filters by it.
-  const admin = createAdminClient();
   const tokenless = !connection.hasToken;
   if (tokenless) tokenlessInFlight++;
   try {

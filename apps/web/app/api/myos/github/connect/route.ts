@@ -107,7 +107,10 @@ export async function POST(request: Request) {
         }
       }
       console.error('[career-os] GitHub token could not be stored');
-      return NextResponse.json({ error: 'Could not store the access token' }, { status: 500 });
+      return NextResponse.json(
+        { error: 'Could not store the access token' },
+        { status: 500 },
+      );
     }
     return NextResponse.json({ connection: { ...connection, hasToken: true } });
   }

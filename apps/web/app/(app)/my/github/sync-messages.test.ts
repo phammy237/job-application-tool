@@ -31,7 +31,9 @@ describe('rateLimitMessage', () => {
     expect(msg).toContain('2026-01-02 03:04 UTC');
   });
   it('still explains without a reset time', () => {
-    expect(rateLimitMessage(coerceStats({ rateLimited: true }))).toMatch(/Try again later/);
+    expect(rateLimitMessage(coerceStats({ rateLimited: true }))).toMatch(
+      /Try again later/,
+    );
   });
 });
 
@@ -58,6 +60,8 @@ describe('isPlausibleLogin', () => {
 
 describe('summarizeSync', () => {
   it('mentions the counts', () => {
-    expect(summarizeSync(coerceStats({ reposListed: 3, failed: 1 }))).toContain('3 listed');
+    expect(summarizeSync(coerceStats({ reposListed: 3, failed: 1 }))).toContain(
+      '3 listed',
+    );
   });
 });

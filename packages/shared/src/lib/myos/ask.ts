@@ -1,10 +1,16 @@
-import type { Competency, EvidenceSourceType, VerificationState } from '../../schemas/myos';
+import type {
+  Competency,
+  EvidenceSourceType,
+  VerificationState,
+} from '../../schemas/myos';
 import { COMPETENCIES } from '../../schemas/myos';
 import type { EvidenceGraphData } from './graph-types';
 import {
   bestEvidenceState,
   buildSupportIndex,
   isSolidState,
+  supportEntityTokens,
+  supportSkillTokens,
   verificationRank,
   weakerState,
   type SupportEntity,
@@ -13,12 +19,13 @@ import {
 } from './match-requirements';
 import {
   competencyLabel,
-  containsAllTokens,
   detectCompetencies,
   normalizeText,
-  scoreTextMatch,
+  scoreTokenMatch,
   tokenize,
 } from './text';
+
+const PM_QUERY_TOKENS = tokenize('product management');
 
 /**
  * "Ask My ..." — deterministic, retrieval-only question answering over the evidence graph.
@@ -129,10 +136,16 @@ const TYPE_WORD: Record<SupportEntityType, string> = {
   STORY: 'Story',
 };
 
-function stateOf(e: SupportEntity, edgeState?: VerificationState): VerificationState | null {
+function stateOf(
+  e: SupportEntity,
+  edgeState?: VerificationState,
+): VerificationState | null {
   const ev = bestEvidenceState(e);
   let best: VerificationState | null = ev;
-  if (e.ownState && (best === null || verificationRank(e.ownState) > verificationRank(best))) {
+  if (
+    e.ownState &&
+    (best === null || verificationRank(e.ownState) > verificationRank(best))
+  ) {
     best = e.ownState;
   }
   if (best !== null && edgeState) best = weakerState(best, edgeState);
@@ -189,7 +202,11 @@ function hitClaim(hit: Hit, skillSupport?: AskSupport): AskClaim {
   const metric = e.metric;
   const flag = e.approved ? '' : ' [unconfirmed: not yet approved by you]';
   let label = stateLabel(hit.state, e);
-  if (hit.via.kind === 'skill' && !isSolidState(hit.via.edgeState) && !label.includes('inferred')) {
+  if (
+    hit.via.kind === 'skill' &&
+    !isSolidState(hit.via.edgeState) &&
+    !label.includes('inferred')
+  ) {
     label = `${label}; skill link inferred — confirm it`;
   }
   const text = `${lead}${metric ? ` (metric: ${metric})` : ''} - ${label}.${flag}`;
@@ -266,7 +283,13 @@ function topicalHits(
   allowed: ReadonlySet<SupportEntityType>,
   storiesById: Map<string, Competency[]>,
 ): { hits: Hit[]; skillSupports: Map<string, AskSupport> } {
-  const matchedSkills = [...index.skillById.values()].filter((s) => containsAllTokens(topic, s.name));
+  const topicTokens = tokenize(topic);
+  const topicSet = new Set(topicTokens);
+  // Same rule as containsAllTokens(topic, skill name), with the topic tokenized once.
+  const matchedSkills = [...index.skillById.values()].filter((s) => {
+    const p = supportSkillTokens(s);
+    return p.length > 0 && p.every((tok) => topicSet.has(tok));
+  });
   const skillIds = new Map(matchedSkills.map((s) => [s.id, s.name]));
   const hits: Hit[] = [];
   const skillSupports = new Map<string, AskSupport>();
@@ -282,28 +305,48 @@ function topicalHits(
         score: 1,
         state: stateOf(e, link.state),
       });
-      skillSupports.set(e.key, { entityType: 'SKILL', entityId: link.skillId, label: name, evidence: [] });
+      skillSupports.set(e.key, {
+        entityType: 'SKILL',
+        entityId: link.skillId,
+        label: name,
+        evidence: [],
+      });
       continue;
     }
     if (e.entityType === 'STORY') {
       const tags = storiesById.get(e.entityId) ?? [];
       const c = competencies.find((x) => tags.includes(x));
       if (c) {
-        hits.push({ entity: e, via: { kind: 'competency', competency: c }, score: 1, state: stateOf(e) });
+        hits.push({
+          entity: e,
+          via: { kind: 'competency', competency: c },
+          score: 1,
+          state: stateOf(e),
+        });
         continue;
       }
     }
     if (topic.length > 0) {
-      const m = scoreTextMatch(topic, e.text);
+      const m = scoreTokenMatch(topicTokens, supportEntityTokens(e));
       if (m.score >= MIN_TOPIC_SCORE && m.matchedTerms.length > 0) {
-        hits.push({ entity: e, via: { kind: 'text', terms: m.matchedTerms }, score: m.score, state: stateOf(e) });
+        hits.push({
+          entity: e,
+          via: { kind: 'text', terms: m.matchedTerms },
+          score: m.score,
+          state: stateOf(e),
+        });
       }
     }
   }
   return { hits, skillSupports };
 }
 
-function insufficient(question: string, intent: AskIntent, answer: string, notes: string[]): AskAnswer {
+function insufficient(
+  question: string,
+  intent: AskIntent,
+  answer: string,
+  notes: string[],
+): AskAnswer {
   return { question, intent, answer, claims: [], insufficientEvidence: true, notes };
 }
 
@@ -319,7 +362,11 @@ function composeAnswer(intro: string, claims: AskClaim[], notes: string[]): stri
   return lines.join('\n');
 }
 
-export function answerQuestion(graph: EvidenceGraphData, question: string, now: Date): AskAnswer {
+export function answerQuestion(
+  graph: EvidenceGraphData,
+  question: string,
+  now: Date,
+): AskAnswer {
   void now;
   const index = buildSupportIndex(graph);
   const storyTags = new Map(graph.stories.map((s) => [s.id, s.competencies]));
@@ -336,12 +383,18 @@ export function answerQuestion(graph: EvidenceGraphData, question: string, now: 
   }
 
   if (index.entities.length === 0 && graph.skills.length === 0) {
-    return insufficient(question, intent, 'Your profile has no projects, stories, achievements or skills yet, so there is nothing to answer from.', ADD_DATA_NOTES);
+    return insufficient(
+      question,
+      intent,
+      'Your profile has no projects, stories, achievements or skills yet, so there is nothing to answer from.',
+      ADD_DATA_NOTES,
+    );
   }
 
   if (intent === 'WEAK_AREAS') return answerWeakAreas(graph, index, question, notes);
 
-  if (intent === 'INTERVIEW_PREP') return answerInterviewPrep(index, question, storyTags, notes);
+  if (intent === 'INTERVIEW_PREP')
+    return answerInterviewPrep(index, question, storyTags, notes);
 
   const topic = topicQuery(question);
   const competencies = detectCompetencies(question);
@@ -358,41 +411,92 @@ export function answerQuestion(graph: EvidenceGraphData, question: string, now: 
       const hits = rankHits(
         index.entities
           .filter((e) => e.entityType === 'PROJECT')
-          .map((e): Hit => ({ entity: e, via: { kind: 'text', terms: ['your profile'] }, score: 0, state: stateOf(e) })),
+          .map((e): Hit => ({
+            entity: e,
+            via: { kind: 'text', terms: ['your profile'] },
+            score: 0,
+            state: stateOf(e),
+          })),
       ).slice(0, MAX_CLAIMS);
-      if (hits.length === 0) return insufficient(question, intent, 'No projects are stored in your profile.', ADD_DATA_NOTES);
+      if (hits.length === 0)
+        return insufficient(
+          question,
+          intent,
+          'No projects are stored in your profile.',
+          ADD_DATA_NOTES,
+        );
       const claims = hits.map((h) =>
         makeClaim(
           `${TYPE_WORD.PROJECT} "${h.entity.name}" is in your profile - ${stateLabel(h.state, h.entity)}.${h.entity.approved ? '' : ' [unconfirmed: not yet approved by you]'}`,
           [supportFor(h.entity)],
         ),
       );
-      return { question, intent, answer: composeAnswer('Projects stored in your profile, best-evidenced first:', claims, []), claims, insufficientEvidence: false, notes: [] };
+      return {
+        question,
+        intent,
+        answer: composeAnswer(
+          'Projects stored in your profile, best-evidenced first:',
+          claims,
+          [],
+        ),
+        claims,
+        insufficientEvidence: false,
+        notes: [],
+      };
     }
-    return insufficient(question, 'GENERAL_SEARCH', 'I could not tell what topic to look up in your profile.', ['Name a skill, project topic or competency.']);
+    return insufficient(
+      question,
+      'GENERAL_SEARCH',
+      'I could not tell what topic to look up in your profile.',
+      ['Name a skill, project topic or competency.'],
+    );
   }
 
-  const { hits, skillSupports } = topicalHits(index, topic, competencies, allowed, storyTags);
+  const { hits, skillSupports } = topicalHits(
+    index,
+    topic,
+    competencies,
+    allowed,
+    storyTags,
+  );
   const achKind = new Map(graph.achievements.map((a) => [a.id, a.kind]));
   // Leadership-kind achievements count toward the LEADERSHIP competency.
   if (intent === 'STORY_FOR_COMPETENCY' && competencies.includes('LEADERSHIP')) {
     for (const e of index.entities) {
-      if (e.entityType === 'ACHIEVEMENT' && achKind.get(e.entityId) === 'LEADERSHIP' && !hits.some((h) => h.entity.key === e.key)) {
-        hits.push({ entity: e, via: { kind: 'competency', competency: 'LEADERSHIP' }, score: 1, state: stateOf(e) });
+      if (
+        e.entityType === 'ACHIEVEMENT' &&
+        achKind.get(e.entityId) === 'LEADERSHIP' &&
+        !hits.some((h) => h.entity.key === e.key)
+      ) {
+        hits.push({
+          entity: e,
+          via: { kind: 'competency', competency: 'LEADERSHIP' },
+          score: 1,
+          state: stateOf(e),
+        });
       }
     }
   }
 
   const ranked = rankHits(hits).slice(0, MAX_CLAIMS);
   if (ranked.length === 0) {
-    return insufficient(question, intent, 'I found no evidence in your profile for that.', ADD_DATA_NOTES);
+    return insufficient(
+      question,
+      intent,
+      'I found no evidence in your profile for that.',
+      ADD_DATA_NOTES,
+    );
   }
   const claims = ranked.map((h) => hitClaim(h, skillSupports.get(h.entity.key)));
   if (ranked.some((h) => h.state === 'INFERRED' || h.state === 'AI_GENERATED')) {
-    notes.push('Items marked "inferred — confirm it" were suggested, not confirmed; review them before relying on them.');
+    notes.push(
+      'Items marked "inferred — confirm it" were suggested, not confirmed; review them before relying on them.',
+    );
   }
   if (ranked.some((h) => !h.entity.approved)) {
-    notes.push('Unconfirmed items have not been approved yet and are excluded from application use.');
+    notes.push(
+      'Unconfirmed items have not been approved yet and are excluded from application use.',
+    );
   }
   if (ranked.every((h) => h.state === null)) {
     notes.push('None of these have linked evidence; add evidence to strengthen them.');
@@ -401,7 +505,14 @@ export function answerQuestion(graph: EvidenceGraphData, question: string, now: 
     intent === 'STORY_FOR_COMPETENCY'
       ? 'Best matching stories and achievements in your profile, strongest first:'
       : 'Here is what your stored profile shows, strongest evidence first:';
-  return { question, intent, answer: composeAnswer(intro, claims, notes), claims, insufficientEvidence: false, notes };
+  return {
+    question,
+    intent,
+    answer: composeAnswer(intro, claims, notes),
+    claims,
+    insufficientEvidence: false,
+    notes,
+  };
 }
 
 function answerInterviewPrep(
@@ -424,8 +535,16 @@ function answerInterviewPrep(
   for (const c of comps) {
     const stories = rankHits(
       index.entities
-        .filter((e) => e.entityType === 'STORY' && (storyTags.get(e.entityId) ?? []).includes(c))
-        .map((e): Hit => ({ entity: e, via: { kind: 'competency', competency: c }, score: 1, state: stateOf(e) })),
+        .filter(
+          (e) =>
+            e.entityType === 'STORY' && (storyTags.get(e.entityId) ?? []).includes(c),
+        )
+        .map((e): Hit => ({
+          entity: e,
+          via: { kind: 'competency', competency: c },
+          score: 1,
+          state: stateOf(e),
+        })),
     );
     const best = stories[0];
     if (!best) {
@@ -445,24 +564,40 @@ function answerInterviewPrep(
       index.entities
         .filter((e) => e.entityType === 'PROJECT')
         .map((e): Hit | null => {
-          const m = scoreTextMatch('product management', e.text);
-          return m.conceptMatch ? { entity: e, via: { kind: 'text', terms: m.matchedTerms }, score: m.score, state: stateOf(e) } : null;
+          const m = scoreTokenMatch(PM_QUERY_TOKENS, supportEntityTokens(e));
+          return m.conceptMatch
+            ? {
+                entity: e,
+                via: { kind: 'text', terms: m.matchedTerms },
+                score: m.score,
+                state: stateOf(e),
+              }
+            : null;
         })
         .filter((h): h is Hit => h !== null),
     ).slice(0, MAX_CLAIMS - claims.length);
     for (const h of pm) claims.push(hitClaim(h));
   }
-  for (const c of noStory) notes.push(`No story in your profile is tagged ${competencyLabel(c)}; consider writing one.`);
+  for (const c of noStory)
+    notes.push(
+      `No story in your profile is tagged ${competencyLabel(c)}; consider writing one.`,
+    );
   if (claims.length === 0) {
-    return insufficient(question, 'INTERVIEW_PREP', 'I found no stories or projects in your profile to prepare from.', [
-      ...ADD_DATA_NOTES,
-      ...notes,
-    ]);
+    return insufficient(
+      question,
+      'INTERVIEW_PREP',
+      'I found no stories or projects in your profile to prepare from.',
+      [...ADD_DATA_NOTES, ...notes],
+    );
   }
   return {
     question,
     intent: 'INTERVIEW_PREP',
-    answer: composeAnswer('Things from your profile you could talk about, by competency:', claims, notes),
+    answer: composeAnswer(
+      'Things from your profile you could talk about, by competency:',
+      claims,
+      notes,
+    ),
     claims,
     insufficientEvidence: false,
     notes,
@@ -476,12 +611,17 @@ function answerWeakAreas(
   notes: string[],
 ): AskAnswer {
   const claims: AskClaim[] = [];
-  const linkedSkills = new Set(index.entities.flatMap((e) => e.skills.map((s) => s.skillId)));
+  const linkedSkills = new Set(
+    index.entities.flatMap((e) => e.skills.map((s) => s.skillId)),
+  );
   for (const s of graph.skills) {
     if (!linkedSkills.has(s.id) && claims.length < MAX_CLAIMS) {
-      claims.push(makeClaim(`Skill "${s.name}" is listed but no project, experience or story uses it.`, [
-        { entityType: 'SKILL', entityId: s.id, label: s.name, evidence: [] },
-      ]));
+      claims.push(
+        makeClaim(
+          `Skill "${s.name}" is listed but no project, experience or story uses it.`,
+          [{ entityType: 'SKILL', entityId: s.id, label: s.name, evidence: [] }],
+        ),
+      );
     }
   }
   for (const e of index.entities) {
@@ -489,26 +629,53 @@ function answerWeakAreas(
     if (e.entityType !== 'PROJECT' && e.entityType !== 'EXPERIENCE') continue;
     const best = bestEvidenceState(e);
     if (best === null) {
-      claims.push(makeClaim(`${TYPE_WORD[e.entityType]} "${e.name}" has no linked evidence.`, [supportFor(e)]));
+      claims.push(
+        makeClaim(`${TYPE_WORD[e.entityType]} "${e.name}" has no linked evidence.`, [
+          supportFor(e),
+        ]),
+      );
     } else if (!isSolidState(best)) {
-      claims.push(makeClaim(`${TYPE_WORD[e.entityType]} "${e.name}" only has inferred evidence — confirm it.`, [supportFor(e)]));
+      claims.push(
+        makeClaim(
+          `${TYPE_WORD[e.entityType]} "${e.name}" only has inferred evidence — confirm it.`,
+          [supportFor(e)],
+        ),
+      );
     } else if (!e.approved) {
-      claims.push(makeClaim(`${TYPE_WORD[e.entityType]} "${e.name}" is not approved yet.`, [supportFor(e)]));
+      claims.push(
+        makeClaim(`${TYPE_WORD[e.entityType]} "${e.name}" is not approved yet.`, [
+          supportFor(e),
+        ]),
+      );
     }
   }
   const covered = new Set<Competency>();
-  for (const s of graph.stories) if (s.userApproved) s.competencies.forEach((c) => covered.add(c));
+  for (const s of graph.stories)
+    if (s.userApproved) s.competencies.forEach((c) => covered.add(c));
   const missing = COMPETENCIES.filter((c) => !covered.has(c));
   if (missing.length > 0) {
-    notes.push(`No approved story is tagged: ${missing.map(competencyLabel).join(', ')}.`);
+    notes.push(
+      `No approved story is tagged: ${missing.map(competencyLabel).join(', ')}.`,
+    );
   }
   if (claims.length === 0 && missing.length === 0) {
     // The graph is non-empty (checked by the caller), so "no weak areas" is a valid answer.
-    return { question, intent: 'WEAK_AREAS', answer: 'I found no weak areas in the stored profile.', claims: [], insufficientEvidence: false, notes: [] };
+    return {
+      question,
+      intent: 'WEAK_AREAS',
+      answer: 'I found no weak areas in the stored profile.',
+      claims: [],
+      insufficientEvidence: false,
+      notes: [],
+    };
   }
   const intro = 'Weak spots found in your stored profile:';
-  if (claims.length === 0) {
-    return { question, intent: 'WEAK_AREAS', answer: composeAnswer(intro, claims, notes), claims, insufficientEvidence: false, notes };
-  }
-  return { question, intent: 'WEAK_AREAS', answer: composeAnswer(intro, claims, notes), claims, insufficientEvidence: false, notes };
+  return {
+    question,
+    intent: 'WEAK_AREAS',
+    answer: composeAnswer(intro, claims, notes),
+    claims,
+    insufficientEvidence: false,
+    notes,
+  };
 }

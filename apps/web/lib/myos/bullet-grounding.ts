@@ -1,6 +1,6 @@
 import {
-  checkBulletAgainstEvidence,
-  findEvidenceForBullet,
+  analyzeBullet,
+  buildSupportIndex,
   type BulletEvidenceMatch,
   type BulletSupportLevel,
   type EvidenceGraphData,
@@ -39,7 +39,12 @@ export function listResumeBullets(resume: StructuredResumeV1): BulletRef[] {
   const out: BulletRef[] = [];
   for (const e of resume.education) {
     for (const b of e.bullets) {
-      out.push({ id: b.id, text: b.text, section: 'education', sectionLabel: e.institution });
+      out.push({
+        id: b.id,
+        text: b.text,
+        section: 'education',
+        sectionLabel: e.institution,
+      });
     }
   }
   for (const e of resume.experience) {
@@ -59,7 +64,12 @@ export function listResumeBullets(resume: StructuredResumeV1): BulletRef[] {
   }
   for (const e of resume.leadership) {
     for (const b of e.bullets) {
-      out.push({ id: b.id, text: b.text, section: 'leadership', sectionLabel: e.organization });
+      out.push({
+        id: b.id,
+        text: b.text,
+        section: 'leadership',
+        sectionLabel: e.organization,
+      });
     }
   }
   return out;
@@ -69,11 +79,12 @@ export function groundResumeBullets(
   graph: EvidenceGraphData,
   resume: StructuredResumeV1,
 ): BulletGrounding[] {
+  // One support index for the whole resume (it was rebuilt three times per bullet before).
+  const index = buildSupportIndex(graph);
   return listResumeBullets(resume)
     .filter((b) => b.text.trim().length > 0)
     .map((b) => {
-      const found = findEvidenceForBullet(graph, b.text);
-      const check = checkBulletAgainstEvidence(graph, b.text);
+      const { evidence: found, check } = analyzeBullet(graph, b.text, index);
       return {
         bulletId: b.id,
         text: b.text,

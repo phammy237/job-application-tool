@@ -1,6 +1,9 @@
 'use server';
 
-import { rotateOwnPortfolioApiKey, upsertOwnPortfolioSettings } from '@career-os/database';
+import {
+  rotateOwnPortfolioApiKey,
+  upsertOwnPortfolioSettings,
+} from '@career-os/database';
 import { revalidatePath } from 'next/cache';
 import { requireUser } from '../../../../lib/auth';
 import { createClient } from '../../../../lib/supabase/server';
@@ -32,13 +35,15 @@ export async function savePortfolioSettings(
     revalidatePath('/my/settings');
     return { ok: true };
   } catch (error) {
-    console.error('[career-os] save portfolio settings failed', error);
+    console.error('[career-os] save portfolio settings failed', (error as Error)?.name);
     return { error: 'Could not save settings. Please try again.' };
   }
 }
 
 /** Generates or rotates the API key. Only its SHA-256 hash is stored; the plaintext is returned once. */
-export async function rotatePortfolioApiKey(_prev: RotateKeyState): Promise<RotateKeyState> {
+export async function rotatePortfolioApiKey(
+  _prev: RotateKeyState,
+): Promise<RotateKeyState> {
   const user = await requireUser();
   try {
     const supabase = await createClient();
@@ -46,7 +51,7 @@ export async function rotatePortfolioApiKey(_prev: RotateKeyState): Promise<Rota
     revalidatePath('/my/settings');
     return { key };
   } catch (error) {
-    console.error('[career-os] rotate portfolio key failed', error);
+    console.error('[career-os] rotate portfolio key failed', (error as Error)?.name);
     return { error: 'Could not generate a key. Please try again.' };
   }
 }

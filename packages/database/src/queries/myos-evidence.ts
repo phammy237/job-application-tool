@@ -114,20 +114,29 @@ export async function upsertOwnEvidenceBySource(
 
   const current = rowToEvidence(existing);
   const keepCurrentState =
-    VERIFICATION_RANK[current.verificationState] > VERIFICATION_RANK[parsed.verificationState];
+    VERIFICATION_RANK[current.verificationState] >
+    VERIFICATION_RANK[parsed.verificationState];
   const columns = toColumns(parsed);
   const { visibility: _keepVisibility, ...rest } = columns;
   void _keepVisibility;
   const userEdited = current.metadata.userEdited === true;
   const { title, excerpt, ...sourceOnly } = rest;
   const updatable = userEdited
-    ? { ...sourceOnly, metadata: { ...(columns.metadata as Record<string, Json>), userEdited: true } as Json }
+    ? {
+        ...sourceOnly,
+        metadata: {
+          ...(columns.metadata as Record<string, Json>),
+          userEdited: true,
+        } as Json,
+      }
     : { ...sourceOnly, title, excerpt };
   const { data, error } = await supabase
     .from('myos_evidence')
     .update({
       ...updatable,
-      verification_state: keepCurrentState ? current.verificationState : parsed.verificationState,
+      verification_state: keepCurrentState
+        ? current.verificationState
+        : parsed.verificationState,
     })
     .eq('id', current.id)
     .eq('user_id', userId)
@@ -150,7 +159,10 @@ export async function updateOwnEvidence(
   let metadata: Json | undefined = parsed.metadata as Json | undefined;
   if (parsed.title !== undefined || parsed.excerpt !== undefined) {
     const current = parsed.metadata ? null : await getOwnEvidence(supabase, userId, id);
-    metadata = { ...((parsed.metadata ?? current?.metadata ?? {}) as Record<string, Json>), userEdited: true };
+    metadata = {
+      ...((parsed.metadata ?? current?.metadata ?? {}) as Record<string, Json>),
+      userEdited: true,
+    };
   }
   const { data, error } = await supabase
     .from('myos_evidence')

@@ -1,7 +1,10 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import type { CareerOsSupabaseClient } from '../types/client';
-import { markAchievementVerifiedIfSupported, createOwnAchievement } from './myos-achievements';
+import {
+  markAchievementVerifiedIfSupported,
+  createOwnAchievement,
+} from './myos-achievements';
 import { acceptOwnCandidate, createOwnCandidatesIdempotent } from './myos-candidates';
 import { createOwnEdge, listOwnEdges, replaceOwnEdgesFrom } from './myos-edges';
 import { upsertOwnEvidenceBySource } from './myos-evidence';
@@ -133,9 +136,10 @@ function expectUserScoped(calls: Call[], opts: { except?: string[] } = {}) {
   for (const call of calls) {
     if (opts.except?.includes(call.table)) continue;
     if (has(call, 'insert') && !has(call, 'select')) continue;
-    const scoped = call.ops.some(([n, a]) => n === 'eq' && a[0] === 'user_id' && a[1] === USER);
-    const insertsOwnRow =
-      has(call, 'insert') || has(call, 'upsert');
+    const scoped = call.ops.some(
+      ([n, a]) => n === 'eq' && a[0] === 'user_id' && a[1] === USER,
+    );
+    const insertsOwnRow = has(call, 'insert') || has(call, 'upsert');
     expect(scoped || insertsOwnRow, `${call.table} call lacks user_id filter`).toBe(true);
   }
 }
@@ -166,11 +170,14 @@ describe('myos-evidence upsertOwnEvidenceBySource', () => {
     const { client, calls } = makeClient((c) =>
       ok(evidenceRow({ verification_state: has(c, 'update') ? 'VERIFIED' : 'INFERRED' })),
     );
-    await upsertOwnEvidenceBySource(client, USER, { ...input, verificationState: 'VERIFIED' });
-    const payload = args(calls.find((c) => has(c, 'update'))!, 'update')![0] as Record<
-      string,
-      unknown
-    >;
+    await upsertOwnEvidenceBySource(client, USER, {
+      ...input,
+      verificationState: 'VERIFIED',
+    });
+    const payload = args(
+      calls.find((c) => has(c, 'update'))!,
+      'update',
+    )![0] as Record<string, unknown>;
     expect(payload.verification_state).toBe('VERIFIED');
   });
 
@@ -179,10 +186,10 @@ describe('myos-evidence upsertOwnEvidenceBySource', () => {
       has(c, 'insert') ? ok(evidenceRow()) : ok(null),
     );
     await upsertOwnEvidenceBySource(client, USER, input);
-    const payload = args(calls.find((c) => has(c, 'insert'))!, 'insert')![0] as Record<
-      string,
-      unknown
-    >;
+    const payload = args(
+      calls.find((c) => has(c, 'insert'))!,
+      'insert',
+    )![0] as Record<string, unknown>;
     expect(payload.user_id).toBe(USER);
   });
 });
@@ -202,7 +209,10 @@ describe('myos-achievements verification rules', () => {
 
   it('allows VERIFIED on create when there is no metric', async () => {
     const { client, calls } = makeClient(() => ok(achievementRow({ metric_text: null })));
-    await createOwnAchievement(client, USER, { title: 'Award', verificationState: 'VERIFIED' });
+    await createOwnAchievement(client, USER, {
+      title: 'Award',
+      verificationState: 'VERIFIED',
+    });
     const payload = args(calls[0]!, 'insert')![0] as Record<string, unknown>;
     expect(payload.verification_state).toBe('VERIFIED');
   });
@@ -246,7 +256,8 @@ describe('myos-edges', () => {
   it('createOwnEdge recovers from a unique violation by returning the winner', async () => {
     let lookups = 0;
     const { client } = makeClient((c) => {
-      if (has(c, 'insert')) return { data: null, error: { message: 'dup', code: '23505' } };
+      if (has(c, 'insert'))
+        return { data: null, error: { message: 'dup', code: '23505' } };
       lookups += 1;
       return ok(lookups === 1 ? null : edgeRow());
     });
@@ -273,7 +284,10 @@ describe('myos-edges', () => {
     const { client, calls } = makeClient((c) => {
       if (has(c, 'delete')) return ok(null);
       if (has(c, 'maybeSingle')) return ok(edgeRow());
-      return ok([edgeRow(), edgeRow({ id: stale, to_id: '99999999-9999-4999-8999-999999999999' })]);
+      return ok([
+        edgeRow(),
+        edgeRow({ id: stale, to_id: '99999999-9999-4999-8999-999999999999' }),
+      ]);
     });
     await replaceOwnEdgesFrom(client, USER, {
       fromType: 'PROJECT',
@@ -306,10 +320,10 @@ describe('myos-candidates', () => {
       skillInput('new'),
     ]);
     expect(result).toEqual({ created: 1, skipped: 2 });
-    const rows = args(calls.find((c) => has(c, 'insert'))!, 'insert')![0] as Record<
-      string,
-      unknown
-    >[];
+    const rows = args(
+      calls.find((c) => has(c, 'insert'))!,
+      'insert',
+    )![0] as Record<string, unknown>[];
     expect(rows).toHaveLength(1);
     expect(rows[0]!.user_id).toBe(USER);
     expect(rows[0]!.payload).toEqual({ skill: 'FastAPI', category: null });
@@ -338,7 +352,11 @@ describe('myos-candidates', () => {
     };
     const { client, calls } = makeClient((c) => {
       if (c.table === 'myos_candidates') {
-        return ok(has(c, 'update') ? { ...candidate, status: 'ACCEPTED', decided_at: TS } : candidate);
+        return ok(
+          has(c, 'update')
+            ? { ...candidate, status: 'ACCEPTED', decided_at: TS }
+            : candidate,
+        );
       }
       if (c.table === 'skills') return has(c, 'insert') ? ok({ id: SKILL }) : ok([]);
       if (c.table === 'myos_edges') return ok(has(c, 'insert') ? edgeRow() : null);
@@ -359,7 +377,10 @@ describe('myos-candidates', () => {
       calls.find((c) => c.table === 'myos_edges' && has(c, 'insert'))!,
       'insert',
     )![0] as Record<string, unknown>;
-    expect(edgeInsert).toMatchObject({ relation: 'DEMONSTRATES', verification_state: 'USER_PROVIDED' });
+    expect(edgeInsert).toMatchObject({
+      relation: 'DEMONSTRATES',
+      verification_state: 'USER_PROVIDED',
+    });
   });
 });
 
@@ -419,12 +440,14 @@ describe('myos-github', () => {
   };
 
   it('re-sync never writes selected or project_id', async () => {
-    const { client, calls } = makeClient((c) => ok(has(c, 'update') ? repoRow : { id: EVIDENCE }));
+    const { client, calls } = makeClient((c) =>
+      ok(has(c, 'update') ? repoRow : { id: EVIDENCE }),
+    );
     const repo = await upsertGithubRepositorySnapshot(client, USER, snapshot);
-    const payload = args(calls.find((c) => has(c, 'update'))!, 'update')![0] as Record<
-      string,
-      unknown
-    >;
+    const payload = args(
+      calls.find((c) => has(c, 'update'))!,
+      'update',
+    )![0] as Record<string, unknown>;
     expect('selected' in payload).toBe(false);
     expect('project_id' in payload).toBe(false);
     expect(repo.selected).toBe(true);
@@ -436,10 +459,10 @@ describe('myos-github', () => {
       has(c, 'insert') ? ok({ ...repoRow, selected: false, project_id: null }) : ok(null),
     );
     await upsertGithubRepositorySnapshot(client, USER, snapshot);
-    const payload = args(calls.find((c) => has(c, 'insert'))!, 'insert')![0] as Record<
-      string,
-      unknown
-    >;
+    const payload = args(
+      calls.find((c) => has(c, 'insert'))!,
+      'insert',
+    )![0] as Record<string, unknown>;
     expect(payload.user_id).toBe(USER);
     expect('selected' in payload).toBe(false);
   });
@@ -515,7 +538,10 @@ describe('myos-portfolio', () => {
     const { client, calls } = makeClient(() => ok({ user_id: USER }));
     expect(await getUserIdForPortfolioApiKey(client, key)).toBe(USER);
     const eqs = calls[0]!.ops.filter(([n]) => n === 'eq').map(([, a]) => a);
-    expect(eqs).toContainEqual(['api_key_hash', createHash('sha256').update(key).digest('hex')]);
+    expect(eqs).toContainEqual([
+      'api_key_hash',
+      createHash('sha256').update(key).digest('hex'),
+    ]);
     expect(eqs).toContainEqual(['enabled', true]);
     expect(JSON.stringify(calls[0])).not.toContain(`"${key}"`);
   });

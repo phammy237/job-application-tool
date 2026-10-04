@@ -1,4 +1,9 @@
-import type { GithubConnection, GithubRepoSnapshot, GithubRepository, GithubSyncRun } from '@career-os/shared';
+import type {
+  GithubConnection,
+  GithubRepoSnapshot,
+  GithubRepository,
+  GithubSyncRun,
+} from '@career-os/shared';
 import { decryptRefreshToken, encryptRefreshToken } from '../crypto/token-encryption';
 import { assertNoError, unwrapRow } from '../errors';
 import type { Json } from '../types/database.types';
@@ -41,7 +46,9 @@ export async function upsertOwnGithubConnection(
         has_token: input.hasToken,
         status: 'CONNECTED',
         last_error: null,
-        ...(input.githubUserId !== undefined ? { github_user_id: input.githubUserId } : {}),
+        ...(input.githubUserId !== undefined
+          ? { github_user_id: input.githubUserId }
+          : {}),
       },
       { onConflict: 'user_id' },
     )
@@ -55,7 +62,10 @@ export async function deleteOwnGithubConnection(
   supabase: CareerOsSupabaseClient,
   userId: string,
 ): Promise<void> {
-  const { error } = await supabase.from('github_connections').delete().eq('user_id', userId);
+  const { error } = await supabase
+    .from('github_connections')
+    .delete()
+    .eq('user_id', userId);
   assertNoError(error, 'deleteOwnGithubConnection');
 }
 
@@ -190,7 +200,9 @@ export async function upsertGithubRepositorySnapshot(
       .eq('user_id', userId)
       .select('*')
       .single();
-    return rowToGithubRepository(unwrapRow(data, error, 'upsertGithubRepositorySnapshot.update'));
+    return rowToGithubRepository(
+      unwrapRow(data, error, 'upsertGithubRepositorySnapshot.update'),
+    );
   }
 
   const { data, error } = await supabase
@@ -198,7 +210,9 @@ export async function upsertGithubRepositorySnapshot(
     .insert({ user_id: userId, github_repo_id: snapshot.githubRepoId, ...columns })
     .select('*')
     .single();
-  return rowToGithubRepository(unwrapRow(data, error, 'upsertGithubRepositorySnapshot.insert'));
+  return rowToGithubRepository(
+    unwrapRow(data, error, 'upsertGithubRepositorySnapshot.insert'),
+  );
 }
 
 export async function setOwnGithubRepositorySelected(

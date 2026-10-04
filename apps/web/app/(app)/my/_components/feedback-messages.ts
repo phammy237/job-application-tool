@@ -53,5 +53,7 @@ export function noticeMessage(code: string | undefined): string | undefined {
 
 export function errorMessage(code: string | undefined): string | undefined {
   if (!code) return undefined;
-  return has(ERROR_MESSAGES, code) ? ERROR_MESSAGES[code as ErrorCode] : ERROR_MESSAGES.failed;
+  return has(ERROR_MESSAGES, code)
+    ? ERROR_MESSAGES[code as ErrorCode]
+    : ERROR_MESSAGES.failed;
 }

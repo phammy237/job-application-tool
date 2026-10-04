@@ -15,7 +15,6 @@ import {
   type MyosEdge,
   type MyosEvidence,
   type MyosStory,
-  type VerificationState,
 } from '@career-os/shared';
 import type { Database } from '../types/database.types';
 
@@ -29,22 +28,24 @@ type Tables = Database['public']['Tables'];
  */
 export function sanitizeDbText(value: string): string;
 export function sanitizeDbText(value: string | null): string | null;
-export function sanitizeDbText(value: string | null | undefined): string | null | undefined;
-export function sanitizeDbText(value: string | null | undefined): string | null | undefined {
+export function sanitizeDbText(
+  value: string | null | undefined,
+): string | null | undefined;
+export function sanitizeDbText(
+  value: string | null | undefined,
+): string | null | undefined {
   if (typeof value !== 'string') return value;
   return value
     .split('\u0000')
     .join('')
-    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '');
+    .replace(
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g,
+      '',
+    );
 }
 
 /** Higher rank = more trusted. Used so a re-sync never downgrades a verification state. */
-export const VERIFICATION_RANK: Record<VerificationState, number> = {
-  AI_GENERATED: 0,
-  INFERRED: 1,
-  USER_PROVIDED: 2,
-  VERIFIED: 3,
-};
+export { VERIFICATION_RANK } from '@career-os/shared';
 
 export function rowToEvidence(row: Tables['myos_evidence']['Row']): MyosEvidence {
   return myosEvidenceSchema.parse({
@@ -65,7 +66,9 @@ export function rowToEvidence(row: Tables['myos_evidence']['Row']): MyosEvidence
   });
 }
 
-export function rowToAchievement(row: Tables['myos_achievements']['Row']): MyosAchievement {
+export function rowToAchievement(
+  row: Tables['myos_achievements']['Row'],
+): MyosAchievement {
   return myosAchievementSchema.parse({
     id: row.id,
     userId: row.user_id,
@@ -141,7 +144,9 @@ export function rowToCandidate(row: Tables['myos_candidates']['Row']): MyosCandi
 }
 
 /** Never reads or maps a credential column — `has_token` is the only token signal. */
-export function rowToGithubConnection(row: Tables['github_connections']['Row']): GithubConnection {
+export function rowToGithubConnection(
+  row: Tables['github_connections']['Row'],
+): GithubConnection {
   return githubConnectionSchema.parse({
     userId: row.user_id,
     githubLogin: row.github_login,
@@ -155,7 +160,9 @@ export function rowToGithubConnection(row: Tables['github_connections']['Row']):
   });
 }
 
-export function rowToGithubRepository(row: Tables['github_repositories']['Row']): GithubRepository {
+export function rowToGithubRepository(
+  row: Tables['github_repositories']['Row'],
+): GithubRepository {
   return githubRepositorySchema.parse({
     id: row.id,
     userId: row.user_id,
@@ -189,7 +196,9 @@ export function rowToGithubRepository(row: Tables['github_repositories']['Row'])
   });
 }
 
-export function rowToGithubSyncRun(row: Tables['github_sync_runs']['Row']): GithubSyncRun {
+export function rowToGithubSyncRun(
+  row: Tables['github_sync_runs']['Row'],
+): GithubSyncRun {
   return githubSyncRunSchema.parse({
     id: row.id,
     userId: row.user_id,

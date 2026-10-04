@@ -1,9 +1,8 @@
-import { loadOwnEvidenceGraph } from '@career-os/database';
-import { buildTimeline, type TimelineEntry } from '@career-os/shared';
+import { buildGraphIndex, buildTimeline, type TimelineEntry } from '@career-os/shared';
 import { Badge, Label, Select, buttonVariants } from '@career-os/ui';
 import Link from 'next/link';
 import { requireUser } from '../../../../lib/auth';
-import { createClient } from '../../../../lib/supabase/server';
+import { loadEvidenceGraphForRequest } from '../../../../lib/myos/load-graph';
 import { EmptyState, VerificationBadge } from '../_components/badges';
 import {
   TIMELINE_TYPES,
@@ -18,7 +17,15 @@ import {
 
 export const metadata = { title: 'Timeline · myOS' };
 
-function Chip({ href, active, children }: { href: string; active: boolean; children: React.ReactNode }) {
+function Chip({
+  href,
+  active,
+  children,
+}: {
+  href: string;
+  active: boolean;
+  children: React.ReactNode;
+}) {
   return (
     <Link
       href={href}
@@ -54,9 +61,7 @@ function EntryItem({ entry }: { entry: TimelineEntry }) {
           ) : null}
           <p className="text-muted-foreground mt-0.5 text-xs">
             {entry.isOngoing ? (
-              <span className="text-foreground font-medium">
-                {formatRange(entry)}
-              </span>
+              <span className="text-foreground font-medium">{formatRange(entry)}</span>
             ) : (
               formatRange(entry)
             )}
@@ -83,13 +88,13 @@ export default async function TimelinePage({
 }) {
   const params = parseTimelineParams(await searchParams);
   const user = await requireUser();
-  const supabase = await createClient();
-  const graph = await loadOwnEvidenceGraph(supabase, user.id);
+  const graph = await loadEvidenceGraphForRequest(user.id);
   const now = new Date();
 
-  const everything = buildTimeline(graph, { now });
+  const index = buildGraphIndex(graph); // shared by both timeline builds below
+  const everything = buildTimeline(index, { now });
   const total = everything.entries.length + everything.undated.length;
-  const timeline = buildTimeline(graph, {
+  const timeline = buildTimeline(index, {
     now,
     types: params.type ? [params.type] : undefined,
     year: params.year ?? undefined,
@@ -97,7 +102,9 @@ export default async function TimelinePage({
   });
   const groups = groupByYear(timeline.entries, now);
   const years = availableYears(everything.entries, now);
-  const presentTypes = new Set([...everything.entries, ...everything.undated].map((e) => e.type));
+  const presentTypes = new Set(
+    [...everything.entries, ...everything.undated].map((e) => e.type),
+  );
   const skillsWithLinks = graph.skills
     .map((s) => ({ id: s.id, name: s.name }))
     .sort((a, b) => a.name.localeCompare(b.name));
@@ -113,7 +120,10 @@ export default async function TimelinePage({
             Work, projects, education, and achievements in one chronological view.
           </p>
         </div>
-        <Link href="/my/achievements" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+        <Link
+          href="/my/achievements"
+          className={buttonVariants({ variant: 'outline', size: 'sm' })}
+        >
           Manage achievements
         </Link>
       </div>
@@ -137,7 +147,11 @@ export default async function TimelinePage({
                 All
               </Chip>
               {TIMELINE_TYPES.filter((t) => presentTypes.has(t)).map((t) => (
-                <Chip key={t} href={timelineHref(params, { type: t })} active={params.type === t}>
+                <Chip
+                  key={t}
+                  href={timelineHref(params, { type: t })}
+                  active={params.type === t}
+                >
                   {TYPE_LABELS[t]}
                 </Chip>
               ))}
@@ -145,20 +159,35 @@ export default async function TimelinePage({
             {years.length > 0 ? (
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-muted-foreground w-12 text-xs">Year</span>
-                <Chip href={timelineHref(params, { year: null })} active={params.year === null}>
+                <Chip
+                  href={timelineHref(params, { year: null })}
+                  active={params.year === null}
+                >
                   All
                 </Chip>
                 {years.map((y) => (
-                  <Chip key={y} href={timelineHref(params, { year: y })} active={params.year === y}>
+                  <Chip
+                    key={y}
+                    href={timelineHref(params, { year: y })}
+                    active={params.year === y}
+                  >
                     {y}
                   </Chip>
                 ))}
               </div>
             ) : null}
             {skillsWithLinks.length > 0 ? (
-              <form method="get" action="/my/timeline" className="flex flex-wrap items-end gap-2">
-                {params.type ? <input type="hidden" name="type" value={params.type} /> : null}
-                {params.year ? <input type="hidden" name="year" value={params.year} /> : null}
+              <form
+                method="get"
+                action="/my/timeline"
+                className="flex flex-wrap items-end gap-2"
+              >
+                {params.type ? (
+                  <input type="hidden" name="type" value={params.type} />
+                ) : null}
+                {params.year ? (
+                  <input type="hidden" name="year" value={params.year} />
+                ) : null}
                 <div className="space-y-1">
                   <Label htmlFor="tl-skill">Skill</Label>
                   <Select
@@ -175,7 +204,10 @@ export default async function TimelinePage({
                     ))}
                   </Select>
                 </div>
-                <button type="submit" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+                <button
+                  type="submit"
+                  className={buttonVariants({ variant: 'outline', size: 'sm' })}
+                >
                   Apply
                 </button>
                 {filtered ? (
@@ -194,7 +226,9 @@ export default async function TimelinePage({
           </section>
 
           {groups.length === 0 && timeline.undated.length === 0 ? (
-            <p className="text-muted-foreground text-sm">No entries match these filters.</p>
+            <p className="text-muted-foreground text-sm">
+              No entries match these filters.
+            </p>
           ) : null}
 
           {groups.map((group) => (
@@ -216,8 +250,8 @@ export default async function TimelinePage({
                 Undated
               </h2>
               <p className="text-muted-foreground mb-2 text-xs">
-                These have no dates, so they cannot be placed in time. Add dates to see them above.
-                The year filter does not apply here.
+                These have no dates, so they cannot be placed in time. Add dates to see
+                them above. The year filter does not apply here.
               </p>
               <ol className="border-border ml-1 space-y-2 border-l-2 border-dashed pl-3 sm:pl-4">
                 {timeline.undated.map((entry) => (

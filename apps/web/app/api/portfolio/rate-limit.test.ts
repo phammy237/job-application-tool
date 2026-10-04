@@ -5,7 +5,8 @@ describe('checkRateLimit', () => {
   beforeEach(resetRateLimits);
 
   it('allows up to the limit then blocks until the window resets', () => {
-    for (let i = 0; i < 3; i++) expect(checkRateLimit('a', 3, 1000, 0).allowed).toBe(true);
+    for (let i = 0; i < 3; i++)
+      expect(checkRateLimit('a', 3, 1000, 0).allowed).toBe(true);
     const blocked = checkRateLimit('a', 3, 1000, 10);
     expect(blocked.allowed).toBe(false);
     expect(blocked.retryAfterSeconds).toBe(1);

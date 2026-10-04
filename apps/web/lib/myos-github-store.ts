@@ -72,7 +72,8 @@ export async function renameGithubEvidenceRefs(
     if (ref === null) continue;
     let next: string;
     if (ref === oldFullName) next = newFullName;
-    else if (ref.startsWith(`${oldFullName}#`)) next = newFullName + ref.slice(oldFullName.length);
+    else if (ref.startsWith(`${oldFullName}#`))
+      next = newFullName + ref.slice(oldFullName.length);
     else continue;
     const { error: upErr } = await admin
       .from('myos_evidence')

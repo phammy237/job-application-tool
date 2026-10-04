@@ -75,7 +75,10 @@ export async function rotateOwnPortfolioApiKey(
   const key = PORTFOLIO_API_KEY_PREFIX + randomBytes(32).toString('base64url');
   const { error } = await supabase
     .from('portfolio_settings')
-    .upsert({ user_id: userId, api_key_hash: hashPortfolioApiKey(key) }, { onConflict: 'user_id' });
+    .upsert(
+      { user_id: userId, api_key_hash: hashPortfolioApiKey(key) },
+      { onConflict: 'user_id' },
+    );
   assertNoError(error, 'rotateOwnPortfolioApiKey');
   return key;
 }

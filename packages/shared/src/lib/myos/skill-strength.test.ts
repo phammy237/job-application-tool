@@ -74,7 +74,10 @@ describe('computeSkillStrength levels', () => {
 
   it('is STRONG only with 3 entities, verified evidence, and recent activity', () => {
     const { s, projects, edges } = setup(3);
-    const ev = evidence({ verificationState: 'VERIFIED', title: 'Python service README' });
+    const ev = evidence({
+      verificationState: 'VERIFIED',
+      title: 'Python service README',
+    });
     const g = graphOf({
       skills: [s],
       projects,
@@ -182,7 +185,8 @@ describe('computeSkillStrength levels', () => {
       { ...edges[1]!, verificationState: 'VERIFIED' as const },
     ];
     expect(
-      computeSkillStrength(graphOf({ skills: [s], projects, edges: both }), s.id, NOW).level,
+      computeSkillStrength(graphOf({ skills: [s], projects, edges: both }), s.id, NOW)
+        .level,
     ).toBe('MODERATE');
   });
 
@@ -193,7 +197,9 @@ describe('computeSkillStrength levels', () => {
     const mk = (ps: typeof projects) =>
       graphOf({ skills: [s], projects: ps, evidence: [ev], edges: [...edges, evEdge] });
     expect(computeSkillStrength(mk(projects), s.id, NOW).level).toBe('STRONG');
-    const unapproved = projects.map((p, i) => (i === 0 ? { ...p, userApproved: false } : p));
+    const unapproved = projects.map((p, i) =>
+      i === 0 ? { ...p, userApproved: false } : p,
+    );
     const r = computeSkillStrength(mk(unapproved), s.id, NOW);
     expect(r.level).toBe('MODERATE');
     expect(r.reasons.join(' ')).toContain('unconfirmed');
@@ -201,9 +207,24 @@ describe('computeSkillStrength levels', () => {
 
   it('M6: a start-date-only item is ongoing only within 36 months of its start', () => {
     const s = skill({ name: 'Go' });
-    const old = project({ name: 'Old', startDate: '2018-01-01', endDate: null, status: null });
-    const recent = project({ name: 'Recent', startDate: '2025-06-01', endDate: null, status: null });
-    const active = project({ name: 'Active', startDate: '2018-01-01', endDate: null, status: 'ACTIVE' });
+    const old = project({
+      name: 'Old',
+      startDate: '2018-01-01',
+      endDate: null,
+      status: null,
+    });
+    const recent = project({
+      name: 'Recent',
+      startDate: '2025-06-01',
+      endDate: null,
+      status: null,
+    });
+    const active = project({
+      name: 'Active',
+      startDate: '2018-01-01',
+      endDate: null,
+      status: 'ACTIVE',
+    });
     const run = (p: typeof old) =>
       computeSkillStrength(
         graphOf({

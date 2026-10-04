@@ -4,7 +4,12 @@ import {
   listOwnGithubRepositories,
   type CareerOsSupabaseClient,
 } from '@career-os/database';
-import { extractCandidatesFromRepository } from '@career-os/shared';
+import {
+  extractCandidatesFromRepository,
+  type MyosCandidateInput,
+} from '@career-os/shared';
+
+const CANDIDATE_BATCH_SIZE = 100;
 
 export interface CandidateGenerationResult {
   repositories: number;
@@ -39,16 +44,28 @@ export async function generateCandidatesForSelectedRepos(
     evidenceIdsByRepo.set(e.sourceRef, list);
   }
 
+  // Candidates of all repos are written in batches (one dedupe lookup + one insert per batch)
+  // instead of two round trips per repository. Dedupe keys are scoped per project, so batching
+  // does not change which candidates are created or skipped.
   const result: CandidateGenerationResult = { repositories: 0, created: 0, skipped: 0 };
+  let batch: MyosCandidateInput[] = [];
+  const flush = async (): Promise<void> => {
+    if (batch.length === 0) return;
+    const r = await createOwnCandidatesIdempotent(supabase, userId, batch);
+    result.created += r.created;
+    result.skipped += r.skipped;
+    batch = [];
+  };
   for (const repo of repos) {
     if (!repo.selected || !repo.projectId) continue;
     const evidenceIds = evidenceIdsByRepo.get(repo.fullName) ?? [];
     const candidates = extractCandidatesFromRepository(repo, evidenceIds, repo.projectId);
     if (candidates.length === 0) continue;
-    const r = await createOwnCandidatesIdempotent(supabase, userId, candidates);
     result.repositories += 1;
-    result.created += r.created;
-    result.skipped += r.skipped;
+    batch.push(...candidates);
+    // Bounded so the dedupe-key `in (...)` filter stays well under URL length limits.
+    if (batch.length >= CANDIDATE_BATCH_SIZE) await flush();
   }
+  await flush();
   return result;
 }

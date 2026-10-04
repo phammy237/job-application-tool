@@ -12,12 +12,7 @@ import {
 import { assertNoError } from '../errors';
 import type { Database } from '../types/database.types';
 import type { CareerOsSupabaseClient } from '../types/client';
-import {
-  rowToAchievement,
-  rowToEdge,
-  rowToEvidence,
-  rowToStory,
-} from './myos-mappers';
+import { rowToAchievement, rowToEdge, rowToEvidence, rowToStory } from './myos-mappers';
 
 type Tables = Database['public']['Tables'];
 
@@ -98,17 +93,25 @@ export async function loadOwnEvidenceGraph(
   supabase: CareerOsSupabaseClient,
   userId: string,
 ): Promise<EvidenceGraphData> {
-  const [projects, skills, experiences, education, achievements, stories, evidence, edges] =
-    await Promise.all([
-      supabase.from('projects').select('*').eq('user_id', userId),
-      supabase.from('skills').select('*').eq('user_id', userId),
-      supabase.from('experiences').select('*').eq('user_id', userId),
-      supabase.from('education').select('*').eq('user_id', userId),
-      supabase.from('myos_achievements').select('*').eq('user_id', userId),
-      supabase.from('myos_stories').select('*').eq('user_id', userId),
-      supabase.from('myos_evidence').select('*').eq('user_id', userId),
-      supabase.from('myos_edges').select('*').eq('user_id', userId),
-    ]);
+  const [
+    projects,
+    skills,
+    experiences,
+    education,
+    achievements,
+    stories,
+    evidence,
+    edges,
+  ] = await Promise.all([
+    supabase.from('projects').select('*').eq('user_id', userId),
+    supabase.from('skills').select('*').eq('user_id', userId),
+    supabase.from('experiences').select('*').eq('user_id', userId),
+    supabase.from('education').select('*').eq('user_id', userId),
+    supabase.from('myos_achievements').select('*').eq('user_id', userId),
+    supabase.from('myos_stories').select('*').eq('user_id', userId),
+    supabase.from('myos_evidence').select('*').eq('user_id', userId),
+    supabase.from('myos_edges').select('*').eq('user_id', userId),
+  ]);
 
   assertNoError(projects.error, 'loadOwnEvidenceGraph.projects');
   assertNoError(skills.error, 'loadOwnEvidenceGraph.skills');
@@ -161,7 +164,11 @@ export async function loadPublicEvidenceGraph(
       .eq('user_id', userId)
       .eq('visibility', 'PUBLIC')
       .eq('user_approved', true),
-    supabase.from('myos_evidence').select('*').eq('user_id', userId).eq('visibility', 'PUBLIC'),
+    supabase
+      .from('myos_evidence')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('visibility', 'PUBLIC'),
   ]);
   assertNoError(projects.error, 'loadPublicEvidenceGraph.projects');
   assertNoError(skills.error, 'loadPublicEvidenceGraph.skills');
@@ -192,7 +199,8 @@ export async function loadPublicEvidenceGraph(
     assertNoError(edges.error, 'loadPublicEvidenceGraph.edges');
     // Type-aware endpoint check (ids alone could in theory collide across node types).
     edgeRows = (edges.data ?? []).filter(
-      (e) => keys.has(`${e.from_type}:${e.from_id}`) && keys.has(`${e.to_type}:${e.to_id}`),
+      (e) =>
+        keys.has(`${e.from_type}:${e.from_id}`) && keys.has(`${e.to_type}:${e.to_id}`),
     );
   }
 

@@ -1,9 +1,10 @@
 import {
+  SKILL_LEVEL_RANK,
   findTechnologies,
   type EvidenceGraphData,
+  type MyosEdge,
   type MyosEvidence,
   type RankedSkillStrength,
-  type SkillStrengthLevel,
   type VerificationState,
 } from '@career-os/shared';
 import { z } from 'zod';
@@ -16,13 +17,6 @@ export interface SkillListParams {
   sort: SkillSort;
 }
 
-const LEVEL_RANK: Record<SkillStrengthLevel, number> = {
-  NONE: 0,
-  LIMITED: 1,
-  MODERATE: 2,
-  STRONG: 3,
-};
-
 function first(v: string | string[] | undefined): string {
   return (Array.isArray(v) ? v[0] : v) ?? '';
 }
@@ -31,8 +25,13 @@ export function parseSkillListParams(
   sp: Record<string, string | string[] | undefined>,
 ): SkillListParams {
   const sortRaw = first(sp.sort);
-  const sort: SkillSort = sortRaw === 'recency' || sortRaw === 'name' ? sortRaw : 'strength';
-  return { q: first(sp.q).trim().slice(0, 100), category: first(sp.category).trim(), sort };
+  const sort: SkillSort =
+    sortRaw === 'recency' || sortRaw === 'name' ? sortRaw : 'strength';
+  return {
+    q: first(sp.q).trim().slice(0, 100),
+    category: first(sp.category).trim(),
+    sort,
+  };
 }
 
 export function filterSortSkills(
@@ -54,12 +53,12 @@ export function filterSortSkills(
     if (params.sort === 'name') return byName(a, b);
     if (params.sort === 'recency') {
       return (
-        (a.strength.monthsSinceLatest ?? Infinity) - (b.strength.monthsSinceLatest ?? Infinity) ||
-        byName(a, b)
+        (a.strength.monthsSinceLatest ?? Infinity) -
+          (b.strength.monthsSinceLatest ?? Infinity) || byName(a, b)
       );
     }
     return (
-      LEVEL_RANK[b.strength.level] - LEVEL_RANK[a.strength.level] ||
+      SKILL_LEVEL_RANK[b.strength.level] - SKILL_LEVEL_RANK[a.strength.level] ||
       b.strength.verifiedEvidenceCount - a.strength.verifiedEvidenceCount ||
       byName(a, b)
     );
@@ -83,7 +82,9 @@ export function recencyLabel(
   }
 }
 
-export function qualityLabel(quality: 'VERIFIED' | 'MIXED' | 'UNVERIFIED' | 'NONE'): string {
+export function qualityLabel(
+  quality: 'VERIFIED' | 'MIXED' | 'UNVERIFIED' | 'NONE',
+): string {
   switch (quality) {
     case 'VERIFIED':
       return 'All evidence verified';
@@ -104,21 +105,43 @@ export interface SkillEvidenceItem {
   countsAsVerified: boolean;
 }
 
+/** EVIDENCE→x SUPPORTS edges grouped by target id (with their original order), built once per page. */
+export interface SupportingEvidenceIndex {
+  byTarget: Map<string, { edge: MyosEdge; pos: number }[]>;
+  evidenceById: Map<string, MyosEvidence>;
+}
+
+export function indexSupportingEvidence(
+  graph: Pick<EvidenceGraphData, 'edges' | 'evidence'>,
+): SupportingEvidenceIndex {
+  const byTarget: SupportingEvidenceIndex['byTarget'] = new Map();
+  graph.edges.forEach((edge, pos) => {
+    if (edge.relation !== 'SUPPORTS' || edge.fromType !== 'EVIDENCE') return;
+    const list = byTarget.get(edge.toId);
+    if (list) list.push({ edge, pos });
+    else byTarget.set(edge.toId, [{ edge, pos }]);
+  });
+  return { byTarget, evidenceById: new Map(graph.evidence.map((e) => [e.id, e])) };
+}
+
 /** Evidence supporting a skill directly or through one of its supporting entities. */
 export function skillEvidenceItems(
   graph: Pick<EvidenceGraphData, 'edges' | 'evidence'>,
   skillId: string,
   supportingEntityIds: readonly string[],
+  index: SupportingEvidenceIndex = indexSupportingEvidence(graph),
 ): SkillEvidenceItem[] {
   const anchors = new Set([skillId, ...supportingEntityIds]);
-  const byId = new Map(graph.evidence.map((e) => [e.id, e]));
+  // Same edges, same (stored) order as a full scan of graph.edges, without the full scan.
+  const edges = [...anchors]
+    .flatMap((a) => index.byTarget.get(a) ?? [])
+    .sort((a, b) => a.pos - b.pos);
   const out = new Map<string, SkillEvidenceItem>();
-  for (const edge of graph.edges) {
-    if (edge.relation !== 'SUPPORTS' || edge.fromType !== 'EVIDENCE') continue;
-    if (!anchors.has(edge.toId)) continue;
-    const evidence = byId.get(edge.fromId);
+  for (const { edge } of edges) {
+    const evidence = index.evidenceById.get(edge.fromId);
     if (!evidence) continue;
-    const confirmed = edge.verificationState === 'VERIFIED' || edge.verificationState === 'USER_PROVIDED';
+    const confirmed =
+      edge.verificationState === 'VERIFIED' || edge.verificationState === 'USER_PROVIDED';
     const counts = evidence.verificationState === 'VERIFIED' && confirmed;
     const prev = out.get(evidence.id);
     if (!prev || (counts && !prev.countsAsVerified)) {
@@ -129,7 +152,9 @@ export function skillEvidenceItems(
       });
     }
   }
-  return [...out.values()].sort((a, b) => a.evidence.title.localeCompare(b.evidence.title));
+  return [...out.values()].sort((a, b) =>
+    a.evidence.title.localeCompare(b.evidence.title),
+  );
 }
 
 export interface TechSuggestion {
@@ -148,7 +173,11 @@ export function detectMissingTechnologies(
 ): TechSuggestion[] {
   const existing = new Set(graph.skills.map((s) => s.name.trim().toLowerCase()));
   const found = new Map<string, TechSuggestion>();
-  const scan = (label: string, parts: Array<string | null | undefined>, tags: string[]) => {
+  const scan = (
+    label: string,
+    parts: Array<string | null | undefined>,
+    tags: string[],
+  ) => {
     const text = [...parts, ...tags].filter(Boolean).join('\n');
     for (const match of findTechnologies(text)) {
       const key = match.canonical.toLowerCase();
@@ -157,12 +186,17 @@ export function detectMissingTechnologies(
       if (hit) {
         if (!hit.sources.includes(label)) hit.sources.push(label);
       } else {
-        found.set(key, { name: match.canonical, category: match.category, sources: [label] });
+        found.set(key, {
+          name: match.canonical,
+          category: match.category,
+          sources: [label],
+        });
       }
     }
   };
   for (const p of graph.projects) scan(p.name, [p.description, p.summary], p.tags);
-  for (const e of graph.experiences) scan(`${e.title} at ${e.company}`, [e.description], e.tags);
+  for (const e of graph.experiences)
+    scan(`${e.title} at ${e.company}`, [e.description], e.tags);
   return [...found.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -175,7 +209,11 @@ export function categoryLabel(category: string): string {
 }
 
 export const addSkillFormSchema = z.object({
-  name: z.string().trim().min(1, 'Enter a skill name.').max(100, 'Skill name is too long.'),
+  name: z
+    .string()
+    .trim()
+    .min(1, 'Enter a skill name.')
+    .max(100, 'Skill name is too long.'),
   category: z
     .string()
     .trim()
@@ -191,7 +229,10 @@ export const linkSkillFormSchema = z.object({
     .regex(/^(PROJECT|EXPERIENCE):[0-9a-fA-F-]{36}$/, 'Choose a project or experience.'),
 });
 
-export function parseLinkTarget(target: string): { type: 'PROJECT' | 'EXPERIENCE'; id: string } {
+export function parseLinkTarget(target: string): {
+  type: 'PROJECT' | 'EXPERIENCE';
+  id: string;
+} {
   const [type, id] = target.split(':') as ['PROJECT' | 'EXPERIENCE', string];
   return { type, id };
 }

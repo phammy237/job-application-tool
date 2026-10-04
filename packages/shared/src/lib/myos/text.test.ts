@@ -25,7 +25,9 @@ describe('myos text helpers', () => {
     expect(tokenize('PM')).toEqual(tokenize('product manager'));
     expect(tokenize('customer interviews')).toEqual(tokenize('usability'));
     expect(scoreTextMatch('analytics', 'data analysis dashboards').score).toBe(1);
-    expect(scoreTextMatch('stakeholder alignment', 'cross-functional alignment').score).toBe(1);
+    expect(
+      scoreTextMatch('stakeholder alignment', 'cross-functional alignment').score,
+    ).toBe(1);
   });
 
   it('does not treat 5pm as pm, and does not match unrelated text', () => {
@@ -51,7 +53,9 @@ describe('myos text helpers', () => {
   });
 
   it('detects competencies from job text', () => {
-    const c = detectCompetencies('Partner with engineering stakeholders, prioritizing the roadmap');
+    const c = detectCompetencies(
+      'Partner with engineering stakeholders, prioritizing the roadmap',
+    );
     expect(c).toContain('CROSS_FUNCTIONAL_COLLABORATION');
     expect(c).toContain('PRIORITIZATION');
     expect(detectCompetencies('We sell shoes')).toEqual([]);

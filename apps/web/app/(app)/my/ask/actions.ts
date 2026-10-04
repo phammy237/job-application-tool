@@ -1,9 +1,8 @@
 'use server';
 
-import { loadOwnEvidenceGraph } from '@career-os/database';
 import { answerQuestion, type AskAnswer } from '@career-os/shared';
 import { requireUser } from '../../../../lib/auth';
-import { createClient } from '../../../../lib/supabase/server';
+import { loadEvidenceGraphForRequest } from '../../../../lib/myos/load-graph';
 import { askQuestionSchema } from './ask-schema';
 
 export type AskResult = { ok: true; answer: AskAnswer } | { ok: false; error: string };
@@ -20,11 +19,13 @@ export async function askMyEvidence(question: string): Promise<AskResult> {
     return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid question.' };
   }
   try {
-    const supabase = await createClient();
-    const graph = await loadOwnEvidenceGraph(supabase, user.id);
+    const graph = await loadEvidenceGraphForRequest(user.id);
     return { ok: true, answer: answerQuestion(graph, parsed.data, new Date()) };
   } catch (error) {
-    console.error('[career-os] myOS ask failed', error);
-    return { ok: false, error: 'Could not search your evidence right now. Please try again.' };
+    console.error('[career-os] myOS ask failed', (error as Error)?.name);
+    return {
+      ok: false,
+      error: 'Could not search your evidence right now. Please try again.',
+    };
   }
 }

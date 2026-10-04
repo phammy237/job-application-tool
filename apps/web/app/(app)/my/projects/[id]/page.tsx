@@ -1,16 +1,18 @@
-import {
-  listOwnCandidates,
-  listOwnGithubRepositories,
-  loadOwnEvidenceGraph,
-} from '@career-os/database';
+import { listOwnCandidates, listOwnGithubRepositories } from '@career-os/database';
 import { achievementKindSchema, safeHttpHref, uuidSchema } from '@career-os/shared';
 import { Badge, Input, Label, Select, Textarea, Button } from '@career-os/ui';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { formatDate } from '../../../../../lib/myos/home';
 import { requireUser } from '../../../../../lib/auth';
+import { loadEvidenceGraphForRequest } from '../../../../../lib/myos/load-graph';
 import { createClient } from '../../../../../lib/supabase/server';
-import { EmptyState, FlagBadge, VerificationBadge, VisibilityBadge } from '../../_components/badges';
+import {
+  EmptyState,
+  FlagBadge,
+  VerificationBadge,
+  VisibilityBadge,
+} from '../../_components/badges';
 import {
   acceptCandidateAction,
   addProjectAchievementAction,
@@ -28,7 +30,7 @@ import {
   updateProjectAction,
 } from '../actions';
 import { AchievementSupport } from '../../achievements/achievement-support';
-import { Feedback, firstParam } from '../_components/feedback';
+import { Feedback, firstParam } from '../../_components/feedback';
 import { ConfirmDeleteForm } from '../_components/confirm-delete-form';
 import { VisibilitySelect } from '../_components/visibility-select';
 import { SubmitButton } from '../_components/submit-button';
@@ -74,12 +76,18 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section id={id} aria-labelledby={`${id ?? title}-h`} className="border-border bg-card space-y-3 rounded-lg border p-4 scroll-mt-4">
+    <section
+      id={id}
+      aria-labelledby={`${id ?? title}-h`}
+      className="border-border bg-card scroll-mt-4 space-y-3 rounded-lg border p-4"
+    >
       <div>
         <h2 id={`${id ?? title}-h`} className="text-sm font-semibold">
           {title}
         </h2>
-        {description ? <p className="text-muted-foreground mt-0.5 text-xs">{description}</p> : null}
+        {description ? (
+          <p className="text-muted-foreground mt-0.5 text-xs">{description}</p>
+        ) : null}
       </div>
       {children}
     </section>
@@ -106,7 +114,7 @@ export default async function ProjectDetailPage({
   const user = await requireUser();
   const supabase = await createClient();
   const [graph, pendingAll, repos] = await Promise.all([
-    loadOwnEvidenceGraph(supabase, user.id),
+    loadEvidenceGraphForRequest(user.id),
     listOwnCandidates(supabase, user.id, 'PENDING'),
     listOwnGithubRepositories(supabase, user.id),
   ]);
@@ -115,11 +123,21 @@ export default async function ProjectDetailPage({
   if (!view) notFound();
   const { project, skills, achievements, evidence } = view;
   const pending = pendingAll.filter((c) => c.projectId === id);
-  const supportEdges = graph.edges.filter(
-    (e) => e.relation === 'SUPPORTS' && e.fromType === 'EVIDENCE' && e.toType === 'ACHIEVEMENT',
-  );
+  // EVIDENCE→ACHIEVEMENT support links grouped once, instead of a full edge scan per achievement.
+  const supportByAchievement = new Map<string, Set<string>>();
+  for (const e of graph.edges) {
+    if (
+      e.relation !== 'SUPPORTS' ||
+      e.fromType !== 'EVIDENCE' ||
+      e.toType !== 'ACHIEVEMENT'
+    )
+      continue;
+    const set = supportByAchievement.get(e.toId) ?? new Set<string>();
+    set.add(e.fromId);
+    supportByAchievement.set(e.toId, set);
+  }
   const supportFor = (achievementId: string) => {
-    const linked = new Set(supportEdges.filter((e) => e.toId === achievementId).map((e) => e.fromId));
+    const linked = supportByAchievement.get(achievementId) ?? new Set<string>();
     return {
       count: linked.size,
       options: graph.evidence
@@ -144,27 +162,49 @@ export default async function ProjectDetailPage({
       <header className="space-y-2">
         <h1 className="text-2xl font-semibold tracking-tight">{project.name}</h1>
         <div className="flex flex-wrap items-center gap-1.5 text-sm">
-          <Badge variant="outline">{project.origin === 'GITHUB' ? 'GitHub' : project.origin === 'RESUME' ? 'Resume' : 'Manual'}</Badge>
+          <Badge variant="outline">
+            {project.origin === 'GITHUB'
+              ? 'GitHub'
+              : project.origin === 'RESUME'
+                ? 'Resume'
+                : 'Manual'}
+          </Badge>
           <VisibilityBadge visibility={project.visibility} />
           {!project.userApproved ? <FlagBadge>Unapproved</FlagBadge> : null}
           {evidence.length === 0 ? <FlagBadge>No evidence</FlagBadge> : null}
           <span className="text-muted-foreground">
-            {[project.role, project.status ? STATUS_OPTIONS.find((s) => s[0] === project.status)?.[1] : null]
+            {[
+              project.role,
+              project.status
+                ? STATUS_OPTIONS.find((s) => s[0] === project.status)?.[1]
+                : null,
+            ]
               .filter(Boolean)
               .join(' · ') || 'No role or status set'}
           </span>
           <span className="text-muted-foreground">
-            {formatDate(project.startDate)} to {project.endDate ? formatDate(project.endDate) : 'present'}
+            {formatDate(project.startDate)} to{' '}
+            {project.endDate ? formatDate(project.endDate) : 'present'}
           </span>
         </div>
         <p className="flex flex-wrap gap-x-4 text-sm">
           {safeHttpHref(project.url) ? (
-            <a href={safeHttpHref(project.url) ?? undefined} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+            <a
+              href={safeHttpHref(project.url) ?? undefined}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary hover:underline"
+            >
               Project link
             </a>
           ) : null}
           {repo && safeHttpHref(repo.htmlUrl) ? (
-            <a href={safeHttpHref(repo.htmlUrl) ?? undefined} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+            <a
+              href={safeHttpHref(repo.htmlUrl) ?? undefined}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary hover:underline"
+            >
               Repository {repo.fullName}
             </a>
           ) : null}
@@ -178,11 +218,16 @@ export default async function ProjectDetailPage({
         description="Detected automatically. Nothing here is part of your profile until you accept it."
       >
         {pending.length === 0 ? (
-          <p className="text-muted-foreground text-sm">No pending suggestions for this project.</p>
+          <p className="text-muted-foreground text-sm">
+            No pending suggestions for this project.
+          </p>
         ) : (
           <ul className="divide-border divide-y">
             {pending.map((c) => (
-              <li key={c.id} className="flex flex-wrap items-start justify-between gap-2 py-2.5">
+              <li
+                key={c.id}
+                className="flex flex-wrap items-start justify-between gap-2 py-2.5"
+              >
                 <div className="min-w-0 text-sm">
                   <p>
                     <Badge variant="secondary" className="mr-2">
@@ -203,14 +248,19 @@ export default async function ProjectDetailPage({
                     </span>
                   </p>
                   <p className="text-muted-foreground mt-0.5 text-xs">
-                    Inferred from {c.rationale ?? 'repository data'} — not yet part of your profile
+                    Inferred from {c.rationale ?? 'repository data'} — not yet part of
+                    your profile
                   </p>
                 </div>
                 <div className="flex gap-2">
                   <form action={acceptCandidateAction}>
                     <IdField id={id} />
                     <input type="hidden" name="candidateId" value={c.id} />
-                    <SubmitButton size="sm" pendingLabel="Accepting…" aria-label={`Accept suggestion`}>
+                    <SubmitButton
+                      size="sm"
+                      pendingLabel="Accepting…"
+                      aria-label={`Accept suggestion`}
+                    >
                       Accept
                     </SubmitButton>
                   </form>
@@ -234,11 +284,22 @@ export default async function ProjectDetailPage({
           <IdField id={id} />
           <div className="space-y-1.5 sm:col-span-2">
             <Label htmlFor="name">Name</Label>
-            <Input id="name" name="name" required maxLength={200} defaultValue={project.name} />
+            <Input
+              id="name"
+              name="name"
+              required
+              maxLength={200}
+              defaultValue={project.name}
+            />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="role">Your role</Label>
-            <Input id="role" name="role" maxLength={200} defaultValue={project.role ?? ''} />
+            <Input
+              id="role"
+              name="role"
+              maxLength={200}
+              defaultValue={project.role ?? ''}
+            />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="status">Status</Label>
@@ -253,27 +314,61 @@ export default async function ProjectDetailPage({
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="startDate">Start date</Label>
-            <Input id="startDate" name="startDate" type="date" defaultValue={project.startDate ?? ''} />
+            <Input
+              id="startDate"
+              name="startDate"
+              type="date"
+              defaultValue={project.startDate ?? ''}
+            />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="endDate">End date</Label>
-            <Input id="endDate" name="endDate" type="date" defaultValue={project.endDate ?? ''} />
+            <Input
+              id="endDate"
+              name="endDate"
+              type="date"
+              defaultValue={project.endDate ?? ''}
+            />
           </div>
           <div className="space-y-1.5 sm:col-span-2">
             <Label htmlFor="url">Link</Label>
-            <Input id="url" name="url" type="url" maxLength={500} defaultValue={project.url ?? ''} placeholder="https://" />
+            <Input
+              id="url"
+              name="url"
+              type="url"
+              maxLength={500}
+              defaultValue={project.url ?? ''}
+              placeholder="https://"
+            />
           </div>
           <div className="space-y-1.5 sm:col-span-2">
             <Label htmlFor="summary">Summary</Label>
-            <Textarea id="summary" name="summary" rows={3} maxLength={4000} defaultValue={project.summary ?? ''} />
+            <Textarea
+              id="summary"
+              name="summary"
+              rows={3}
+              maxLength={4000}
+              defaultValue={project.summary ?? ''}
+            />
           </div>
           <div className="space-y-1.5 sm:col-span-2">
             <Label htmlFor="description">Description</Label>
-            <Textarea id="description" name="description" rows={5} maxLength={8000} defaultValue={project.description ?? ''} />
+            <Textarea
+              id="description"
+              name="description"
+              rows={5}
+              maxLength={8000}
+              defaultValue={project.description ?? ''}
+            />
           </div>
           <div className="space-y-1.5 sm:col-span-2">
             <Label htmlFor="collaborators">Collaborators</Label>
-            <Input id="collaborators" name="collaborators" defaultValue={project.collaborators.join(', ')} aria-describedby="collab-help" />
+            <Input
+              id="collaborators"
+              name="collaborators"
+              defaultValue={project.collaborators.join(', ')}
+              aria-describedby="collab-help"
+            />
             <p id="collab-help" className="text-muted-foreground text-xs">
               Comma-separated names.
             </p>
@@ -285,19 +380,32 @@ export default async function ProjectDetailPage({
       </Section>
 
       {/* Skills */}
-      <Section id="skills" title="Technologies and skills" description="Skills this project demonstrates.">
+      <Section
+        id="skills"
+        title="Technologies and skills"
+        description="Skills this project demonstrates."
+      >
         {skills.length === 0 ? (
           <p className="text-muted-foreground text-sm">No skills linked yet.</p>
         ) : (
           <ul className="flex flex-wrap gap-2">
             {skills.map(({ edge, skill }) => (
-              <li key={edge.id} className="border-border flex items-center gap-2 rounded-md border py-1 pl-2.5 pr-1 text-sm">
+              <li
+                key={edge.id}
+                className="border-border flex items-center gap-2 rounded-md border py-1 pl-2.5 pr-1 text-sm"
+              >
                 <span className="font-medium">{skill.name}</span>
                 <VerificationBadge state={edge.verificationState} />
                 <form action={removeProjectSkillAction}>
                   <IdField id={id} />
                   <input type="hidden" name="edgeId" value={edge.id} />
-                  <Button type="submit" variant="ghost" size="sm" className="min-h-10 px-2 text-xs" aria-label={`Remove ${skill.name} from this project`}>
+                  <Button
+                    type="submit"
+                    variant="ghost"
+                    size="sm"
+                    className="min-h-10 px-2 text-xs"
+                    aria-label={`Remove ${skill.name} from this project`}
+                  >
                     Remove
                   </Button>
                 </form>
@@ -309,7 +417,14 @@ export default async function ProjectDetailPage({
           <IdField id={id} />
           <div className="space-y-1.5">
             <Label htmlFor="skill">Add a skill</Label>
-            <Input id="skill" name="skill" required maxLength={80} placeholder="e.g. PostgreSQL" autoComplete="off" />
+            <Input
+              id="skill"
+              name="skill"
+              required
+              maxLength={80}
+              placeholder="e.g. PostgreSQL"
+              autoComplete="off"
+            />
           </div>
           <SubmitButton size="sm" variant="outline" pendingLabel="Adding…">
             Add
@@ -324,13 +439,21 @@ export default async function ProjectDetailPage({
         ) : (
           <ul className="divide-border divide-y">
             {achievements.map((a) => (
-              <li key={a.id} className="flex flex-wrap items-start justify-between gap-2 py-2.5 text-sm">
+              <li
+                key={a.id}
+                className="flex flex-wrap items-start justify-between gap-2 py-2.5 text-sm"
+              >
                 <div className="min-w-0">
                   <p className="font-medium">
-                    {a.title} <span className="text-muted-foreground text-xs font-normal">{a.kind.toLowerCase()} · {formatDate(a.occurredOn)}</span>
+                    {a.title}{' '}
+                    <span className="text-muted-foreground text-xs font-normal">
+                      {a.kind.toLowerCase()} · {formatDate(a.occurredOn)}
+                    </span>
                   </p>
                   {a.metricText ? <p>Metric: {a.metricText}</p> : null}
-                  {a.description ? <p className="text-muted-foreground">{a.description}</p> : null}
+                  {a.description ? (
+                    <p className="text-muted-foreground">{a.description}</p>
+                  ) : null}
                   <p className="mt-1 flex gap-1.5">
                     <VerificationBadge state={a.verificationState} />
                     <VisibilityBadge visibility={a.visibility} />
@@ -339,7 +462,12 @@ export default async function ProjectDetailPage({
                 <form action={deleteProjectAchievementAction}>
                   <IdField id={id} />
                   <input type="hidden" name="achievementId" value={a.id} />
-                  <Button type="submit" variant="ghost" size="sm" aria-label={`Delete achievement ${a.title}`}>
+                  <Button
+                    type="submit"
+                    variant="ghost"
+                    size="sm"
+                    aria-label={`Delete achievement ${a.title}`}
+                  >
                     Delete
                   </Button>
                 </form>
@@ -356,8 +484,13 @@ export default async function ProjectDetailPage({
           </ul>
         )}
         <details className="border-border rounded-md border">
-          <summary className="cursor-pointer px-3 py-2 text-sm font-medium">Add an achievement</summary>
-          <form action={addProjectAchievementAction} className="grid gap-3 border-t p-3 sm:grid-cols-2">
+          <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
+            Add an achievement
+          </summary>
+          <form
+            action={addProjectAchievementAction}
+            className="grid gap-3 border-t p-3 sm:grid-cols-2"
+          >
             <IdField id={id} />
             <div className="space-y-1.5 sm:col-span-2">
               <Label htmlFor="a-title">Title</Label>
@@ -379,10 +512,15 @@ export default async function ProjectDetailPage({
             </div>
             <div className="space-y-1.5 sm:col-span-2">
               <Label htmlFor="a-metric">Metric (optional)</Label>
-              <Input id="a-metric" name="metricText" maxLength={300} aria-describedby="a-metric-help" />
+              <Input
+                id="a-metric"
+                name="metricText"
+                maxLength={300}
+                aria-describedby="a-metric-help"
+              />
               <p id="a-metric-help" className="text-muted-foreground text-xs">
-                Only state metrics you can back with evidence. It is stored exactly as you type it and
-                is not marked verified until evidence supports it.
+                Only state metrics you can back with evidence. It is stored exactly as you
+                type it and is not marked verified until evidence supports it.
               </p>
             </div>
             <div className="space-y-1.5 sm:col-span-2">
@@ -412,17 +550,31 @@ export default async function ProjectDetailPage({
         ) : (
           <ul className="divide-border divide-y">
             {evidence.map(({ edge, item }) => (
-              <li key={edge.id} className="flex flex-wrap items-start justify-between gap-2 py-2.5 text-sm">
+              <li
+                key={edge.id}
+                className="flex flex-wrap items-start justify-between gap-2 py-2.5 text-sm"
+              >
                 <div className="min-w-0">
                   <p className="font-medium">{item.title}</p>
-                  {item.excerpt ? <p className="text-muted-foreground line-clamp-3">{item.excerpt}</p> : null}
+                  {item.excerpt ? (
+                    <p className="text-muted-foreground line-clamp-3">{item.excerpt}</p>
+                  ) : null}
                   <p className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
                     <VerificationBadge state={item.verificationState} />
                     <span>{SOURCE_LABEL[item.sourceType] ?? item.sourceType}</span>
-                    <span>{edge.relation === 'REPRESENTS' ? 'represents this project' : 'supports this project'}</span>
+                    <span>
+                      {edge.relation === 'REPRESENTS'
+                        ? 'represents this project'
+                        : 'supports this project'}
+                    </span>
                     <span>{formatDate(item.occurredAt ?? item.createdAt)}</span>
                     {safeHttpHref(item.sourceUrl) ? (
-                      <a href={safeHttpHref(item.sourceUrl) ?? undefined} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                      <a
+                        href={safeHttpHref(item.sourceUrl) ?? undefined}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary hover:underline"
+                      >
                         Source
                       </a>
                     ) : null}
@@ -432,7 +584,12 @@ export default async function ProjectDetailPage({
                   <form action={unlinkProjectEvidenceAction}>
                     <IdField id={id} />
                     <input type="hidden" name="edgeId" value={edge.id} />
-                    <Button type="submit" variant="ghost" size="sm" aria-label={`Unlink evidence ${item.title}`}>
+                    <Button
+                      type="submit"
+                      variant="ghost"
+                      size="sm"
+                      aria-label={`Unlink evidence ${item.title}`}
+                    >
                       Unlink
                     </Button>
                   </form>
@@ -449,8 +606,13 @@ export default async function ProjectDetailPage({
           </ul>
         )}
         <details className="border-border rounded-md border">
-          <summary className="cursor-pointer px-3 py-2 text-sm font-medium">Add a note or link as evidence</summary>
-          <form action={addProjectEvidenceAction} className="grid gap-3 border-t p-3 sm:grid-cols-2">
+          <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
+            Add a note or link as evidence
+          </summary>
+          <form
+            action={addProjectEvidenceAction}
+            className="grid gap-3 border-t p-3 sm:grid-cols-2"
+          >
             <IdField id={id} />
             <div className="space-y-1.5 sm:col-span-2">
               <Label htmlFor="e-title">Title</Label>
@@ -458,12 +620,20 @@ export default async function ProjectDetailPage({
             </div>
             <div className="space-y-1.5 sm:col-span-2">
               <Label htmlFor="e-url">Link</Label>
-              <Input id="e-url" name="sourceUrl" type="url" maxLength={500} placeholder="https://" />
+              <Input
+                id="e-url"
+                name="sourceUrl"
+                type="url"
+                maxLength={500}
+                placeholder="https://"
+              />
             </div>
             <div className="space-y-1.5 sm:col-span-2">
               <Label htmlFor="e-note">Note</Label>
               <Textarea id="e-note" name="excerpt" rows={3} maxLength={2000} />
-              <p className="text-muted-foreground text-xs">Provide a note, a link, or both. It is recorded as provided by you.</p>
+              <p className="text-muted-foreground text-xs">
+                Provide a note, a link, or both. It is recorded as provided by you.
+              </p>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="e-date">Date</Label>
@@ -481,7 +651,9 @@ export default async function ProjectDetailPage({
       {/* Collaborators */}
       <Section id="collaborators" title="Collaborators">
         {project.collaborators.length === 0 ? (
-          <p className="text-muted-foreground text-sm">None listed. Add names in Summary and details.</p>
+          <p className="text-muted-foreground text-sm">
+            None listed. Add names in Summary and details.
+          </p>
         ) : (
           <ul className="flex flex-wrap gap-2 text-sm">
             {project.collaborators.map((c) => (
@@ -494,13 +666,22 @@ export default async function ProjectDetailPage({
       </Section>
 
       {/* Talking points */}
-      <Section id="talking-points" title="Interview talking points" description="One per line, up to 20.">
+      <Section
+        id="talking-points"
+        title="Interview talking points"
+        description="One per line, up to 20."
+      >
         <form action={saveTalkingPointsAction} className="space-y-2">
           <IdField id={id} />
           <Label htmlFor="talkingPoints" className="sr-only">
             Interview talking points
           </Label>
-          <Textarea id="talkingPoints" name="talkingPoints" rows={5} defaultValue={project.talkingPoints.join('\n')} />
+          <Textarea
+            id="talkingPoints"
+            name="talkingPoints"
+            rows={5}
+            defaultValue={project.talkingPoints.join('\n')}
+          />
           <SubmitButton size="sm">Save talking points</SubmitButton>
         </form>
       </Section>
@@ -511,10 +692,14 @@ export default async function ProjectDetailPage({
           <IdField id={id} />
           <div className="space-y-1.5">
             <Label htmlFor="visibility">Visibility</Label>
-            <VisibilitySelect defaultValue={project.visibility} options={VISIBILITY_OPTIONS} />
+            <VisibilitySelect
+              defaultValue={project.visibility}
+              options={VISIBILITY_OPTIONS}
+            />
             <p id="vis-help" className="text-muted-foreground text-xs">
-              Nothing is public unless you choose PUBLIC and enable the portfolio. Private stays
-              visible only to you; Career OS only is used inside the app and is never exported.
+              Nothing is public unless you choose PUBLIC and enable the portfolio. Private
+              stays visible only to you; Career OS only is used inside the app and is
+              never exported.
             </p>
           </div>
           <SubmitButton size="sm" variant="outline">
@@ -522,12 +707,20 @@ export default async function ProjectDetailPage({
           </SubmitButton>
         </form>
 
-        <form action={setProjectApprovalAction} className="border-border space-y-2 border-t pt-3">
+        <form
+          action={setProjectApprovalAction}
+          className="border-border space-y-2 border-t pt-3"
+        >
           <IdField id={id} />
           <fieldset className="space-y-2">
             <legend className="text-sm font-medium">Approval</legend>
             <label className="flex items-start gap-2 text-sm">
-              <input type="checkbox" name="userApproved" defaultChecked={project.userApproved} className="mt-1" />
+              <input
+                type="checkbox"
+                name="userApproved"
+                defaultChecked={project.userApproved}
+                className="mt-1"
+              />
               <span>
                 I confirm this project is accurate
                 <span className="text-muted-foreground block text-xs">
@@ -559,13 +752,15 @@ export default async function ProjectDetailPage({
       {/* Delete */}
       <Section id="danger" title="Delete project">
         <details>
-          <summary className="text-destructive cursor-pointer text-sm font-medium">Delete this project…</summary>
+          <summary className="text-destructive cursor-pointer text-sm font-medium">
+            Delete this project…
+          </summary>
           <form action={deleteProjectAction} className="mt-3 space-y-2">
             <IdField id={id} />
             <p className="text-sm">
-              This permanently deletes <strong>{project.name}</strong> and its links to skills and
-              evidence. Evidence records and achievements are kept unless you delete them separately.
-              This cannot be undone.
+              This permanently deletes <strong>{project.name}</strong> and its links to
+              skills and evidence. Evidence records and achievements are kept unless you
+              delete them separately. This cannot be undone.
             </p>
             <SubmitButton size="sm" variant="destructive" pendingLabel="Deleting…">
               Yes, delete project

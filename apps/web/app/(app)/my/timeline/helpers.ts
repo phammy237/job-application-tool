@@ -39,7 +39,9 @@ export function parseTimelineParams(
   const year = Number.parseInt(first(sp.year), 10);
   const skill = first(sp.skill);
   return {
-    type: (TIMELINE_TYPES as readonly string[]).includes(type) ? (type as TimelineEntryType) : null,
+    type: (TIMELINE_TYPES as readonly string[]).includes(type)
+      ? (type as TimelineEntryType)
+      : null,
     year: Number.isInteger(year) && year >= 1900 && year <= 2200 ? year : null,
     skillId: /^[0-9a-fA-F-]{36}$/.test(skill) ? skill : null,
   };
@@ -53,7 +55,8 @@ export function timelineHref(
   const merged = { ...current, ...override };
   const qs = new URLSearchParams();
   if (merged.type) qs.set('type', merged.type);
-  if (merged.year !== null && merged.year !== undefined) qs.set('year', String(merged.year));
+  if (merged.year !== null && merged.year !== undefined)
+    qs.set('year', String(merged.year));
   if (merged.skillId) qs.set('skill', merged.skillId);
   const s = qs.toString();
   return s ? `/my/timeline?${s}` : '/my/timeline';
@@ -79,7 +82,9 @@ function monthPart(value: string | null): string | null {
 }
 
 /** "2023-04 – Present", "2021-01 – 2022-06", "2020-05", or "Undated". */
-export function formatRange(entry: Pick<TimelineEntry, 'start' | 'end' | 'isOngoing'>): string {
+export function formatRange(
+  entry: Pick<TimelineEntry, 'start' | 'end' | 'isOngoing'>,
+): string {
   const start = monthPart(entry.start);
   const end = entry.isOngoing ? 'Present' : monthPart(entry.end);
   if (start && end && start !== end) return `${start} – ${end}`;

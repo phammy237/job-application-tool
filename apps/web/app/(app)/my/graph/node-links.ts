@@ -17,13 +17,8 @@ export function nodeHref(type: NodeType | 'SKILL', id: string): string | null {
   }
 }
 
-/** Only http(s) URLs are ever rendered as links (blocks javascript:/data: stored in evidence). */
-export function safeExternalUrl(url: string | null | undefined): string | null {
-  if (!url) return null;
-  try {
-    const u = new URL(url);
-    return u.protocol === 'https:' || u.protocol === 'http:' ? u.toString() : null;
-  } catch {
-    return null;
-  }
-}
+/**
+ * Only http(s) URLs are ever rendered as links (blocks javascript:/data: stored in evidence).
+ * Alias of the single shared implementation.
+ */
+export { safeHttpHref as safeExternalUrl } from '@career-os/shared';

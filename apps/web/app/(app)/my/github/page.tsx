@@ -5,7 +5,12 @@ import {
 } from '@career-os/database';
 import { requireUser } from '../../../../lib/auth';
 import { createClient } from '../../../../lib/supabase/server';
-import { GithubPanel, type ConnectionView, type RepoView, type RunView } from './github-panel';
+import {
+  GithubPanel,
+  type ConnectionView,
+  type RepoView,
+  type RunView,
+} from './github-panel';
 
 export default async function MyGithubPage() {
   const user = await requireUser();
@@ -54,8 +59,8 @@ export default async function MyGithubPage() {
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">GitHub</h1>
         <p className="text-muted-foreground mt-1 text-sm">
-          Import repositories as projects. Everything imported starts private and unapproved, and
-          detected skills are suggestions until you confirm them.
+          Import repositories as projects. Everything imported starts private and
+          unapproved, and detected skills are suggestions until you confirm them.
         </p>
       </header>
       <GithubPanel connection={connectionView} repos={repos} runs={runViews} />

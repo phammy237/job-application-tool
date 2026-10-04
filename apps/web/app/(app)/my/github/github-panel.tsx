@@ -4,7 +4,7 @@ import { safeHttpHref } from '@career-os/shared';
 import { Button, Input, Label } from '@career-os/ui';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { type FormEvent, useState, useTransition } from 'react';
+import { type FormEvent, useMemo, useState, useTransition } from 'react';
 import { EmptyState, FlagBadge } from '../_components/badges';
 import {
   coerceStats,
@@ -50,7 +50,10 @@ type Message = { kind: 'ok' | 'error'; text: string } | null;
 
 const day = (iso: string | null) => (iso ? iso.slice(0, 10) : '—');
 
-async function postJson(url: string, body?: unknown): Promise<{ ok: boolean; status: number; json: unknown }> {
+async function postJson(
+  url: string,
+  body?: unknown,
+): Promise<{ ok: boolean; status: number; json: unknown }> {
   const res = await fetch(url, {
     method: 'POST',
     headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
@@ -100,16 +103,25 @@ export function GithubPanel({
     setBusy('connect');
     setMessage(null);
     try {
-      const res = await postJson('/api/myos/github/connect', token ? { login, token } : { login });
+      const res = await postJson(
+        '/api/myos/github/connect',
+        token ? { login, token } : { login },
+      );
       if (!res.ok) {
         setMessage({ kind: 'error', text: describeApiError(res.status, res.json) });
         return;
       }
       form.reset(); // clears the token field; it is never kept in component state
-      setMessage({ kind: 'ok', text: `Connected as ${login}. Run a sync to import repositories.` });
+      setMessage({
+        kind: 'ok',
+        text: `Connected as ${login}. Run a sync to import repositories.`,
+      });
       refresh();
     } catch {
-      setMessage({ kind: 'error', text: 'Network error. Check your connection and try again.' });
+      setMessage({
+        kind: 'error',
+        text: 'Network error. Check your connection and try again.',
+      });
     } finally {
       setBusy(null);
     }
@@ -177,7 +189,9 @@ export function GithubPanel({
     setMessage(null);
     setSelected((s) => ({ ...s, [repo.id]: next }));
     try {
-      const res = await postJson(`/api/myos/github/repositories/${repo.id}/select`, { selected: next });
+      const res = await postJson(`/api/myos/github/repositories/${repo.id}/select`, {
+        selected: next,
+      });
       if (!res.ok) {
         setSelected((s) => ({ ...s, [repo.id]: !next }));
         setMessage({ kind: 'error', text: describeApiError(res.status, res.json) });
@@ -197,6 +211,16 @@ export function GithubPanel({
       setRowBusy(null);
     }
   }
+
+  // Derived once per `runs` prop, not on every busy/message state change.
+  const runRows = useMemo(
+    () =>
+      runs.map((run) => {
+        const stats = coerceStats(run.stats);
+        return { run, summary: summarizeSync(stats), limit: rateLimitMessage(stats) };
+      }),
+    [runs],
+  );
 
   const working = busy !== null || isPending;
   const syncLimit = syncResult ? rateLimitMessage(syncResult.stats) : null;
@@ -219,7 +243,10 @@ export function GithubPanel({
       </div>
 
       {/* Connection */}
-      <section aria-labelledby="gh-conn" className="border-border bg-card space-y-3 rounded-lg border p-4">
+      <section
+        aria-labelledby="gh-conn"
+        className="border-border bg-card space-y-3 rounded-lg border p-4"
+      >
         <h2 id="gh-conn" className="text-sm font-semibold">
           Connection
         </h2>
@@ -235,31 +262,54 @@ export function GithubPanel({
             </p>
             {!connection.hasToken ? (
               <p className="text-sm text-amber-900 dark:text-amber-200" role="note">
-                Username-only connection: repositories are imported as unverified because ownership of this GitHub account cannot be confirmed. Add a read-only token to verify.
+                Username-only connection: repositories are imported as unverified because
+                ownership of this GitHub account cannot be confirmed. Add a read-only
+                token to verify.
               </p>
             ) : null}
             {connection.status !== 'CONNECTED' || connection.lastError ? (
               <p className="text-destructive text-sm" role="alert">
                 Connection status {connection.status.toLowerCase()}
-                {connection.lastError ? `: ${connection.lastError}` : ''}. Reconnect below.
+                {connection.lastError ? `: ${connection.lastError}` : ''}. Reconnect
+                below.
               </p>
             ) : null}
             <div className="flex flex-wrap items-center gap-2">
-              <Button size="sm" onClick={onSync} disabled={working} aria-busy={busy === 'sync'}>
+              <Button
+                size="sm"
+                onClick={onSync}
+                disabled={working}
+                aria-busy={busy === 'sync'}
+              >
                 {busy === 'sync' ? 'Syncing… this can take a minute' : 'Sync now'}
               </Button>
               {confirmDisconnect ? (
                 <span className="flex flex-wrap items-center gap-2 text-sm">
                   Remove the connection and stored token?
-                  <Button size="sm" variant="destructive" onClick={onDisconnect} disabled={working}>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    onClick={onDisconnect}
+                    disabled={working}
+                  >
                     {busy === 'disconnect' ? 'Disconnecting…' : 'Yes, disconnect'}
                   </Button>
-                  <Button size="sm" variant="ghost" onClick={() => setConfirmDisconnect(false)} disabled={working}>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setConfirmDisconnect(false)}
+                    disabled={working}
+                  >
                     Cancel
                   </Button>
                 </span>
               ) : (
-                <Button size="sm" variant="outline" onClick={() => setConfirmDisconnect(true)} disabled={working}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setConfirmDisconnect(true)}
+                  disabled={working}
+                >
                   Disconnect
                 </Button>
               )}
@@ -267,22 +317,30 @@ export function GithubPanel({
           </div>
         ) : (
           <p className="text-muted-foreground text-sm">
-            Not connected. Enter your GitHub username to import repositories as project candidates.
-            Nothing is imported until you select a repository.
+            Not connected. Enter your GitHub username to import repositories as project
+            candidates. Nothing is imported until you select a repository.
           </p>
         )}
 
         {syncResult ? (
-          <div className="border-border space-y-1 rounded-md border p-3 text-sm" aria-label="Latest sync result">
-            <p className="font-medium">
-              Result: {syncResult.status.toLowerCase()}
-            </p>
+          <div
+            className="border-border space-y-1 rounded-md border p-3 text-sm"
+            aria-label="Latest sync result"
+          >
+            <p className="font-medium">Result: {syncResult.status.toLowerCase()}</p>
             <p className="text-muted-foreground">{summarizeSync(syncResult.stats)}</p>
-            {syncLimit ? <p role="alert" className="text-amber-900 dark:text-amber-200">{syncLimit}</p> : null}
+            {syncLimit ? (
+              <p role="alert" className="text-amber-900 dark:text-amber-200">
+                {syncLimit}
+              </p>
+            ) : null}
           </div>
         ) : null}
 
-        <form onSubmit={onConnect} className="border-border grid gap-3 border-t pt-3 sm:grid-cols-2">
+        <form
+          onSubmit={onConnect}
+          className="border-border grid gap-3 border-t pt-3 sm:grid-cols-2"
+        >
           <p className="text-sm font-medium sm:col-span-2">
             {connection ? 'Reconnect or change account' : 'Connect GitHub'}
           </p>
@@ -311,12 +369,18 @@ export function GithubPanel({
             />
           </div>
           <p id="gh-token-help" className="text-muted-foreground text-xs sm:col-span-2">
-            Token is encrypted at rest, only needed for private repos, read-only scopes. Use a
-            fine-grained token with read-only access to contents and metadata. Leave blank for public
-            repositories only.
+            Token is encrypted at rest, only needed for private repos, read-only scopes.
+            Use a fine-grained token with read-only access to contents and metadata. Leave
+            blank for public repositories only.
           </p>
           <div className="sm:col-span-2">
-            <Button type="submit" size="sm" variant="outline" disabled={working} aria-busy={busy === 'connect'}>
+            <Button
+              type="submit"
+              size="sm"
+              variant="outline"
+              disabled={working}
+              aria-busy={busy === 'connect'}
+            >
               {busy === 'connect' ? 'Connecting…' : connection ? 'Reconnect' : 'Connect'}
             </Button>
           </div>
@@ -324,7 +388,10 @@ export function GithubPanel({
       </section>
 
       {/* Repositories */}
-      <section aria-labelledby="gh-repos" className="border-border bg-card space-y-3 rounded-lg border p-4">
+      <section
+        aria-labelledby="gh-repos"
+        className="border-border bg-card space-y-3 rounded-lg border p-4"
+      >
         <h2 id="gh-repos" className="text-sm font-semibold">
           Repositories
         </h2>
@@ -340,8 +407,8 @@ export function GithubPanel({
         ) : (
           <>
             <p className="text-muted-foreground text-xs">
-              Selecting a repository imports it as a private, unapproved project and deep-syncs it. You
-              approve it later.
+              Selecting a repository imports it as a private, unapproved project and
+              deep-syncs it. You approve it later.
             </p>
             <ul className="divide-border divide-y">
               {repos.map((repo) => {
@@ -366,7 +433,10 @@ export function GithubPanel({
                         </span>
                       ) : null}
                       {repo.projectId ? (
-                        <Link href={`/my/projects/${repo.projectId}`} className="text-primary ml-2 text-xs hover:underline">
+                        <Link
+                          href={`/my/projects/${repo.projectId}`}
+                          className="text-primary ml-2 text-xs hover:underline"
+                        >
                           Open project
                         </Link>
                       ) : null}
@@ -379,13 +449,19 @@ export function GithubPanel({
                         onChange={(e) => onToggle(repo, e.target.checked)}
                         aria-label={`Import ${repo.fullName} as a project`}
                       />
-                      <span className="text-xs">{rowBusy === repo.id ? 'Saving…' : 'Import as project'}</span>
+                      <span className="text-xs">
+                        {rowBusy === repo.id ? 'Saving…' : 'Import as project'}
+                      </span>
                     </label>
                     <span className="text-muted-foreground col-span-2 flex flex-wrap gap-x-3 text-xs md:contents md:text-sm">
                       <span>{repo.primaryLanguage ?? '—'}</span>
                       <span>{repo.stars} ★</span>
                       <span>Pushed {day(repo.pushedAt)}</span>
-                      <span className={repo.syncStatus === 'ERROR' ? 'text-destructive' : undefined}>
+                      <span
+                        className={
+                          repo.syncStatus === 'ERROR' ? 'text-destructive' : undefined
+                        }
+                      >
                         {repo.syncStatus === 'ERROR'
                           ? `Error: ${repo.syncError ?? 'sync failed'}`
                           : repo.syncStatus === 'SYNCED'
@@ -402,7 +478,10 @@ export function GithubPanel({
       </section>
 
       {/* History */}
-      <section aria-labelledby="gh-runs" className="border-border bg-card space-y-3 rounded-lg border p-4">
+      <section
+        aria-labelledby="gh-runs"
+        className="border-border bg-card space-y-3 rounded-lg border p-4"
+      >
         <h2 id="gh-runs" className="text-sm font-semibold">
           Recent sync runs
         </h2>
@@ -410,22 +489,23 @@ export function GithubPanel({
           <p className="text-muted-foreground text-sm">No syncs yet.</p>
         ) : (
           <ul className="divide-border divide-y text-sm">
-            {runs.map((run) => {
-              const stats = coerceStats(run.stats);
-              return (
-                <li key={run.id} className="py-2">
-                  <p>
-                    <span className="font-medium">{day(run.startedAt)}</span>{' '}
-                    <span className="text-muted-foreground">{run.status.toLowerCase()}</span>
-                  </p>
-                  <p className="text-muted-foreground text-xs">{summarizeSync(stats)}</p>
-                  {run.error ? <p className="text-destructive text-xs">{run.error}</p> : null}
-                  {rateLimitMessage(stats) ? (
-                    <p className="text-xs text-amber-900 dark:text-amber-200">{rateLimitMessage(stats)}</p>
-                  ) : null}
-                </li>
-              );
-            })}
+            {runRows.map(({ run, summary, limit }) => (
+              <li key={run.id} className="py-2">
+                <p>
+                  <span className="font-medium">{day(run.startedAt)}</span>{' '}
+                  <span className="text-muted-foreground">
+                    {run.status.toLowerCase()}
+                  </span>
+                </p>
+                <p className="text-muted-foreground text-xs">{summary}</p>
+                {run.error ? (
+                  <p className="text-destructive text-xs">{run.error}</p>
+                ) : null}
+                {limit ? (
+                  <p className="text-xs text-amber-900 dark:text-amber-200">{limit}</p>
+                ) : null}
+              </li>
+            ))}
           </ul>
         )}
       </section>

@@ -3,7 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { parsePortfolioSettingsForm } from './settings-schema';
 import { countByVisibility } from './visibility-counts';
 
-const project = (id: string, visibility: GraphProject['visibility'], userApproved: boolean): GraphProject => ({
+const project = (
+  id: string,
+  visibility: GraphProject['visibility'],
+  userApproved: boolean,
+): GraphProject => ({
   id,
   name: id,
   description: null,
@@ -49,11 +53,17 @@ describe('parsePortfolioSettingsForm', () => {
 
   it('defaults to disabled and trims/normalizes empties to null', () => {
     const r = parsePortfolioSettingsForm(form({ displayName: '  ', headline: ' Hi ' }));
-    expect(r.success && r.data).toEqual({ enabled: false, displayName: null, headline: 'Hi' });
+    expect(r.success && r.data).toEqual({
+      enabled: false,
+      displayName: null,
+      headline: 'Hi',
+    });
   });
 
   it('reads the checkbox and rejects over-long input', () => {
     expect(parsePortfolioSettingsForm(form({ enabled: 'on' })).success).toBe(true);
-    expect(parsePortfolioSettingsForm(form({ displayName: 'x'.repeat(81) })).success).toBe(false);
+    expect(
+      parsePortfolioSettingsForm(form({ displayName: 'x'.repeat(81) })).success,
+    ).toBe(false);
   });
 });

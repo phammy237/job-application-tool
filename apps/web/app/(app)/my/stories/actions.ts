@@ -17,7 +17,7 @@ import {
   okResult,
   toErrorResult,
   type ActionResult,
-} from '../skills/action-result';
+} from '../_components/action-result';
 import { parseStoryForm, type ParsedStoryForm } from './helpers';
 
 type Supabase = Awaited<ReturnType<typeof createClient>>;
@@ -46,7 +46,10 @@ async function syncLinks(
       relation: 'REFERENCES',
       toType,
       // The user picked these links explicitly.
-      targets: toIds.map((toId) => ({ toId, verificationState: 'USER_PROVIDED' as const })),
+      targets: toIds.map((toId) => ({
+        toId,
+        verificationState: 'USER_PROVIDED' as const,
+      })),
     });
   }
 }

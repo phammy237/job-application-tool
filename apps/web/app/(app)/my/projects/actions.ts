@@ -25,7 +25,7 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { requireUser } from '../../../../lib/auth';
 import { createClient } from '../../../../lib/supabase/server';
-import type { ErrorCode, NoticeCode } from './_components/feedback-messages';
+import type { ErrorCode, NoticeCode } from '../_components/feedback-messages';
 import {
   parseAddAchievement,
   parseAddEvidence,
@@ -62,7 +62,11 @@ interface Ctx {
   userId: string;
 }
 
-function back(path: string, key: 'notice' | 'error', code: NoticeCode | ErrorCode): never {
+function back(
+  path: string,
+  key: 'notice' | 'error',
+  code: NoticeCode | ErrorCode,
+): never {
   redirect(`${path}?${key}=${code}#feedback`);
 }
 
@@ -95,7 +99,10 @@ async function withProject(
 ): Promise<never> {
   const user = await requireUser();
   const rawId = fd.get('id');
-  const path = typeof rawId === 'string' && /^[0-9a-f-]{36}$/i.test(rawId) ? `/my/projects/${rawId}` : '/my/projects';
+  const path =
+    typeof rawId === 'string' && /^[0-9a-f-]{36}$/i.test(rawId)
+      ? `/my/projects/${rawId}`
+      : '/my/projects';
   let outcome: { key: 'notice' | 'error'; code: NoticeCode | ErrorCode };
   try {
     const supabase = await createClient();
@@ -202,7 +209,9 @@ export async function setProjectApprovalAction(fd: FormData): Promise<never> {
 export async function setProjectVisibilityAction(fd: FormData): Promise<never> {
   return withProject(fd, async (ctx, id) => {
     const input = must(parseVisibility(fd));
-    await updateOwnProjectDetail(ctx.supabase, ctx.userId, id, { visibility: input.visibility });
+    await updateOwnProjectDetail(ctx.supabase, ctx.userId, id, {
+      visibility: input.visibility,
+    });
     return 'visibility_saved';
   });
 }
@@ -252,7 +261,11 @@ export async function addProjectSkillAction(fd: FormData): Promise<never> {
 }
 
 /** Deletes an edge only after confirming it is attached to this project. */
-async function removeProjectEdge(ctx: Ctx, projectId: string, edgeId: string): Promise<void> {
+async function removeProjectEdge(
+  ctx: Ctx,
+  projectId: string,
+  edgeId: string,
+): Promise<void> {
   const edges = await listOwnEdgesForNode(ctx.supabase, ctx.userId, 'PROJECT', projectId);
   if (!edges.some((e) => e.id === edgeId)) throw new ActionError('edge_mismatch');
   await deleteOwnEdge(ctx.supabase, ctx.userId, edgeId);

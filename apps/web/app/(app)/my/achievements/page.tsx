@@ -1,10 +1,9 @@
-import { loadOwnEvidenceGraph } from '@career-os/database';
 import { Badge, Input, Label, Select, Textarea } from '@career-os/ui';
 import Link from 'next/link';
 import { requireUser } from '../../../../lib/auth';
-import { createClient } from '../../../../lib/supabase/server';
+import { loadEvidenceGraphForRequest } from '../../../../lib/myos/load-graph';
 import { EmptyState, VerificationBadge, VisibilityBadge } from '../_components/badges';
-import { ActionForm } from '../skills/action-form';
+import { ActionForm } from '../_components/action-form';
 import { AchievementSupport } from './achievement-support';
 import { createAchievementAction, deleteAchievementAction } from './actions';
 
@@ -12,11 +11,12 @@ export const metadata = { title: 'Achievements · myOS' };
 
 export default async function AchievementsPage() {
   const user = await requireUser();
-  const supabase = await createClient();
-  const graph = await loadOwnEvidenceGraph(supabase, user.id);
+  const graph = await loadEvidenceGraphForRequest(user.id);
 
   const projectName = new Map(graph.projects.map((p) => [p.id, p.name]));
-  const experienceName = new Map(graph.experiences.map((e) => [e.id, `${e.title} at ${e.company}`]));
+  const experienceName = new Map(
+    graph.experiences.map((e) => [e.id, `${e.title} at ${e.company}`]),
+  );
   const evidenceCount = new Map<string, number>();
   const linkedEvidence = new Map<string, Set<string>>();
   for (const edge of graph.edges) {
@@ -33,8 +33,10 @@ export default async function AchievementsPage() {
     graph.evidence
       .filter((e) => !linkedEvidence.get(achievementId)?.has(e.id))
       .map((e) => ({ id: e.id, label: e.title + ' (' + e.sourceType + ')' }));
-  const achievements = [...graph.achievements].sort((a, b) =>
-    (b.occurredOn ?? '').localeCompare(a.occurredOn ?? '') || a.title.localeCompare(b.title),
+  const achievements = [...graph.achievements].sort(
+    (a, b) =>
+      (b.occurredOn ?? '').localeCompare(a.occurredOn ?? '') ||
+      a.title.localeCompare(b.title),
   );
 
   return (
@@ -54,7 +56,11 @@ export default async function AchievementsPage() {
         <h2 id="add-achievement" className="text-sm font-medium">
           Add an achievement
         </h2>
-        <ActionForm action={createAchievementAction} submitLabel="Add achievement" resetOnSuccess>
+        <ActionForm
+          action={createAchievementAction}
+          submitLabel="Add achievement"
+          resetOnSuccess
+        >
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1 sm:col-span-2">
               <Label htmlFor="ach-title">Title</Label>
@@ -84,8 +90,8 @@ export default async function AchievementsPage() {
                 aria-describedby="ach-metric-help"
               />
               <p id="ach-metric-help" className="text-muted-foreground text-xs">
-                State only metrics you can evidence. A metric is never marked verified until a
-                supporting evidence item is linked.
+                State only metrics you can evidence. A metric is never marked verified
+                until a supporting evidence item is linked.
               </p>
             </div>
             <div className="space-y-1 sm:col-span-2">
@@ -175,7 +181,7 @@ export default async function AchievementsPage() {
                         </p>
                       ) : null}
                       {a.description ? (
-                        <p className="text-muted-foreground mt-1 text-xs whitespace-pre-line">
+                        <p className="text-muted-foreground mt-1 whitespace-pre-line text-xs">
                           {a.description}
                         </p>
                       ) : null}

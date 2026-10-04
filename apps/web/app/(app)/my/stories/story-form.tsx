@@ -2,7 +2,7 @@
 
 import { COMPETENCIES, type MyosStory } from '@career-os/shared';
 import { Input, Label, Select, Textarea } from '@career-os/ui';
-import { ActionForm } from '../skills/action-form';
+import { ActionForm } from '../_components/action-form';
 import { createStoryAction, updateStoryAction } from './actions';
 import { competencyLabel, STAR_PROMPTS } from './helpers';
 
@@ -111,7 +111,10 @@ export function StoryForm({
               defaultValue={f.value ?? ''}
               aria-describedby={`${idPrefix}-${f.name}-hint`}
             />
-            <p id={`${idPrefix}-${f.name}-hint`} className="text-muted-foreground text-xs">
+            <p
+              id={`${idPrefix}-${f.name}-hint`}
+              className="text-muted-foreground text-xs"
+            >
               {STAR_PROMPTS[i]!.prompt}
             </p>
           </div>

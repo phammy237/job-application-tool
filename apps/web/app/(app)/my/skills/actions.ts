@@ -1,11 +1,21 @@
 'use server';
 
-import { createOwnEdge, createOwnSkill, deleteOwnSkill, listOwnSkills } from '@career-os/database';
+import {
+  createOwnEdge,
+  createOwnSkill,
+  deleteOwnSkill,
+  listOwnSkills,
+} from '@career-os/database';
 import { uuidSchema } from '@career-os/shared';
 import { revalidatePath } from 'next/cache';
 import { requireUser } from '../../../../lib/auth';
 import { createClient } from '../../../../lib/supabase/server';
-import { errorResult, okResult, toErrorResult, type ActionResult } from './action-result';
+import {
+  errorResult,
+  okResult,
+  toErrorResult,
+  type ActionResult,
+} from '../_components/action-result';
 import { addSkillFormSchema, linkSkillFormSchema, parseLinkTarget } from './helpers';
 
 function revalidateSkillViews() {
@@ -43,12 +53,15 @@ export async function addSkillAction(formData: FormData): Promise<ActionResult> 
     name: formData.get('name') ?? '',
     category: formData.get('category') ?? undefined,
   });
-  if (!parsed.success) return errorResult(parsed.error.issues[0]?.message ?? 'Invalid skill.');
+  if (!parsed.success)
+    return errorResult(parsed.error.issues[0]?.message ?? 'Invalid skill.');
 
   try {
     const supabase = await createClient();
     const existing = await listOwnSkills(supabase, user.id);
-    if (existing.some((s) => s.name.trim().toLowerCase() === parsed.data.name.toLowerCase())) {
+    if (
+      existing.some((s) => s.name.trim().toLowerCase() === parsed.data.name.toLowerCase())
+    ) {
       return errorResult(`"${parsed.data.name}" is already in your skills.`);
     }
     try {
@@ -66,7 +79,11 @@ export async function addSkillAction(formData: FormData): Promise<ActionResult> 
       // A double submit loses the race on the unique index: re-select the winner and succeed.
       if (isUniqueViolation(createError)) {
         const again = await listOwnSkills(supabase, user.id);
-        if (again.some((s) => s.name.trim().toLowerCase() === parsed.data.name.toLowerCase())) {
+        if (
+          again.some(
+            (s) => s.name.trim().toLowerCase() === parsed.data.name.toLowerCase(),
+          )
+        ) {
           revalidateSkillViews();
           return okResult(`Added "${parsed.data.name}".`);
         }
@@ -87,7 +104,8 @@ export async function linkSkillAction(formData: FormData): Promise<ActionResult>
     skillId: formData.get('skillId'),
     target: formData.get('target'),
   });
-  if (!parsed.success) return errorResult(parsed.error.issues[0]?.message ?? 'Invalid link.');
+  if (!parsed.success)
+    return errorResult(parsed.error.issues[0]?.message ?? 'Invalid link.');
 
   try {
     const supabase = await createClient();

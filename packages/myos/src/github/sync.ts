@@ -175,8 +175,7 @@ async function emitEvidence(
   // Visibility is PRIVATE always (never public by omission).
   const base = {
     verificationState: (ownershipVerified ? 'VERIFIED' : 'USER_PROVIDED') as
-      | 'VERIFIED'
-      | 'USER_PROVIDED',
+      'VERIFIED' | 'USER_PROVIDED',
     visibility: 'PRIVATE' as const,
   };
 

@@ -331,7 +331,10 @@ export type GithubConnection = z.infer<typeof githubConnectionSchema>;
 export const githubLoginSchema = z
   .string()
   .trim()
-  .regex(/^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/, 'Invalid GitHub username');
+  .regex(
+    /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/,
+    'Invalid GitHub username',
+  );
 
 export const githubConnectRequestSchema = z.object({
   login: githubLoginSchema,
@@ -422,17 +425,24 @@ export const portfolioSettingsSchema = z.object({
 });
 export type PortfolioSettings = z.infer<typeof portfolioSettingsSchema>;
 
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHARS_RE = /[\u0000-\u001F\u007F-\u009F]/g;
+
 /** Strips control characters (incl. NUL/newlines), trims, and maps empty to null. */
 const publicTextSchema = (max: number) =>
   z
     .string()
     .nullable()
     .transform((value) => {
-      // eslint-disable-next-line no-control-regex
-      const cleaned = (value ?? '').replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ').replace(/\s+/g, ' ').trim();
+      const cleaned = (value ?? '')
+        .replace(CONTROL_CHARS_RE, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
       return cleaned === '' ? null : cleaned;
     })
-    .refine((value) => value === null || value.length <= max, { message: `Must be at most ${max} characters` });
+    .refine((value) => value === null || value.length <= max, {
+      message: `Must be at most ${max} characters`,
+    });
 
 /** Input to upsertOwnPortfolioSettings. These two strings are published on the public API. */
 export const portfolioSettingsInputSchema = z.object({

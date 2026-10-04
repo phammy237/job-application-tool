@@ -90,7 +90,9 @@ describe('project actions', () => {
 
   it('derives the user from the session and ignores a client user id', async () => {
     const url = await redirected(
-      actions.setProjectApprovalAction(fd({ id: PROJECT, userApproved: 'on', userId: 'evil' })),
+      actions.setProjectApprovalAction(
+        fd({ id: PROJECT, userApproved: 'on', userId: 'evil' }),
+      ),
     );
     expect(url).toContain('notice=');
     expect(mocks.getOwnProjectDetail).toHaveBeenCalledWith(CLIENT, USER, PROJECT);
@@ -102,7 +104,9 @@ describe('project actions', () => {
 
   it('refuses to delete an edge that is not attached to the project', async () => {
     mocks.listOwnEdgesForNode.mockResolvedValue([]);
-    const url = await redirected(actions.removeProjectSkillAction(fd({ id: PROJECT, edgeId: EDGE })));
+    const url = await redirected(
+      actions.removeProjectSkillAction(fd({ id: PROJECT, edgeId: EDGE })),
+    );
     expect(url).toContain('error=');
     expect(mocks.deleteOwnEdge).not.toHaveBeenCalled();
   });
@@ -114,18 +118,32 @@ describe('project actions', () => {
   });
 
   it('only accepts a pending candidate that belongs to this project', async () => {
-    mocks.getOwnCandidate.mockResolvedValue({ id: CAND, projectId: 'other', status: 'PENDING' });
-    const bad = await redirected(actions.acceptCandidateAction(fd({ id: PROJECT, candidateId: CAND })));
+    mocks.getOwnCandidate.mockResolvedValue({
+      id: CAND,
+      projectId: 'other',
+      status: 'PENDING',
+    });
+    const bad = await redirected(
+      actions.acceptCandidateAction(fd({ id: PROJECT, candidateId: CAND })),
+    );
     expect(bad).toContain('error=');
     expect(mocks.acceptOwnCandidate).not.toHaveBeenCalled();
 
-    mocks.getOwnCandidate.mockResolvedValue({ id: CAND, projectId: PROJECT, status: 'PENDING' });
-    await redirected(actions.acceptCandidateAction(fd({ id: PROJECT, candidateId: CAND })));
+    mocks.getOwnCandidate.mockResolvedValue({
+      id: CAND,
+      projectId: PROJECT,
+      status: 'PENDING',
+    });
+    await redirected(
+      actions.acceptCandidateAction(fd({ id: PROJECT, candidateId: CAND })),
+    );
     expect(mocks.acceptOwnCandidate).toHaveBeenCalledWith(CLIENT, USER, CAND);
   });
 
   it('reports validation errors without writing', async () => {
-    const url = await redirected(actions.setProjectVisibilityAction(fd({ id: PROJECT, visibility: 'WORLD' })));
+    const url = await redirected(
+      actions.setProjectVisibilityAction(fd({ id: PROJECT, visibility: 'WORLD' })),
+    );
     expect(url).toContain('error=');
   });
 
@@ -176,8 +194,12 @@ describe('project actions', () => {
     expect(bad).toContain('error=evidence_mismatch');
     expect(mocks.deleteOwnEvidence).not.toHaveBeenCalled();
 
-    mocks.listOwnEdgesForNode.mockResolvedValue([{ id: EDGE, fromType: 'EVIDENCE', fromId: CAND }]);
-    await redirected(actions.deleteProjectEvidenceAction(fd({ id: PROJECT, evidenceId: CAND })));
+    mocks.listOwnEdgesForNode.mockResolvedValue([
+      { id: EDGE, fromType: 'EVIDENCE', fromId: CAND },
+    ]);
+    await redirected(
+      actions.deleteProjectEvidenceAction(fd({ id: PROJECT, evidenceId: CAND })),
+    );
     expect(mocks.deleteOwnEvidence).toHaveBeenCalledWith(CLIENT, USER, CAND);
   });
 });

@@ -15,14 +15,19 @@ import { edge, evidence, graphOf, project, skill } from './retrieval-fixtures';
 const NOW = new Date('2026-06-15T00:00:00.000Z');
 
 describe('skill-specific evidence', () => {
-  function kube(evOver: Parameters<typeof gEvidence>[0], attachTo: 'project' | 'skill' = 'project') {
+  function kube(
+    evOver: Parameters<typeof gEvidence>[0],
+    attachTo: 'project' | 'skill' = 'project',
+  ) {
     const s = gSkill({ name: 'Kubernetes' });
     const projects = [0, 1, 2].map((i) =>
       gProject({ name: `K${i}`, startDate: '2025-01-01', endDate: '2026-03-01' }),
     );
     const ev = gEvidence({ verificationState: 'VERIFIED', ...evOver });
     const edges = [
-      ...projects.map((p) => gEdge(['PROJECT', p.id], ['SKILL', s.id], 'DEMONSTRATES', 'USER_PROVIDED')),
+      ...projects.map((p) =>
+        gEdge(['PROJECT', p.id], ['SKILL', s.id], 'DEMONSTRATES', 'USER_PROVIDED'),
+      ),
       gEdge(
         ['EVIDENCE', ev.id],
         attachTo === 'project' ? ['PROJECT', projects[0]!.id] : ['SKILL', s.id],
@@ -74,9 +79,16 @@ describe('STRONG_FIT bar', () => {
     const graph = graphOf({
       skills: [py],
       projects: [p1, p2],
-      edges: [edge('PROJECT', p1.id, 'SKILL', py.id), edge('PROJECT', p2.id, 'SKILL', py.id)],
+      edges: [
+        edge('PROJECT', p1.id, 'SKILL', py.id),
+        edge('PROJECT', p2.id, 'SKILL', py.id),
+      ],
     });
-    const r = matchRequirementsToEvidence(graph, [{ id: 'r', text: 'Python skills' }], NOW);
+    const r = matchRequirementsToEvidence(
+      graph,
+      [{ id: 'r', text: 'Python skills' }],
+      NOW,
+    );
     expect(r.matches[0]!.level).toBe('MODERATE');
     expect(r.summary.overallVerdict).toBe('PARTIAL_FIT');
   });
@@ -128,9 +140,15 @@ describe('ask intent routing and weak areas', () => {
   });
 
   it('generic words do not hijack skill/topic questions', () => {
-    expect(classifyQuestion('Where have I used Kubernetes in an interview setting?')).toBe('SKILL_EVIDENCE');
-    expect(classifyQuestion('Which projects show Python skills I could improve?')).toBe('PROJECTS_FOR_TOPIC');
-    expect(classifyQuestion('What evidence do I have for the missing data pipeline?')).toBe('SKILL_EVIDENCE');
+    expect(
+      classifyQuestion('Where have I used Kubernetes in an interview setting?'),
+    ).toBe('SKILL_EVIDENCE');
+    expect(classifyQuestion('Which projects show Python skills I could improve?')).toBe(
+      'PROJECTS_FOR_TOPIC',
+    );
+    expect(
+      classifyQuestion('What evidence do I have for the missing data pipeline?'),
+    ).toBe('SKILL_EVIDENCE');
     expect(classifyQuestion('Tell me about gap analysis')).toBe('GENERAL_SEARCH');
   });
 
@@ -146,14 +164,23 @@ describe('ask intent routing and weak areas', () => {
   });
 
   it('INTERVIEW_PREP when interview and no better intent', () => {
-    expect(classifyQuestion('Help me prepare for my Google interview')).toBe('INTERVIEW_PREP');
+    expect(classifyQuestion('Help me prepare for my Google interview')).toBe(
+      'INTERVIEW_PREP',
+    );
   });
 
   it('weak areas is a valid answer on a non-empty graph and insufficient only when empty', () => {
-    const r = answerQuestion(graphOf({ skills: [skill({ name: 'Rust' })] }), 'What are my weakest areas?', NOW);
+    const r = answerQuestion(
+      graphOf({ skills: [skill({ name: 'Rust' })] }),
+      'What are my weakest areas?',
+      NOW,
+    );
     expect(r.intent).toBe('WEAK_AREAS');
     expect(r.insufficientEvidence).toBe(false);
     expect(r.claims.length).toBeGreaterThan(0);
-    expect(answerQuestion(emptyEvidenceGraph(), 'What are my weakest areas?', NOW).insufficientEvidence).toBe(true);
+    expect(
+      answerQuestion(emptyEvidenceGraph(), 'What are my weakest areas?', NOW)
+        .insufficientEvidence,
+    ).toBe(true);
   });
 });

@@ -23,8 +23,18 @@ describe('httpUrlSchema', () => {
     expect(httpUrlSchema.safeParse('ftp://x.com/a').success).toBe(false);
   });
   it('is enforced on evidence input sourceUrl', () => {
-    const base = { sourceType: 'LINK', title: 't', verificationState: 'USER_PROVIDED' } as const;
-    expect(myosEvidenceInputSchema.safeParse({ ...base, sourceUrl: 'javascript:alert(1)' }).success).toBe(false);
-    expect(myosEvidenceInputSchema.safeParse({ ...base, sourceUrl: 'https://example.com' }).success).toBe(true);
+    const base = {
+      sourceType: 'LINK',
+      title: 't',
+      verificationState: 'USER_PROVIDED',
+    } as const;
+    expect(
+      myosEvidenceInputSchema.safeParse({ ...base, sourceUrl: 'javascript:alert(1)' })
+        .success,
+    ).toBe(false);
+    expect(
+      myosEvidenceInputSchema.safeParse({ ...base, sourceUrl: 'https://example.com' })
+        .success,
+    ).toBe(true);
   });
 });

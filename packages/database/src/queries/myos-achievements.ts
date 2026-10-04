@@ -78,7 +78,9 @@ export async function createOwnAchievement(
   const parsed = myosAchievementInputSchema.parse(input);
   const metricText = parsed.metricText?.trim() ? parsed.metricText.trim() : null;
   const verificationState =
-    metricText && parsed.verificationState === 'VERIFIED' ? 'USER_PROVIDED' : parsed.verificationState;
+    metricText && parsed.verificationState === 'VERIFIED'
+      ? 'USER_PROVIDED'
+      : parsed.verificationState;
   const { data, error } = await supabase
     .from('myos_achievements')
     .insert({
@@ -114,10 +116,14 @@ export async function updateOwnAchievement(
     // evidence substantiated the OLD claim, so the new wording is downgraded unless an
     // evidence edge still supports the achievement.
     const existing = await getOwnAchievement(supabase, userId, id);
-    const nextMetric = parsed.metricText !== undefined ? parsed.metricText?.trim() || null : existing?.metricText;
+    const nextMetric =
+      parsed.metricText !== undefined
+        ? parsed.metricText?.trim() || null
+        : existing?.metricText;
     const effectiveState = verificationState ?? existing?.verificationState;
     const metricChanged =
-      parsed.metricText !== undefined && nextMetric !== (existing?.metricText?.trim() || null);
+      parsed.metricText !== undefined &&
+      nextMetric !== (existing?.metricText?.trim() || null);
     if (
       effectiveState === 'VERIFIED' &&
       nextMetric &&
@@ -135,7 +141,8 @@ export async function updateOwnAchievement(
       description: parsed.description,
       kind: parsed.kind,
       occurred_on: parsed.occurredOn,
-      metric_text: parsed.metricText === undefined ? undefined : parsed.metricText?.trim() || null,
+      metric_text:
+        parsed.metricText === undefined ? undefined : parsed.metricText?.trim() || null,
       project_id: parsed.projectId,
       experience_id: parsed.experienceId,
       verification_state: verificationState,

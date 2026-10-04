@@ -32,12 +32,6 @@ export function nodeKey(type: NodeType, id: string): string {
   return `${type}:${id}`;
 }
 
-export function parseNodeKey(key: string): { type: NodeType; id: string } | null {
-  const i = key.indexOf(':');
-  if (i <= 0) return null;
-  return { type: key.slice(0, i) as NodeType, id: key.slice(i + 1) };
-}
-
 function evidenceSearchText(ev: {
   title: string;
   excerpt: string | null;
@@ -46,7 +40,8 @@ function evidenceSearchText(ev: {
   const parts: string[] = [ev.title, ev.excerpt ?? ''];
   for (const v of Object.values(ev.metadata ?? {})) {
     if (typeof v === 'string') parts.push(v);
-    else if (Array.isArray(v)) for (const x of v) if (typeof x === 'string') parts.push(x);
+    else if (Array.isArray(v))
+      for (const x of v) if (typeof x === 'string') parts.push(x);
   }
   return parts.join('\n');
 }

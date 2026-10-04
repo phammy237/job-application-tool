@@ -27,7 +27,9 @@ describe('parseAchievementForm', () => {
   });
 
   it('rejects bad dates, kinds and ids', () => {
-    expect(parseAchievementForm(form({ title: 'x', occurredOn: 'yesterday' })).ok).toBe(false);
+    expect(parseAchievementForm(form({ title: 'x', occurredOn: 'yesterday' })).ok).toBe(
+      false,
+    );
     expect(parseAchievementForm(form({ title: 'x', kind: 'HERO' })).ok).toBe(false);
     expect(parseAchievementForm(form({ title: 'x', projectId: 'nope' })).ok).toBe(false);
   });

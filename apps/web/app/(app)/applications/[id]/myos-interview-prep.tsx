@@ -3,6 +3,7 @@ import {
   competencyLabel,
   type EvidenceGraphData,
   type InterviewJobInput,
+  type SupportIndex,
 } from '@career-os/shared';
 import Link from 'next/link';
 
@@ -14,12 +15,15 @@ import Link from 'next/link';
  */
 export function MyosInterviewPrep({
   graph,
+  supportIndex,
   job,
 }: {
   graph: EvidenceGraphData;
+  /** Prebuilt `buildSupportIndex(graph)` shared with sibling panels. */
+  supportIndex?: SupportIndex;
   job: InterviewJobInput;
 }) {
-  const prep = buildInterviewPrep(graph, job, new Date());
+  const prep = buildInterviewPrep(graph, job, new Date(), supportIndex);
   const empty =
     prep.competencyAreas.length === 0 &&
     prep.relevantProjects.length === 0 &&
@@ -28,12 +32,15 @@ export function MyosInterviewPrep({
   return (
     <section className="space-y-3" aria-labelledby="myos-interview-prep-heading">
       <div>
-        <h2 id="myos-interview-prep-heading" className="text-muted-foreground text-sm font-medium">
+        <h2
+          id="myos-interview-prep-heading"
+          className="text-muted-foreground text-sm font-medium"
+        >
           From your evidence
         </h2>
         <p className="text-muted-foreground text-xs">
-          Interview prep from your own stories, projects and talking points. No AI is used; this is
-          separate from the AI interview-prep panel.
+          Interview prep from your own stories, projects and talking points. No AI is
+          used; this is separate from the AI interview-prep panel.
         </p>
       </div>
 
@@ -51,7 +58,10 @@ export function MyosInterviewPrep({
           <h3 className="text-sm font-medium">Competency areas</h3>
           <ul className="space-y-2">
             {prep.competencyAreas.map((area) => (
-              <li key={area.competency} className="border-border space-y-1 rounded-lg border p-3 text-sm">
+              <li
+                key={area.competency}
+                className="border-border space-y-1 rounded-lg border p-3 text-sm"
+              >
                 <p className="font-medium">
                   {competencyLabel(area.competency)}
                   {area.gap ? (
@@ -69,7 +79,9 @@ export function MyosInterviewPrep({
                         >
                           {s.title}
                         </Link>
-                        <span className="text-muted-foreground ml-2">{s.strength.toLowerCase()}</span>
+                        <span className="text-muted-foreground ml-2">
+                          {s.strength.toLowerCase()}
+                        </span>
                         {s.unapproved ? (
                           <span className="ml-2 rounded-full border border-amber-500/50 px-2 py-0.5 text-[11px] text-amber-700 dark:text-amber-400">
                             not approved yet
@@ -100,7 +112,8 @@ export function MyosInterviewPrep({
                   {p.name}
                 </Link>
                 <span className="text-muted-foreground ml-2 text-xs">
-                  {p.level.toLowerCase()} support for {p.requirementIds.length} requirement
+                  {p.level.toLowerCase()} support for {p.requirementIds.length}{' '}
+                  requirement
                   {p.requirementIds.length === 1 ? '' : 's'}
                 </span>
                 {p.unconfirmed ? (
@@ -114,7 +127,10 @@ export function MyosInterviewPrep({
         </div>
       ) : null}
 
-      <TalkingPoints title="Technical talking points" points={prep.technicalTalkingPoints} />
+      <TalkingPoints
+        title="Technical talking points"
+        points={prep.technicalTalkingPoints}
+      />
       <TalkingPoints title="Product talking points" points={prep.productTalkingPoints} />
 
       {prep.gaps.length > 0 ? (
@@ -153,7 +169,9 @@ function TalkingPoints({
   return (
     <div className="space-y-2">
       <h3 className="text-sm font-medium">{title}</h3>
-      <p className="text-muted-foreground text-xs">Your own stored talking points, quoted as written.</p>
+      <p className="text-muted-foreground text-xs">
+        Your own stored talking points, quoted as written.
+      </p>
       <ul className="list-disc space-y-1 pl-5 text-xs">
         {points.map((p) => (
           <li key={`${p.projectId}:${p.text}`}>{p.text}</li>

@@ -5,6 +5,7 @@ import {
   type RequirementInput,
   type RequirementLevel,
   type RequirementMatchSummary,
+  type SupportIndex,
 } from '@career-os/shared';
 import Link from 'next/link';
 import type { RequirementSource } from '../../../../lib/myos/application-requirements';
@@ -25,7 +26,10 @@ const SOURCE_NOTE: Record<RequirementSource, string> = {
   NONE: '',
 };
 
-export function verdictCopy(summary: RequirementMatchSummary): { title: string; body: string } {
+export function verdictCopy(summary: RequirementMatchSummary): {
+  title: string;
+  body: string;
+} {
   switch (summary.overallVerdict) {
     case 'STRONG_FIT':
       return {
@@ -52,10 +56,13 @@ export function verdictCopy(summary: RequirementMatchSummary): { title: string; 
  */
 export function MyosEvidenceMatch({
   graph,
+  supportIndex,
   requirements,
   source,
 }: {
   graph: EvidenceGraphData;
+  /** Prebuilt `buildSupportIndex(graph)` shared with sibling panels. */
+  supportIndex?: SupportIndex;
   requirements: RequirementInput[];
   source: RequirementSource;
 }) {
@@ -69,7 +76,10 @@ export function MyosEvidenceMatch({
   return (
     <section className="space-y-3" aria-labelledby="myos-evidence-match-heading">
       <div>
-        <h2 id="myos-evidence-match-heading" className="text-muted-foreground text-sm font-medium">
+        <h2
+          id="myos-evidence-match-heading"
+          className="text-muted-foreground text-sm font-medium"
+        >
           Evidence match
         </h2>
         <p className="text-muted-foreground text-xs">
@@ -86,10 +96,16 @@ export function MyosEvidenceMatch({
         </div>
       ) : requirements.length === 0 ? (
         <p className="text-muted-foreground text-sm">
-          No requirements could be read from this job posting, so there is nothing to match.
+          No requirements could be read from this job posting, so there is nothing to
+          match.
         </p>
       ) : (
-        <MatchBody graph={graph} requirements={requirements} source={source} />
+        <MatchBody
+          graph={graph}
+          supportIndex={supportIndex}
+          requirements={requirements}
+          source={source}
+        />
       )}
     </section>
   );
@@ -97,14 +113,21 @@ export function MyosEvidenceMatch({
 
 function MatchBody({
   graph,
+  supportIndex,
   requirements,
   source,
 }: {
   graph: EvidenceGraphData;
+  supportIndex?: SupportIndex;
   requirements: RequirementInput[];
   source: RequirementSource;
 }) {
-  const result = matchRequirementsToEvidence(graph, requirements, new Date());
+  const result = matchRequirementsToEvidence(
+    graph,
+    requirements,
+    new Date(),
+    supportIndex,
+  );
   const verdict = verdictCopy(result.summary);
   const s = result.summary;
   return (
@@ -118,14 +141,17 @@ function MatchBody({
         <p className="font-medium">{verdict.title}</p>
         <p className="text-muted-foreground mt-1 text-xs">{verdict.body}</p>
         <p className="text-muted-foreground mt-2 text-xs">
-          {s.strong} strong, {s.moderate} moderate, {s.limited} limited, {s.none} with no evidence.{' '}
-          {SOURCE_NOTE[source]}
+          {s.strong} strong, {s.moderate} moderate, {s.limited} limited, {s.none} with no
+          evidence. {SOURCE_NOTE[source]}
         </p>
       </div>
 
       <ul className="space-y-3">
         {result.matches.map((m) => (
-          <li key={m.requirementId} className="border-border space-y-2 rounded-lg border p-3 text-sm">
+          <li
+            key={m.requirementId}
+            className="border-border space-y-2 rounded-lg border p-3 text-sm"
+          >
             <div className="flex items-start justify-between gap-3">
               <p>
                 {m.requirementText}
@@ -152,7 +178,10 @@ function MatchBody({
                 <p className="text-muted-foreground text-xs">{m.explanation}</p>
                 <ul className="space-y-2">
                   {m.supports.map((sup) => (
-                    <li key={`${sup.entityType}:${sup.entityId}`} className="space-y-1 text-xs">
+                    <li
+                      key={`${sup.entityType}:${sup.entityId}`}
+                      className="space-y-1 text-xs"
+                    >
                       <p>
                         <Link
                           href={entityHref(sup.entityType, sup.entityId)}
@@ -194,14 +223,19 @@ function MatchBody({
                           ))}
                         </ul>
                       ) : (
-                        <p className="text-muted-foreground pl-3">No linked evidence yet.</p>
+                        <p className="text-muted-foreground pl-3">
+                          No linked evidence yet.
+                        </p>
                       )}
                     </li>
                   ))}
                 </ul>
                 {m.level === 'LIMITED' ? (
                   <p className="text-xs">
-                    <Link href="/my/projects" className="text-primary underline underline-offset-2">
+                    <Link
+                      href="/my/projects"
+                      className="text-primary underline underline-offset-2"
+                    >
                       Add evidence
                     </Link>{' '}
                     to strengthen this.

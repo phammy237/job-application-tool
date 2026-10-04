@@ -1,4 +1,8 @@
-import type { SkillStrengthLevel, VerificationState, Visibility } from '@career-os/shared';
+import type {
+  SkillStrengthLevel,
+  VerificationState,
+  Visibility,
+} from '@career-os/shared';
 import type { ReactNode } from 'react';
 
 /**
@@ -9,7 +13,10 @@ import type { ReactNode } from 'react';
 const BASE =
   'inline-flex items-center whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium';
 
-const VERIFICATION: Record<VerificationState, { label: string; hint: string; cls: string }> = {
+const VERIFICATION: Record<
+  VerificationState,
+  { label: string; hint: string; cls: string }
+> = {
   VERIFIED: {
     label: 'Verified',
     hint: 'Directly observed from a source system',
@@ -70,10 +77,22 @@ export function VisibilityBadge({ visibility }: { visibility: Visibility }) {
 
 /** Evidence-based support level, not a proficiency rating. */
 const STRENGTH: Record<SkillStrengthLevel, { label: string; cls: string }> = {
-  NONE: { label: 'No evidence', cls: 'border-dashed border-border text-muted-foreground' },
-  LIMITED: { label: 'Limited', cls: 'border-border bg-secondary text-secondary-foreground' },
-  MODERATE: { label: 'Moderate', cls: 'border-primary/30 bg-accent text-accent-foreground' },
-  STRONG: { label: 'Well supported', cls: 'border-green-300 bg-green-50 text-green-800 dark:border-green-800 dark:bg-green-950 dark:text-green-200' },
+  NONE: {
+    label: 'No evidence',
+    cls: 'border-dashed border-border text-muted-foreground',
+  },
+  LIMITED: {
+    label: 'Limited',
+    cls: 'border-border bg-secondary text-secondary-foreground',
+  },
+  MODERATE: {
+    label: 'Moderate',
+    cls: 'border-primary/30 bg-accent text-accent-foreground',
+  },
+  STRONG: {
+    label: 'Well supported',
+    cls: 'border-green-300 bg-green-50 text-green-800 dark:border-green-800 dark:bg-green-950 dark:text-green-200',
+  },
 };
 
 export function StrengthBadge({ level }: { level: SkillStrengthLevel }) {
@@ -115,7 +134,9 @@ export function EmptyState({
   return (
     <div className="border-border rounded-lg border border-dashed p-6 text-center">
       <p className="text-sm font-medium">{title}</p>
-      {description ? <p className="text-muted-foreground mt-1 text-sm">{description}</p> : null}
+      {description ? (
+        <p className="text-muted-foreground mt-1 text-sm">{description}</p>
+      ) : null}
       {action ? <div className="mt-3">{action}</div> : null}
     </div>
   );

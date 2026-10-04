@@ -222,7 +222,9 @@ describe('extraction never invents facts', () => {
       }),
       EV,
     );
-    expect(JSON.stringify(out)).not.toMatch(/pull request|contributors|340|stars|commits/i);
+    expect(JSON.stringify(out)).not.toMatch(
+      /pull request|contributors|340|stars|commits/i,
+    );
   });
 
   describe('README hardening (regression M15)', () => {
@@ -251,7 +253,9 @@ describe('extraction never invents facts', () => {
     });
 
     it('does not imply Product Management from Jira or Agile alone', () => {
-      const c = run('A tracker integration. Built with Jira and Agile boards for our team.');
+      const c = run(
+        'A tracker integration. Built with Jira and Agile boards for our team.',
+      );
       expect(texts(c, 'SKILL')).not.toContain('Product Management');
     });
 

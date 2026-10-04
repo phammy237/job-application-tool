@@ -1,4 +1,8 @@
-import type { EvidenceGraphData, GithubConnection, MyosCandidate } from '@career-os/shared';
+import type {
+  EvidenceGraphData,
+  GithubConnection,
+  MyosCandidate,
+} from '@career-os/shared';
 
 /** Pure helpers for the /my overview. No I/O; everything is derived from already-loaded data. */
 
@@ -40,7 +44,8 @@ export function buildSnapshot(graph: EvidenceGraphData): Snapshot {
     graph.achievements.filter((a) => a.userApproved).length +
     graph.stories.filter((s) => s.userApproved).length +
     graph.evidence.filter(
-      (e) => e.verificationState === 'VERIFIED' || e.verificationState === 'USER_PROVIDED',
+      (e) =>
+        e.verificationState === 'VERIFIED' || e.verificationState === 'USER_PROVIDED',
     ).length;
   const unconfirmed = total - confirmed;
 
@@ -87,7 +92,9 @@ export function buildChecklist(
   connection: GithubConnection | null,
   pendingCandidates: MyosCandidate[],
 ): ChecklistItem[] {
-  const pendingSkills = pendingCandidates.filter((c) => c.payload.kind === 'SKILL').length;
+  const pendingSkills = pendingCandidates.filter(
+    (c) => c.payload.kind === 'SKILL',
+  ).length;
   const hasConfirmedSkill = graph.skills.some((s) => s.userApproved);
   return [
     {
@@ -149,11 +156,14 @@ export function buildUnknowns(
   connection: GithubConnection | null,
 ): string[] {
   const out: string[] = [];
-  if (graph.experiences.length === 0) out.push('your work history (no experiences added)');
+  if (graph.experiences.length === 0)
+    out.push('your work history (no experiences added)');
   if (graph.projects.length === 0) out.push('what you have built (no projects)');
   if (graph.skills.length === 0) out.push('which skills you hold (none confirmed)');
-  if (graph.achievements.length === 0) out.push('your outcomes and metrics (no achievements)');
-  if (graph.evidence.length === 0) out.push('anything it can cite as proof (no evidence)');
+  if (graph.achievements.length === 0)
+    out.push('your outcomes and metrics (no achievements)');
+  if (graph.evidence.length === 0)
+    out.push('anything it can cite as proof (no evidence)');
   if (graph.stories.length === 0) out.push('your interview stories');
   if (!connection) out.push('your GitHub activity (not connected)');
   return out;

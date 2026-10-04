@@ -78,7 +78,13 @@ export const SYNONYM_GROUPS: readonly SynonymGroup[] = [
   },
   {
     canonical: 'prioritization',
-    terms: ['prioritization', 'prioritisation', 'prioritizing', 'prioritize', 'prioritise'],
+    terms: [
+      'prioritization',
+      'prioritisation',
+      'prioritizing',
+      'prioritize',
+      'prioritise',
+    ],
   },
   { canonical: 'leadership', terms: ['leadership', 'leading', 'led', 'lead'] },
 ];
@@ -90,8 +96,16 @@ export const SYNONYM_GROUPS: readonly SynonymGroup[] = [
  * Tokens are canonical `g_...` group tokens or plain stemmed words.
  */
 export const RELATED_CONCEPTS: Readonly<Record<string, readonly string[]>> = {
-  g_large_language_models: ['g_machine_learning', 'g_artificial_intelligence', 'g_generative_ai'],
-  g_generative_ai: ['g_machine_learning', 'g_artificial_intelligence', 'g_large_language_models'],
+  g_large_language_models: [
+    'g_machine_learning',
+    'g_artificial_intelligence',
+    'g_generative_ai',
+  ],
+  g_generative_ai: [
+    'g_machine_learning',
+    'g_artificial_intelligence',
+    'g_large_language_models',
+  ],
   g_artificial_intelligence: [
     'g_machine_learning',
     'g_large_language_models',
@@ -108,7 +122,14 @@ export const RELATED_CONCEPTS: Readonly<Record<string, readonly string[]>> = {
 export const COMPETENCY_KEYWORDS: Record<Competency, readonly string[]> = {
   LEADERSHIP: ['leadership', 'led', 'lead', 'leading', 'mentor~', 'manage a team'],
   CONFLICT: ['conflict', 'disagreement', 'influence without authority', 'negotiat~'],
-  AMBIGUITY: ['ambiguity', 'ambiguous', 'undefined', 'zero to one', '0 to 1', 'fast paced'],
+  AMBIGUITY: [
+    'ambiguity',
+    'ambiguous',
+    'undefined',
+    'zero to one',
+    '0 to 1',
+    'fast paced',
+  ],
   FAILURE: ['failure', 'failed', 'mistake', 'lessons learned', 'resilience'],
   TECHNICAL_DECISION_MAKING: [
     'technical decision',
@@ -128,7 +149,14 @@ export const COMPETENCY_KEYWORDS: Record<Competency, readonly string[]> = {
     'user feedback',
     'ux research',
   ],
-  PRIORITIZATION: ['prioritiz~', 'prioritis~', 'roadmap', 'trade off', 'tradeoff', 'backlog'],
+  PRIORITIZATION: [
+    'prioritiz~',
+    'prioritis~',
+    'roadmap',
+    'trade off',
+    'tradeoff',
+    'backlog',
+  ],
   CROSS_FUNCTIONAL_COLLABORATION: [
     'cross functional~',
     'stakeholder~',
@@ -147,7 +175,14 @@ export const COMPETENCY_KEYWORDS: Record<Competency, readonly string[]> = {
     'data analysis',
   ],
   OWNERSHIP: ['ownership', 'own the', 'end to end', 'accountab~', 'self starter'],
-  EXECUTION: ['execution', 'deliver~', 'ship~', 'launch~', 'deadline', 'program management'],
+  EXECUTION: [
+    'execution',
+    'deliver~',
+    'ship~',
+    'launch~',
+    'deadline',
+    'program management',
+  ],
 };
 
 const COMPETENCY_LABELS: Record<Competency, string> = {
@@ -262,8 +297,22 @@ export function scoreTextMatch(
   options: ScoreOptions = {},
 ): TextMatch {
   const q = tokenize(query);
-  if (q.length === 0) return { score: 0, matchedTerms: [], conceptMatch: false, relatedConcepts: [] };
-  const t = new Set(tokenize(text));
+  if (q.length === 0)
+    return { score: 0, matchedTerms: [], conceptMatch: false, relatedConcepts: [] };
+  return scoreTokenMatch(q, new Set(tokenize(text)), options);
+}
+
+/**
+ * `scoreTextMatch` over already-tokenized input (`q` = tokenize(query), `t` = set of
+ * tokenize(text)), so hot loops can tokenize each text once instead of once per comparison.
+ */
+export function scoreTokenMatch(
+  q: readonly string[],
+  t: ReadonlySet<string>,
+  options: ScoreOptions = {},
+): TextMatch {
+  if (q.length === 0)
+    return { score: 0, matchedTerms: [], conceptMatch: false, relatedConcepts: [] };
   let total = 0;
   let hit = 0;
   const matched: string[] = [];
@@ -276,7 +325,10 @@ export function scoreTextMatch(
       hit += w;
       matched.push(tokenLabel(tok));
       if (w === 2) conceptMatch = true;
-    } else if (options.allowRelated && (RELATED_CONCEPTS[tok] ?? []).some((r) => t.has(r))) {
+    } else if (
+      options.allowRelated &&
+      (RELATED_CONCEPTS[tok] ?? []).some((r) => t.has(r))
+    ) {
       hit += w / 2;
       related.push(tokenLabel(tok));
     }
@@ -307,26 +359,35 @@ export function matchTokensWithRelated(
   text: string,
   phrase: string,
 ): 'exact' | 'related' | null {
-  const p = tokenize(phrase);
+  return matchTokenSetsWithRelated(new Set(tokenize(text)), tokenize(phrase));
+}
+
+/** `matchTokensWithRelated` over already-tokenized input (`t` from the text, `p` from the phrase). */
+export function matchTokenSetsWithRelated(
+  t: ReadonlySet<string>,
+  p: readonly string[],
+): 'exact' | 'related' | null {
   if (p.length === 0) return null;
-  const t = new Set(tokenize(text));
   if (p.every((tok) => t.has(tok))) return 'exact';
   const relatedToPhrase = new Set<string>();
-  for (const req of t) for (const r of RELATED_CONCEPTS[req] ?? []) relatedToPhrase.add(r);
+  for (const req of t)
+    for (const r of RELATED_CONCEPTS[req] ?? []) relatedToPhrase.add(r);
   return p.every((tok) => t.has(tok) || relatedToPhrase.has(tok)) ? 'related' : null;
 }
 
 /** Competencies whose keyword rules fire on `text`. */
 export function detectCompetencies(text: string): Competency[] {
   const n = ` ${normalizeText(text)} `;
-  const out: Competency[] = [];
-  for (const c of COMPETENCIES) {
-    const hit = COMPETENCY_KEYWORDS[c].some((k) => {
-      const prefix = k.endsWith('~');
-      const kw = normalizeText(k);
-      return prefix ? n.includes(` ${kw}`) : n.includes(` ${kw} `);
-    });
-    if (hit) out.push(c);
-  }
-  return out;
+  return COMPETENCY_NEEDLES.filter(({ needles }) =>
+    needles.some((k) => n.includes(k)),
+  ).map(({ competency }) => competency);
 }
+
+/** Keyword rules normalised once at module load: " kw " (whole words) or " kw" (prefix, "~"). */
+const COMPETENCY_NEEDLES: { competency: Competency; needles: string[] }[] =
+  COMPETENCIES.map((competency) => ({
+    competency,
+    needles: COMPETENCY_KEYWORDS[competency].map((k) =>
+      k.endsWith('~') ? ` ${normalizeText(k)}` : ` ${normalizeText(k)} `,
+    ),
+  }));

@@ -50,7 +50,10 @@ const optDate = z
   .trim()
   .optional()
   .transform((v) => (v ? v : null))
-  .refine((v) => v === null || isoDateSchema.safeParse(v).success, 'Use a valid date (YYYY-MM-DD)');
+  .refine(
+    (v) => v === null || isoDateSchema.safeParse(v).success,
+    'Use a valid date (YYYY-MM-DD)',
+  );
 
 const optStatus = z
   .string()
@@ -86,7 +89,10 @@ function run<S extends z.ZodTypeAny>(schema: S, raw: unknown): ParseResult<z.out
   if (parsed.success) return { ok: true, data: parsed.data };
   const issue = parsed.error.issues[0];
   const path = issue?.path.join('.');
-  return { ok: false, error: path ? `${path}: ${issue?.message}` : (issue?.message ?? 'Invalid input') };
+  return {
+    ok: false,
+    error: path ? `${path}: ${issue?.message}` : (issue?.message ?? 'Invalid input'),
+  };
 }
 
 function withDateOrder<T extends { startDate: string | null; endDate: string | null }>(
@@ -99,8 +105,6 @@ function withDateOrder<T extends { startDate: string | null; endDate: string | n
 }
 
 const nameSchema = z.string().trim().min(1, 'Name is required').max(200);
-
-export const projectIdSchema = uuidSchema;
 
 export function parseCreateProject(fd: FormData) {
   const schema = z.object({
@@ -141,7 +145,10 @@ export function parseUpdateProject(fd: FormData) {
       .optional()
       .transform((v) => splitList(v, true))
       .refine((l) => l.length <= 30, 'At most 30 collaborators')
-      .refine((l) => l.every((c) => c.length <= 100), 'Each collaborator must be 100 characters or fewer'),
+      .refine(
+        (l) => l.every((c) => c.length <= 100),
+        'Each collaborator must be 100 characters or fewer',
+      ),
   });
   return withDateOrder(
     run(schema, {
@@ -193,7 +200,10 @@ export function parseTalkingPoints(fd: FormData) {
         .optional()
         .transform((v) => splitList(v, false))
         .refine((l) => l.length <= 20, 'At most 20 talking points')
-        .refine((l) => l.every((p) => p.length <= 500), 'Each talking point must be 500 characters or fewer'),
+        .refine(
+          (l) => l.every((p) => p.length <= 500),
+          'Each talking point must be 500 characters or fewer',
+        ),
     }),
     { id: field(fd, 'id'), talkingPoints: field(fd, 'talkingPoints') },
   );
@@ -262,7 +272,10 @@ export function parseAddEvidence(fd: FormData) {
     },
   );
   if (r.ok && !r.data.excerpt && !r.data.sourceUrl) {
-    return { ok: false, error: 'Add a note or a link so the evidence says something' } as const;
+    return {
+      ok: false,
+      error: 'Add a note or a link so the evidence says something',
+    } as const;
   }
   return r;
 }
@@ -270,5 +283,3 @@ export function parseAddEvidence(fd: FormData) {
 export function parseIdOnly(fd: FormData) {
   return run(z.object({ id: uuidSchema }), { id: field(fd, 'id') });
 }
-
-export const STATUS_FILTERS = ['IDEA', 'ACTIVE', 'COMPLETED', 'ARCHIVED'] as const;

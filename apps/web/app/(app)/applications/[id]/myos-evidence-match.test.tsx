@@ -19,7 +19,10 @@ describe('MyosEvidenceMatch', () => {
       />,
     );
     expect(screen.getByText(/evidence graph is empty/i)).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /set up myos/i })).toHaveAttribute('href', '/my');
+    expect(screen.getByRole('link', { name: /set up myos/i })).toHaveAttribute(
+      'href',
+      '/my',
+    );
   });
 
   it('shows supporting project, provenance and an explicit gap row without overselling', () => {
@@ -33,7 +36,9 @@ describe('MyosEvidenceMatch', () => {
         source="POSTING_LISTS"
       />,
     );
-    expect(screen.getAllByText('No meaningful evidence found.', { exact: false }).length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText('No meaningful evidence found.', { exact: false }).length,
+    ).toBeGreaterThan(0);
     expect(screen.getAllByRole('link', { name: /add evidence/i })[0]).toHaveAttribute(
       'href',
       '/my/projects',
@@ -51,6 +56,8 @@ describe('MyosInterviewPrep', () => {
         job={{ title: 'Engineer', description: 'We build things.' }}
       />,
     );
-    expect(screen.getByRole('heading', { name: 'From your evidence' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: 'From your evidence' }),
+    ).toBeInTheDocument();
   });
 });

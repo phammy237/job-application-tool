@@ -71,7 +71,9 @@ export function experience(
   };
 }
 
-export function achievement(over: Partial<MyosAchievement> & { title: string }): MyosAchievement {
+export function achievement(
+  over: Partial<MyosAchievement> & { title: string },
+): MyosAchievement {
   return {
     id: fid('ach'),
     userId: 'u',

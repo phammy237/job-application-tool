@@ -47,7 +47,9 @@ function ranked(
 describe('parseSkillListParams', () => {
   it('defaults and sanitises', () => {
     expect(parseSkillListParams({})).toEqual({ q: '', category: '', sort: 'strength' });
-    expect(parseSkillListParams({ sort: 'bogus', q: ['  react '] }).sort).toBe('strength');
+    expect(parseSkillListParams({ sort: 'bogus', q: ['  react '] }).sort).toBe(
+      'strength',
+    );
     expect(parseSkillListParams({ sort: 'recency' }).sort).toBe('recency');
   });
 });
@@ -61,7 +63,9 @@ describe('filterSortSkills', () => {
   ];
 
   it('sorts by strength by default', () => {
-    const names = filterSortSkills(rows, parseSkillListParams({})).map((r) => r.skill.name);
+    const names = filterSortSkills(rows, parseSkillListParams({})).map(
+      (r) => r.skill.name,
+    );
     expect(names).toEqual(['React', 'Postgres', 'Go', 'Rust']);
   });
 
@@ -73,14 +77,18 @@ describe('filterSortSkills', () => {
   });
 
   it('filters by search and category', () => {
-    expect(filterSortSkills(rows, parseSkillListParams({ q: 'REA' })).map((r) => r.skill.name)).toEqual(
-      ['React'],
-    );
     expect(
-      filterSortSkills(rows, parseSkillListParams({ category: 'Language' })).map((r) => r.skill.name),
+      filterSortSkills(rows, parseSkillListParams({ q: 'REA' })).map((r) => r.skill.name),
+    ).toEqual(['React']);
+    expect(
+      filterSortSkills(rows, parseSkillListParams({ category: 'Language' })).map(
+        (r) => r.skill.name,
+      ),
     ).toEqual(['Go', 'Rust']);
     expect(
-      filterSortSkills(rows, parseSkillListParams({ category: '__none__' })).map((r) => r.skill.name),
+      filterSortSkills(rows, parseSkillListParams({ category: '__none__' })).map(
+        (r) => r.skill.name,
+      ),
     ).toEqual(['Postgres']);
   });
 });
@@ -169,7 +177,12 @@ describe('skillEvidenceItems', () => {
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
   });
-  const edge = (n: number, from: string, to: string, state: MyosEdge['verificationState']): MyosEdge => ({
+  const edge = (
+    n: number,
+    from: string,
+    to: string,
+    state: MyosEdge['verificationState'],
+  ): MyosEdge => ({
     id: id(100 + n),
     userId: U,
     fromType: 'EVIDENCE',
@@ -209,13 +222,16 @@ describe('form schemas', () => {
   });
 
   it('validates link targets', () => {
-    expect(linkSkillFormSchema.safeParse({ skillId: id(1), target: 'PROJECT:nope' }).success).toBe(
-      false,
-    );
-    const ok = linkSkillFormSchema.parse({ skillId: id(1), target: `EXPERIENCE:${id(2)}` });
+    expect(
+      linkSkillFormSchema.safeParse({ skillId: id(1), target: 'PROJECT:nope' }).success,
+    ).toBe(false);
+    const ok = linkSkillFormSchema.parse({
+      skillId: id(1),
+      target: `EXPERIENCE:${id(2)}`,
+    });
     expect(parseLinkTarget(ok.target)).toEqual({ type: 'EXPERIENCE', id: id(2) });
-    expect(linkSkillFormSchema.safeParse({ skillId: id(1), target: `STORY:${id(2)}` }).success).toBe(
-      false,
-    );
+    expect(
+      linkSkillFormSchema.safeParse({ skillId: id(1), target: `STORY:${id(2)}` }).success,
+    ).toBe(false);
   });
 });

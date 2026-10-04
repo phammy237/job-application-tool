@@ -64,7 +64,9 @@ export function ActionForm({
           role="status"
           aria-live="polite"
           className={
-            result && !result.ok ? 'text-destructive text-sm' : 'text-muted-foreground text-sm'
+            result && !result.ok
+              ? 'text-destructive text-sm'
+              : 'text-muted-foreground text-sm'
           }
         >
           {result?.message ?? ''}

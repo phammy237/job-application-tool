@@ -71,7 +71,8 @@ export function layoutGraph(
     push(neighbors, l.target, l.source);
   }
   const byType = new Map<NodeType, LayoutNode[]>();
-  for (const n of [...nodes].sort((a, b) => a.id.localeCompare(b.id))) push(byType, n.type, n);
+  for (const n of [...nodes].sort((a, b) => a.id.localeCompare(b.id)))
+    push(byType, n.type, n);
 
   const angleOf = new Map<string, number>();
   const positions: Record<string, Point> = {};
@@ -82,7 +83,10 @@ export function layoutGraph(
     const group = byType.get(type);
     if (!group?.length) continue;
     const needed = (group.length * MIN_SPACING) / TAU;
-    const radius = Math.max(prevRadius === 0 ? FIRST_RADIUS : prevRadius + RING_GAP, needed);
+    const radius = Math.max(
+      prevRadius === 0 ? FIRST_RADIUS : prevRadius + RING_GAP,
+      needed,
+    );
 
     const unplacedTotal = group.filter(
       (n) => !(neighbors.get(n.id) ?? []).some((o) => angleOf.has(o)),

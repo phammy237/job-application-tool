@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState, useTransition, type FormEvent } from 'react';
+import { memo, useRef, useState, useTransition, type FormEvent } from 'react';
 import Link from 'next/link';
 import { Button, Input } from '@career-os/ui';
 import type { AskAnswer, AskClaim, AskSupport } from '@career-os/shared';
@@ -51,7 +51,9 @@ function SupportBlock({ support }: { support: AskSupport }) {
         )}
       </div>
       {support.evidence.length === 0 ? (
-        <p className="text-muted-foreground mt-2 text-xs">No linked evidence items yet.</p>
+        <p className="text-muted-foreground mt-2 text-xs">
+          No linked evidence items yet.
+        </p>
       ) : (
         <ul className="mt-2 space-y-2 border-l-2 pl-3">
           {support.evidence.map((ev) => {
@@ -67,7 +69,12 @@ function SupportBlock({ support }: { support: AskSupport }) {
                   {url ? (
                     <>
                       {' · '}
-                      <a href={url} target="_blank" rel="noopener noreferrer" className="text-primary underline">
+                      <a
+                        href={url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary underline"
+                      >
                         Open source
                         <span className="sr-only"> (opens in a new tab)</span>
                       </a>
@@ -101,27 +108,49 @@ function ClaimBlock({ claim, index }: { claim: AskClaim; index: number }) {
   );
 }
 
-function AnswerCard({ item, heading }: { item: HistoryItem; heading: 'h2' | 'h3' }) {
+// Memoized: typing a new question must not re-render every earlier answer in the history.
+const AnswerCard = memo(function AnswerCard({
+  item,
+  heading,
+}: {
+  item: HistoryItem;
+  heading: 'h2' | 'h3';
+}) {
   const { answer } = item;
   const H = heading;
   const Sub = heading === 'h2' ? 'h3' : 'h4';
   return (
-    <article className="bg-card space-y-4 rounded-lg border p-4" aria-label={`Answer to: ${answer.question}`}>
+    <article
+      className="bg-card space-y-4 rounded-lg border p-4"
+      aria-label={`Answer to: ${answer.question}`}
+    >
       <div>
         <p className="text-muted-foreground text-xs uppercase tracking-wide">You asked</p>
-        <H className="text-base font-semibold break-words">{answer.question}</H>
+        <H className="break-words text-base font-semibold">{answer.question}</H>
       </div>
       <section aria-label="Answer">
         <Sub className="text-sm font-semibold">Answer</Sub>
         {answer.insufficientEvidence ? (
-          <div role="status" className="mt-1 rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm">
+          <div
+            role="status"
+            className="mt-1 rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm"
+          >
             <p className="font-medium">Career OS has no evidence for this.</p>
             <p className="mt-1 whitespace-pre-line">{answer.answer}</p>
             <p className="mt-1">
-              Add a <Link className="text-primary underline" href="/my/projects">project</Link>, a{' '}
-              <Link className="text-primary underline" href="/my/stories">story</Link> or{' '}
-              <Link className="text-primary underline" href="/my/github">GitHub evidence</Link> that covers it,
-              then ask again.
+              Add a{' '}
+              <Link className="text-primary underline" href="/my/projects">
+                project
+              </Link>
+              , a{' '}
+              <Link className="text-primary underline" href="/my/stories">
+                story
+              </Link>{' '}
+              or{' '}
+              <Link className="text-primary underline" href="/my/github">
+                GitHub evidence
+              </Link>{' '}
+              that covers it, then ask again.
             </p>
           </div>
         ) : (
@@ -130,7 +159,9 @@ function AnswerCard({ item, heading }: { item: HistoryItem; heading: 'h2' | 'h3'
       </section>
       {answer.claims.length > 0 && (
         <section aria-label="Supporting claims, evidence and sources">
-          <Sub className="text-sm font-semibold">Supporting claims → Evidence → Source</Sub>
+          <Sub className="text-sm font-semibold">
+            Supporting claims → Evidence → Source
+          </Sub>
           <ol className="mt-2 space-y-4">
             {answer.claims.map((c, i) => (
               <ClaimBlock key={`${i}-${c.text}`} claim={c} index={i} />
@@ -150,7 +181,7 @@ function AnswerCard({ item, heading }: { item: HistoryItem; heading: 'h2' | 'h3'
       )}
     </article>
   );
-}
+});
 
 export function AskView() {
   const [question, setQuestion] = useState('');
@@ -189,7 +220,7 @@ export function AskView() {
 
   return (
     <div className="space-y-6">
-      <p className="rounded-md border bg-accent/40 p-3 text-sm">
+      <p className="bg-accent/40 rounded-md border p-3 text-sm">
         Answers come only from evidence you stored. Nothing is generated or guessed.
       </p>
 
@@ -267,7 +298,9 @@ export function AskView() {
               </div>
             </details>
           ))}
-          <p className="text-muted-foreground text-xs">History is kept only in this browser tab and is not saved.</p>
+          <p className="text-muted-foreground text-xs">
+            History is kept only in this browser tab and is not saved.
+          </p>
         </section>
       )}
     </div>

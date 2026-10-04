@@ -7,7 +7,6 @@ import {
   listOwnProjects,
   listOwnResumeVersionsForResume,
   listOwnSkills,
-  loadOwnEvidenceGraph,
 } from '@career-os/database';
 import {
   buildStructuredResumeFromProfile,
@@ -21,6 +20,7 @@ import {
   groundResumeBulletsToMap,
   type BulletGroundingMap,
 } from '../../../../../lib/myos/bullet-grounding';
+import { loadEvidenceGraphForRequest } from '../../../../../lib/myos/load-graph';
 import { ResumeStudio } from './resume-studio';
 
 export default async function ResumeStudioPage({
@@ -82,7 +82,7 @@ export default async function ResumeStudioPage({
   if (baseVersion?.snapshotFormat === 'STRUCTURED_V1') {
     try {
       myosGrounding = groundResumeBulletsToMap(
-        await loadOwnEvidenceGraph(supabase, user.id),
+        await loadEvidenceGraphForRequest(user.id),
         initialContent,
       );
     } catch {

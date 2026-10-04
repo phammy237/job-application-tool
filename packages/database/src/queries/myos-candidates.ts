@@ -25,7 +25,9 @@ export interface CandidateConflict {
 }
 export type AcceptCandidateResult = MyosCandidate | CandidateConflict;
 
-export function isCandidateConflict(result: AcceptCandidateResult): result is CandidateConflict {
+export function isCandidateConflict(
+  result: AcceptCandidateResult,
+): result is CandidateConflict {
   return result.status === 'conflict';
 }
 
@@ -103,7 +105,9 @@ export async function createOwnCandidatesIdempotent(
     } else if ((insError as { code?: string }).code === '23505') {
       // Concurrent writer inserted some of the same keys: fall back to one-at-a-time.
       for (const p of fresh) {
-        const { error: oneError } = await supabase.from('myos_candidates').insert(toRow(userId, p));
+        const { error: oneError } = await supabase
+          .from('myos_candidates')
+          .insert(toRow(userId, p));
         if (!oneError) created += 1;
         else if ((oneError as { code?: string }).code !== '23505') {
           assertNoError(oneError, 'createOwnCandidatesIdempotent.insert');
@@ -147,7 +151,10 @@ async function findOrCreateSkill(
   name: string,
   category: string | null,
 ): Promise<string> {
-  const { data, error } = await supabase.from('skills').select('id, name').eq('user_id', userId);
+  const { data, error } = await supabase
+    .from('skills')
+    .select('id, name')
+    .eq('user_id', userId);
   assertNoError(error, 'acceptOwnCandidate.skills');
   const wanted = name.trim().toLowerCase();
   const match = (data ?? []).find((s) => s.name.trim().toLowerCase() === wanted);
@@ -193,7 +200,12 @@ export async function acceptOwnCandidate(
   const { payload, projectId } = candidate;
 
   if (payload.kind === 'SKILL') {
-    const skillId = await findOrCreateSkill(supabase, userId, payload.skill, payload.category);
+    const skillId = await findOrCreateSkill(
+      supabase,
+      userId,
+      payload.skill,
+      payload.category,
+    );
     if (projectId) {
       await createOwnEdge(supabase, userId, {
         fromType: 'PROJECT',
@@ -224,7 +236,9 @@ export async function acceptOwnCandidate(
     }
   } else if (payload.kind === 'TALKING_POINT' || payload.kind === 'PROJECT_SUMMARY') {
     if (!projectId) {
-      throw new DatabaseError(`acceptOwnCandidate: ${payload.kind} candidate has no project`);
+      throw new DatabaseError(
+        `acceptOwnCandidate: ${payload.kind} candidate has no project`,
+      );
     }
     const { data: project, error } = await supabase
       .from('projects')
@@ -239,7 +253,9 @@ export async function acceptOwnCandidate(
       const points = project.talking_points ?? [];
       if (!points.includes(payload.text)) {
         if (points.length >= MAX_TALKING_POINTS) {
-          throw new DatabaseError('acceptOwnCandidate: project already has the maximum talking points');
+          throw new DatabaseError(
+            'acceptOwnCandidate: project already has the maximum talking points',
+          );
         }
         const { error: upError } = await supabase
           .from('projects')

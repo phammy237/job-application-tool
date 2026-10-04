@@ -47,7 +47,10 @@ export function checkRateLimit(
   }
   existing.count += 1;
   if (existing.count > limit) {
-    return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil((existing.resetAt - now) / 1000)) };
+    return {
+      allowed: false,
+      retryAfterSeconds: Math.max(1, Math.ceil((existing.resetAt - now) / 1000)),
+    };
   }
   return { allowed: true, retryAfterSeconds: 0 };
 }

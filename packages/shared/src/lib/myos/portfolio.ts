@@ -152,7 +152,8 @@ export function publicSubgraph(graph: EvidenceGraphData): EvidenceGraphData {
       keys.has(nodeKey(e.toType, e.toId)) &&
       e.verificationState !== 'AI_GENERATED' &&
       // a skill link must be confirmed by the user, never merely inferred
-      (!(e.fromType === 'SKILL' || e.toType === 'SKILL') || CONFIRMED.has(e.verificationState)),
+      (!(e.fromType === 'SKILL' || e.toType === 'SKILL') ||
+        CONFIRMED.has(e.verificationState)),
   );
   return {
     projects,
@@ -224,8 +225,10 @@ export function buildPortfolioExport(
   for (const e of pub.edges) {
     if (!CONFIRMED.has(e.verificationState)) continue;
     if (e.relation !== 'SUPPORTS' && e.relation !== 'REPRESENTS') continue;
-    if (e.fromType === 'EVIDENCE' && e.toType === 'ACHIEVEMENT') supportedAchievementIds.add(e.toId);
-    if (e.toType === 'EVIDENCE' && e.fromType === 'ACHIEVEMENT') supportedAchievementIds.add(e.fromId);
+    if (e.fromType === 'EVIDENCE' && e.toType === 'ACHIEVEMENT')
+      supportedAchievementIds.add(e.toId);
+    if (e.toType === 'EVIDENCE' && e.fromType === 'ACHIEVEMENT')
+      supportedAchievementIds.add(e.fromId);
   }
   const achievements = pub.achievements.map((a) => ({
     id: a.id,

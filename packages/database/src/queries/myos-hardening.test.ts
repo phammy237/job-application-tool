@@ -32,7 +32,20 @@ function makeClient(respond: Respond) {
       const index = calls.length;
       calls.push(call);
       const chain: Record<string, unknown> = {};
-      for (const name of ['select', 'insert', 'update', 'upsert', 'delete', 'eq', 'in', 'or', 'order', 'limit', 'single', 'maybeSingle']) {
+      for (const name of [
+        'select',
+        'insert',
+        'update',
+        'upsert',
+        'delete',
+        'eq',
+        'in',
+        'or',
+        'order',
+        'limit',
+        'single',
+        'maybeSingle',
+      ]) {
         chain[name] = (...a: unknown[]) => {
           call.ops.push([name, a]);
           return chain;
@@ -104,26 +117,37 @@ describe('upsertOwnEvidenceBySource hardening', () => {
 
   it('does not overwrite a user-edited title on resync and keeps the userEdited flag', async () => {
     const { client, calls } = makeClient((c) =>
-      has(c, 'update') ? ok(evidenceRow()) : ok(evidenceRow({ title: 'My wording', metadata: { userEdited: true } })),
+      has(c, 'update')
+        ? ok(evidenceRow())
+        : ok(evidenceRow({ title: 'My wording', metadata: { userEdited: true } })),
     );
     await upsertOwnEvidenceBySource(client, USER, input);
-    const payload = args(calls.find((c) => has(c, 'update'))!, 'update')![0] as Record<string, unknown>;
+    const payload = args(
+      calls.find((c) => has(c, 'update'))!,
+      'update',
+    )![0] as Record<string, unknown>;
     expect('title' in payload).toBe(false);
     expect('excerpt' in payload).toBe(false);
     expect(payload.metadata).toMatchObject({ userEdited: true });
   });
 
   it('updates the title from the source when the user never edited it (and sanitizes it)', async () => {
-    const { client, calls } = makeClient((c) => ok(evidenceRow({ title: 'old' , ...(has(c, 'update') ? {} : {}) })));
+    const { client, calls } = makeClient((c) =>
+      ok(evidenceRow({ title: 'old', ...(has(c, 'update') ? {} : {}) })),
+    );
     await upsertOwnEvidenceBySource(client, USER, input);
-    const payload = args(calls.find((c) => has(c, 'update'))!, 'update')![0] as Record<string, unknown>;
+    const payload = args(
+      calls.find((c) => has(c, 'update'))!,
+      'update',
+    )![0] as Record<string, unknown>;
     expect(payload.title).toBe('Source Title');
   });
 
   it('retries once when a concurrent insert wins (23505)', async () => {
     let finds = 0;
     const { client, calls } = makeClient((c) => {
-      if (has(c, 'insert')) return { data: null, error: { message: 'dup', code: '23505' } };
+      if (has(c, 'insert'))
+        return { data: null, error: { message: 'dup', code: '23505' } };
       if (has(c, 'update')) return ok(evidenceRow());
       finds += 1;
       return ok(finds === 1 ? null : evidenceRow());
@@ -139,7 +163,9 @@ describe('updateOwnEvidence', () => {
     const { client, calls } = makeClient(() => ok(evidenceRow()));
     await updateOwnEvidence(client, USER, EVIDENCE, { title: 'Mine' });
     const update = calls.find((c) => has(c, 'update'))!;
-    expect((args(update, 'update')![0] as Record<string, unknown>).metadata).toMatchObject({ userEdited: true });
+    expect(
+      (args(update, 'update')![0] as Record<string, unknown>).metadata,
+    ).toMatchObject({ userEdited: true });
   });
 });
 
@@ -150,8 +176,12 @@ describe('updateOwnAchievement metric guard', () => {
       return ok(achievementRow());
     });
     await updateOwnAchievement(client, USER, ACH, { metricText: '90% faster' });
-    const update = calls.find((c) => c.table === 'myos_achievements' && has(c, 'update'))!;
-    expect((args(update, 'update')![0] as Record<string, unknown>).verification_state).toBe('USER_PROVIDED');
+    const update = calls.find(
+      (c) => c.table === 'myos_achievements' && has(c, 'update'),
+    )!;
+    expect(
+      (args(update, 'update')![0] as Record<string, unknown>).verification_state,
+    ).toBe('USER_PROVIDED');
   });
 
   it('keeps VERIFIED when a supporting evidence edge exists', async () => {
@@ -161,8 +191,12 @@ describe('updateOwnAchievement metric guard', () => {
       return ok(achievementRow());
     });
     await updateOwnAchievement(client, USER, ACH, { metricText: '35% faster' });
-    const update = calls.find((c) => c.table === 'myos_achievements' && has(c, 'update'))!;
-    expect((args(update, 'update')![0] as Record<string, unknown>).verification_state).toBeUndefined();
+    const update = calls.find(
+      (c) => c.table === 'myos_achievements' && has(c, 'update'),
+    )!;
+    expect(
+      (args(update, 'update')![0] as Record<string, unknown>).verification_state,
+    ).toBeUndefined();
   });
 
   it('does not touch verification state for a metric-free edit', async () => {
@@ -189,7 +223,8 @@ describe('acceptOwnCandidate PROJECT_SUMMARY conflict', () => {
 
   it('returns a conflict and leaves the candidate PENDING when a summary already exists', async () => {
     const { client, calls } = makeClient((c) => {
-      if (c.table === 'projects') return ok({ summary: 'Existing summary', talking_points: [] });
+      if (c.table === 'projects')
+        return ok({ summary: 'Existing summary', talking_points: [] });
       return ok(candidate);
     });
     const result = await acceptOwnCandidate(client, USER, CAND);
@@ -206,7 +241,13 @@ describe('loadPublicEvidenceGraph', () => {
     });
     const graph = await loadPublicEvidenceGraph(client, USER);
     const tables = calls.map((c) => c.table).sort();
-    expect(tables).toEqual(['myos_achievements', 'myos_edges', 'myos_evidence', 'projects', 'skills']);
+    expect(tables).toEqual([
+      'myos_achievements',
+      'myos_edges',
+      'myos_evidence',
+      'projects',
+      'skills',
+    ]);
     for (const c of calls) {
       const eqs = c.ops.filter(([n]) => n === 'eq').map(([, a]) => a as unknown[]);
       expect(eqs).toContainEqual(['user_id', USER]);
@@ -216,7 +257,9 @@ describe('loadPublicEvidenceGraph', () => {
       }
     }
     const edgeCall = calls.find((c) => c.table === 'myos_edges')!;
-    expect(edgeCall.ops.filter(([n]) => n === 'in').map(([, a]) => (a as unknown[])[0])).toEqual(['from_id', 'to_id']);
+    expect(
+      edgeCall.ops.filter(([n]) => n === 'in').map(([, a]) => (a as unknown[])[0]),
+    ).toEqual(['from_id', 'to_id']);
     expect(graph.evidence).toHaveLength(1);
     expect(graph.stories).toEqual([]);
     expect(graph.experiences).toEqual([]);
@@ -257,17 +300,35 @@ describe('loadPublicEvidenceGraph', () => {
 describe('upsertOwnPortfolioSettings validation', () => {
   it('strips control characters and rejects over-long public text', async () => {
     const { client, calls } = makeClient(() =>
-      ok({ user_id: USER, enabled: true, api_key_hash: null, display_name: 'Ada B', headline: null }),
+      ok({
+        user_id: USER,
+        enabled: true,
+        api_key_hash: null,
+        display_name: 'Ada B',
+        headline: null,
+      }),
     );
-    await upsertOwnPortfolioSettings(client, USER, { enabled: true, displayName: 'Ada\u0000\n B', headline: '  ' });
+    await upsertOwnPortfolioSettings(client, USER, {
+      enabled: true,
+      displayName: 'Ada\u0000\n B',
+      headline: '  ',
+    });
     const payload = args(calls[0]!, 'upsert')![0] as Record<string, unknown>;
     expect(payload.display_name).toBe('Ada B');
     expect(payload.headline).toBeNull();
     await expect(
-      upsertOwnPortfolioSettings(client, USER, { enabled: true, displayName: 'x'.repeat(81), headline: null }),
+      upsertOwnPortfolioSettings(client, USER, {
+        enabled: true,
+        displayName: 'x'.repeat(81),
+        headline: null,
+      }),
     ).rejects.toThrow();
     await expect(
-      upsertOwnPortfolioSettings(client, USER, { enabled: true, displayName: null, headline: 'x'.repeat(161) }),
+      upsertOwnPortfolioSettings(client, USER, {
+        enabled: true,
+        displayName: null,
+        headline: 'x'.repeat(161),
+      }),
     ).rejects.toThrow();
   });
 });

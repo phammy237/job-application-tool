@@ -387,12 +387,16 @@ describe('portfolio export leak fuzz', () => {
             (e) =>
               (e.fromType === 'PROJECT' || e.toType === 'PROJECT') &&
               (e.fromType === 'SKILL' || e.toType === 'SKILL') &&
-              (e.verificationState === 'VERIFIED' || e.verificationState === 'USER_PROVIDED'),
+              (e.verificationState === 'VERIFIED' ||
+                e.verificationState === 'USER_PROVIDED'),
           )
-          .map((e) => (e.fromType === 'PROJECT' ? `${e.fromId}|${e.toId}` : `${e.toId}|${e.fromId}`)),
+          .map((e) =>
+            e.fromType === 'PROJECT' ? `${e.fromId}|${e.toId}` : `${e.toId}|${e.fromId}`,
+          ),
       );
       for (const pr of out.projects)
-        for (const sid of pr.skillIds) expect(confirmedSkillPairs.has(`${pr.id}|${sid}`)).toBe(true);
+        for (const sid of pr.skillIds)
+          expect(confirmedSkillPairs.has(`${pr.id}|${sid}`)).toBe(true);
       for (const a of out.achievements) expect(a.metricText).toBeNull(); // no achievement has an evidence edge in this fuzz
       // public achievement pointing at a non-exported project must not carry that project's id
       for (const a of out.achievements) {

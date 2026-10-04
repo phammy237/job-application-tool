@@ -48,26 +48,32 @@ describe('timelineHref', () => {
     const cur = { type: 'WORK' as const, year: 2024, skillId: null };
     expect(timelineHref(cur, { type: null })).toBe('/my/timeline?year=2024');
     expect(timelineHref(cur, { year: null, type: null })).toBe('/my/timeline');
-    expect(timelineHref(cur, { type: 'AWARD' })).toBe('/my/timeline?type=AWARD&year=2024');
+    expect(timelineHref(cur, { type: 'AWARD' })).toBe(
+      '/my/timeline?type=AWARD&year=2024',
+    );
   });
 });
 
 describe('resolveEntryHref', () => {
   it('points achievements at their anchor and keeps other hrefs', () => {
-    expect(resolveEntryHref(entry({ id: 'ACHIEVEMENT:abc', href: '/my/achievements' }))).toBe(
-      '/my/achievements#a-abc',
-    );
+    expect(
+      resolveEntryHref(entry({ id: 'ACHIEVEMENT:abc', href: '/my/achievements' })),
+    ).toBe('/my/achievements#a-abc');
     expect(resolveEntryHref(entry({}))).toBe('/my/projects/p1');
   });
 });
 
 describe('formatRange', () => {
   it('uses Present for ongoing entries', () => {
-    expect(formatRange({ start: '2023-04-01', end: null, isOngoing: true })).toBe('2023-04 – Present');
-    expect(formatRange({ start: '2021-01-01', end: '2022-06-30', isOngoing: false })).toBe(
-      '2021-01 – 2022-06',
+    expect(formatRange({ start: '2023-04-01', end: null, isOngoing: true })).toBe(
+      '2023-04 – Present',
     );
-    expect(formatRange({ start: '2020-05-01', end: null, isOngoing: false })).toBe('2020-05');
+    expect(
+      formatRange({ start: '2021-01-01', end: '2022-06-30', isOngoing: false }),
+    ).toBe('2021-01 – 2022-06');
+    expect(formatRange({ start: '2020-05-01', end: null, isOngoing: false })).toBe(
+      '2020-05',
+    );
     expect(formatRange({ start: null, end: null, isOngoing: false })).toBe('Undated');
   });
 });

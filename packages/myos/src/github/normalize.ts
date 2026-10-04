@@ -43,7 +43,9 @@ export function normalizeRepository(
     stars: raw.stargazers_count ?? 0,
     repoCreatedAt: normalizeDate(raw.created_at),
     pushedAt: normalizeDate(raw.pushed_at),
-    readmeExcerpt: detail.readme ? truncateCodePoints(sanitizeText(detail.readme.text), 6000) : null,
+    readmeExcerpt: detail.readme
+      ? truncateCodePoints(sanitizeText(detail.readme.text), 6000)
+      : null,
     readmeSha: detail.readme ? sanitizeText(detail.readme.sha) : null,
     contributors: (detail.contributors ?? []).map((c) => ({
       login: truncateCodePoints(sanitizeText(c.login), 100),

@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { resolveApplicationRequirements } from './application-requirements';
 
 const snap = {
-  description: 'Requirements:\n- 3 years of experience with React\n- Strong SQL knowledge',
+  description:
+    'Requirements:\n- 3 years of experience with React\n- Strong SQL knowledge',
   requiredQualifications: [],
   preferredQualifications: [],
 };
@@ -14,7 +15,9 @@ describe('resolveApplicationRequirements', () => {
       snapshot: snap,
     });
     expect(r.source).toBe('ANALYSIS_RUN');
-    expect(r.requirements).toEqual([{ id: 'req-1', text: 'Know React', category: 'PREFERRED' }]);
+    expect(r.requirements).toEqual([
+      { id: 'req-1', text: 'Know React', category: 'PREFERRED' },
+    ]);
   });
 
   it('uses snapshot lists when there is no run, dedupes, and keeps categories', () => {

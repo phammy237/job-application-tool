@@ -21,7 +21,13 @@ import {
   type VizNode,
 } from '@career-os/shared';
 import { VerificationBadge, VisibilityBadge } from '../_components/badges';
-import { filterGraph, groupNodes, relationIndex, relationPhrase, type NodeRelation } from './graph-filters';
+import {
+  filterGraph,
+  groupNodes,
+  relationIndex,
+  relationPhrase,
+  type NodeRelation,
+} from './graph-filters';
 import { layoutGraph, type Point } from './graph-layout';
 import { NODE_TYPES, TYPE_STYLE, shapePath } from './graph-style';
 import { nodeHref } from './node-links';
@@ -81,7 +87,13 @@ function visibilityOf(node: VizNode) {
 function ShapeIcon({ type, size = 14 }: { type: NodeType; size?: number }) {
   const style = TYPE_STYLE[type];
   return (
-    <svg width={size} height={size} viewBox="-8 -8 16 16" aria-hidden="true" focusable="false">
+    <svg
+      width={size}
+      height={size}
+      viewBox="-8 -8 16 16"
+      aria-hidden="true"
+      focusable="false"
+    >
       <path
         d={shapePath(style.shape, 5.5)}
         fill={style.shape === 'ring' ? 'none' : style.color}
@@ -109,7 +121,16 @@ interface LayerProps {
 }
 
 const GraphLayer = memo(function GraphLayer(p: LayerProps) {
-  const { viz, positions, nodeIds, linkIds, selectedId, neighborIds, matchSet, showLabels } = p;
+  const {
+    viz,
+    positions,
+    nodeIds,
+    linkIds,
+    selectedId,
+    neighborIds,
+    matchSet,
+    showLabels,
+  } = p;
   const hasSelection = selectedId !== null;
   return (
     <>
@@ -120,7 +141,8 @@ const GraphLayer = memo(function GraphLayer(p: LayerProps) {
           const b = positions[l.target];
           if (!a || !b) return null;
           const touching = l.source === selectedId || l.target === selectedId;
-          const unconfirmed = l.verificationState === 'INFERRED' || l.verificationState === 'AI_GENERATED';
+          const unconfirmed =
+            l.verificationState === 'INFERRED' || l.verificationState === 'AI_GENERATED';
           return (
             <line
               key={l.id}
@@ -138,7 +160,8 @@ const GraphLayer = memo(function GraphLayer(p: LayerProps) {
       </g>
       <g>
         {viz.links.map((l) => {
-          if (!linkIds.has(l.id) || (l.source !== selectedId && l.target !== selectedId)) return null;
+          if (!linkIds.has(l.id) || (l.source !== selectedId && l.target !== selectedId))
+            return null;
           const a = positions[l.source];
           const b = positions[l.target];
           if (!a || !b) return null;
@@ -170,7 +193,8 @@ const GraphLayer = memo(function GraphLayer(p: LayerProps) {
           const near = selected || neighborIds.has(n.id);
           const matched = matchSet.has(n.id);
           const dim = hasSelection && !near;
-          const unconfirmed = n.verificationHint === 'INFERRED' || n.verificationHint === 'AI_GENERATED';
+          const unconfirmed =
+            n.verificationHint === 'INFERRED' || n.verificationHint === 'AI_GENERATED';
           const r = selected ? 14 : 11;
           return (
             <g
@@ -197,7 +221,9 @@ const GraphLayer = memo(function GraphLayer(p: LayerProps) {
                 d={shapePath(style.shape, r)}
                 fill={style.shape === 'ring' ? 'hsl(var(--background))' : style.color}
                 stroke={style.shape === 'ring' ? style.color : 'hsl(var(--foreground))'}
-                strokeWidth={style.shape === 'ring' ? 3 : n.verificationHint === 'VERIFIED' ? 3 : 1.5}
+                strokeWidth={
+                  style.shape === 'ring' ? 3 : n.verificationHint === 'VERIFIED' ? 3 : 1.5
+                }
                 strokeDasharray={unconfirmed ? '3 2' : undefined}
               />
               {(showLabels || near || matched) && (
@@ -208,7 +234,10 @@ const GraphLayer = memo(function GraphLayer(p: LayerProps) {
                   paintOrder="stroke"
                   strokeWidth={4}
                   strokeLinejoin="round"
-                  style={{ fill: 'hsl(var(--foreground))', stroke: 'hsl(var(--background))' }}
+                  style={{
+                    fill: 'hsl(var(--foreground))',
+                    stroke: 'hsl(var(--background))',
+                  }}
                 >
                   {truncate(n.label, selected ? 40 : 22)}
                 </text>
@@ -225,7 +254,8 @@ const GraphLayer = memo(function GraphLayer(p: LayerProps) {
 // Text list (mobile primary view + accessible alternative)
 // -------------------------------------------------------------------------------------------
 
-function NodeList({
+// Memoized: pan/zoom only changes the transform, so the (potentially long) lists must not re-render.
+const NodeList = memo(function NodeList({
   nodes,
   relations,
   linkIds,
@@ -246,7 +276,9 @@ function NodeList({
 }) {
   const groups = useMemo(() => groupNodes(nodes, NODE_TYPES, query), [nodes, query]);
   if (groups.length === 0) {
-    return <p className="text-muted-foreground text-sm">No nodes match the current filters.</p>;
+    return (
+      <p className="text-muted-foreground text-sm">No nodes match the current filters.</p>
+    );
   }
   return (
     <div className="space-y-2">
@@ -271,7 +303,7 @@ function NodeList({
                         type="button"
                         onClick={() => onSelect(n.id)}
                         aria-pressed={selectedId === n.id}
-                        className="text-left font-medium underline-offset-2 hover:underline focus-visible:ring-ring rounded focus-visible:outline-none focus-visible:ring-2"
+                        className="focus-visible:ring-ring rounded text-left font-medium underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2"
                       >
                         {n.label}
                       </button>
@@ -286,13 +318,17 @@ function NodeList({
                       </Link>
                     )}
                   </div>
-                  {n.sublabel && <p className="text-muted-foreground text-xs">{n.sublabel}</p>}
+                  {n.sublabel && (
+                    <p className="text-muted-foreground text-xs">{n.sublabel}</p>
+                  )}
                   {rels.length > 0 && (
                     <ul className="text-muted-foreground list-disc space-y-0.5 pl-5 text-xs">
                       {rels.map((r) => (
                         <li key={r.link.id}>
                           {relationPhrase(r)}{' '}
-                          <span className="sr-only">({r.link.verificationState.toLowerCase().replace('_', ' ')})</span>
+                          <span className="sr-only">
+                            ({r.link.verificationState.toLowerCase().replace('_', ' ')})
+                          </span>
                         </li>
                       ))}
                     </ul>
@@ -305,13 +341,15 @@ function NodeList({
       ))}
     </div>
   );
-}
+});
 
 // -------------------------------------------------------------------------------------------
 // Details panel
 // -------------------------------------------------------------------------------------------
 
-function DetailsPanel({
+const NO_RELATIONS: NodeRelation[] = [];
+
+const DetailsPanel = memo(function DetailsPanel({
   node,
   relations,
   hidden,
@@ -327,7 +365,8 @@ function DetailsPanel({
   if (!node) {
     return (
       <p className="text-muted-foreground text-sm">
-        Select a node to see what it is, how it is connected and where its provenance comes from.
+        Select a node to see what it is, how it is connected and where its provenance
+        comes from.
       </p>
     );
   }
@@ -341,10 +380,18 @@ function DetailsPanel({
           <p className="text-muted-foreground flex items-center gap-1.5 text-xs uppercase tracking-wide">
             <ShapeIcon type={node.type} /> {style.label}
           </p>
-          <h3 className="text-base font-semibold break-words">{node.label}</h3>
-          {node.sublabel && <p className="text-muted-foreground text-sm">{node.sublabel}</p>}
+          <h3 className="break-words text-base font-semibold">{node.label}</h3>
+          {node.sublabel && (
+            <p className="text-muted-foreground text-sm">{node.sublabel}</p>
+          )}
         </div>
-        <Button type="button" variant="ghost" size="sm" onClick={onClose} aria-label="Close details">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={onClose}
+          aria-label="Close details"
+        >
           Close
         </Button>
       </div>
@@ -354,7 +401,8 @@ function DetailsPanel({
       </div>
       {hidden && (
         <p className="text-muted-foreground text-xs">
-          This node is hidden by the current filters; clear a filter to see it on the canvas.
+          This node is hidden by the current filters; clear a filter to see it on the
+          canvas.
         </p>
       )}
       {href && (
@@ -369,22 +417,31 @@ function DetailsPanel({
         ) : (
           <ul className="mt-1 space-y-1">
             {relations.map((r) => {
-              const otherHref = nodeHref(r.other.type, r.other.id.slice(r.other.type.length + 1));
+              const otherHref = nodeHref(
+                r.other.type,
+                r.other.id.slice(r.other.type.length + 1),
+              );
               return (
-                <li key={r.link.id} className="flex flex-wrap items-center gap-x-2 text-sm">
+                <li
+                  key={r.link.id}
+                  className="flex flex-wrap items-center gap-x-2 text-sm"
+                >
                   <button
                     type="button"
                     onClick={() => onSelect(r.other.id)}
                     className="focus-visible:ring-ring rounded text-left underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2"
                   >
                     <span className="text-muted-foreground">
-                      {r.direction === 'OUT' ? `${r.link.label} →` : `← ${r.link.label} this`}
+                      {r.direction === 'OUT'
+                        ? `${r.link.label} →`
+                        : `← ${r.link.label} this`}
                     </span>{' '}
                     {r.other.label}
                   </button>
                   <span className="text-muted-foreground text-xs">
                     ({TYPE_STYLE[r.other.type].label}
-                    {r.link.verificationState === 'INFERRED' || r.link.verificationState === 'AI_GENERATED'
+                    {r.link.verificationState === 'INFERRED' ||
+                    r.link.verificationState === 'AI_GENERATED'
                       ? ', unconfirmed'
                       : ''}
                     )
@@ -402,7 +459,7 @@ function DetailsPanel({
       </div>
     </div>
   );
-}
+});
 
 // -------------------------------------------------------------------------------------------
 // Main
@@ -427,12 +484,15 @@ export function GraphView({ viz }: { viz: VizGraph }) {
   const [t, setT] = useState<Transform>(fit);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [types, setTypes] = useState<Set<NodeType>>(() => new Set(NODE_TYPES));
-  const [relations, setRelations] = useState<Set<EdgeRelation>>(() => new Set(ALL_RELATIONS));
+  const [relations, setRelations] = useState<Set<EdgeRelation>>(
+    () => new Set(ALL_RELATIONS),
+  );
   const [minVerification, setMinVerification] = useState<VerificationState | null>(null);
   const [focusDepth, setFocusDepth] = useState<0 | 1 | 2>(0);
   const [search, setSearch] = useState('');
 
-  const focus = focusDepth > 0 && selectedId ? { id: selectedId, depth: focusDepth } : null;
+  const focus =
+    focusDepth > 0 && selectedId ? { id: selectedId, depth: focusDepth } : null;
   const visible = useMemo(
     () => filterGraph(viz, { types, relations, minVerification, focus, search }),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `focus` is derived from the two deps below
@@ -447,7 +507,10 @@ export function GraphView({ viz }: { viz: VizGraph }) {
     return s;
   }, [relIndex, selectedId]);
 
-  const visibleNodes = useMemo(() => viz.nodes.filter((n) => visible.nodeIds.has(n.id)), [viz, visible]);
+  const visibleNodes = useMemo(
+    () => viz.nodes.filter((n) => visible.nodeIds.has(n.id)),
+    [viz, visible],
+  );
   const selectedNode = selectedId ? (nodeById.get(selectedId) ?? null) : null;
   const orderedIds = useMemo(
     () =>
@@ -546,6 +609,7 @@ export function GraphView({ viz }: { viz: VizGraph }) {
   );
 
   const select = useCallback((id: string) => setSelectedId(id), []);
+  const deselect = useCallback(() => setSelectedId(null), []);
   const selectAndCenter = useCallback(
     (id: string) => {
       setSelectedId(id);
@@ -629,7 +693,9 @@ export function GraphView({ viz }: { viz: VizGraph }) {
     setFocusDepth(0);
   };
 
-  const selectedRelations = selectedId ? (relIndex.get(selectedId) ?? []) : [];
+  const selectedRelations = selectedId
+    ? (relIndex.get(selectedId) ?? NO_RELATIONS)
+    : NO_RELATIONS;
   const statusText = `${visible.nodeIds.size} of ${viz.nodes.length} nodes and ${visible.linkIds.size} of ${viz.links.length} relations shown${
     search.trim() ? `; ${visible.matches.length} match “${search.trim()}”` : ''
   }.`;
@@ -637,9 +703,13 @@ export function GraphView({ viz }: { viz: VizGraph }) {
   return (
     <div className="space-y-4">
       {viz.truncated && (
-        <p role="note" className="rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm">
-          Showing the {viz.nodes.length} most-connected of {viz.totalNodes} nodes to keep the graph readable.
-          Use search or filters on a smaller part of your evidence to see the rest.
+        <p
+          role="note"
+          className="rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm"
+        >
+          Showing the {viz.nodes.length} most-connected of {viz.totalNodes} nodes to keep
+          the graph readable. Use search or filters on a smaller part of your evidence to
+          see the rest.
         </p>
       )}
 
@@ -665,7 +735,9 @@ export function GraphView({ viz }: { viz: VizGraph }) {
             <select
               id="graph-min-verification"
               value={minVerification ?? ''}
-              onChange={(e) => setMinVerification((e.target.value || null) as VerificationState | null)}
+              onChange={(e) =>
+                setMinVerification((e.target.value || null) as VerificationState | null)
+              }
               className="border-input bg-background focus-visible:ring-ring block h-10 w-full rounded-md border px-3 text-sm focus-visible:outline-none focus-visible:ring-2"
             >
               {MIN_VERIFICATION_OPTIONS.map((o) => (
@@ -690,7 +762,9 @@ export function GraphView({ viz }: { viz: VizGraph }) {
               <option value={1}>Neighborhood, depth 1</option>
               <option value={2}>Neighborhood, depth 2</option>
             </select>
-            {!selectedId && <p className="text-muted-foreground mt-1 text-xs">Select a node first.</p>}
+            {!selectedId && (
+              <p className="text-muted-foreground mt-1 text-xs">Select a node first.</p>
+            )}
           </div>
         </div>
 
@@ -706,7 +780,9 @@ export function GraphView({ viz }: { viz: VizGraph }) {
                   aria-pressed={on}
                   onClick={() => toggle(types, type, setTypes)}
                   className={`focus-visible:ring-ring inline-flex min-h-[36px] items-center gap-1.5 rounded-full border px-3 py-1 text-xs focus-visible:outline-none focus-visible:ring-2 ${
-                    on ? 'bg-accent text-accent-foreground border-primary font-medium' : 'text-muted-foreground'
+                    on
+                      ? 'bg-accent text-accent-foreground border-primary font-medium'
+                      : 'text-muted-foreground'
                   }`}
                 >
                   <ShapeIcon type={type} />
@@ -729,7 +805,9 @@ export function GraphView({ viz }: { viz: VizGraph }) {
                   aria-pressed={on}
                   onClick={() => toggle(relations, rel, setRelations)}
                   className={`focus-visible:ring-ring min-h-[36px] rounded-full border px-3 py-1 text-xs focus-visible:outline-none focus-visible:ring-2 ${
-                    on ? 'bg-accent text-accent-foreground border-primary font-medium' : 'text-muted-foreground'
+                    on
+                      ? 'bg-accent text-accent-foreground border-primary font-medium'
+                      : 'text-muted-foreground'
                   }`}
                 >
                   {RELATION_LABEL[rel]}
@@ -789,13 +867,31 @@ export function GraphView({ viz }: { viz: VizGraph }) {
               </g>
             </svg>
             <div className="absolute right-2 top-2 flex flex-col gap-1">
-              <Button type="button" size="icon" variant="outline" onClick={() => zoomBy(1.25)} aria-label="Zoom in">
+              <Button
+                type="button"
+                size="icon"
+                variant="outline"
+                onClick={() => zoomBy(1.25)}
+                aria-label="Zoom in"
+              >
                 +
               </Button>
-              <Button type="button" size="icon" variant="outline" onClick={() => zoomBy(0.8)} aria-label="Zoom out">
+              <Button
+                type="button"
+                size="icon"
+                variant="outline"
+                onClick={() => zoomBy(0.8)}
+                aria-label="Zoom out"
+              >
                 −
               </Button>
-              <Button type="button" size="icon" variant="outline" onClick={() => setT(fit)} aria-label="Reset view">
+              <Button
+                type="button"
+                size="icon"
+                variant="outline"
+                onClick={() => setT(fit)}
+                aria-label="Reset view"
+              >
                 ⤢
               </Button>
               <Button
@@ -811,18 +907,23 @@ export function GraphView({ viz }: { viz: VizGraph }) {
             </div>
           </div>
           <p className="text-muted-foreground mt-2 text-xs">
-            Drag to pan, scroll or pinch to zoom. Shapes show type; a dashed outline means not yet confirmed
-            by you; a thick outline means verified. Relation labels appear for the selected node.
+            Drag to pan, scroll or pinch to zoom. Shapes show type; a dashed outline means
+            not yet confirmed by you; a thick outline means verified. Relation labels
+            appear for the selected node.
           </p>
         </section>
 
-        <aside aria-label="Node details" aria-live="polite" className="bg-card rounded-lg border p-4">
+        <aside
+          aria-label="Node details"
+          aria-live="polite"
+          className="bg-card rounded-lg border p-4"
+        >
           <DetailsPanel
             node={selectedNode}
             relations={selectedRelations}
             hidden={!!selectedNode && !visible.nodeIds.has(selectedNode.id)}
             onSelect={selectAndCenter}
-            onClose={() => setSelectedId(null)}
+            onClose={deselect}
           />
         </aside>
       </div>
@@ -830,8 +931,8 @@ export function GraphView({ viz }: { viz: VizGraph }) {
       {/* Mobile fallback: grouped, searchable list */}
       <section aria-label="Nodes and relations" className="space-y-2 md:hidden">
         <p className="text-muted-foreground rounded-md border p-3 text-sm">
-          The interactive graph canvas needs a larger screen. Here is the same evidence as a searchable list;
-          use the search box above to narrow it.
+          The interactive graph canvas needs a larger screen. Here is the same evidence as
+          a searchable list; use the search box above to narrow it.
         </p>
         <NodeList
           nodes={visibleNodes}

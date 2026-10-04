@@ -1,4 +1,8 @@
-import { emptyEvidenceGraph, type EvidenceGraphData, type MyosEdge } from '@career-os/shared';
+import {
+  emptyEvidenceGraph,
+  type EvidenceGraphData,
+  type MyosEdge,
+} from '@career-os/shared';
 import { describe, expect, it } from 'vitest';
 import { projectDetailView } from './detail-helpers';
 import { filterProjects, summarizeProjects } from './list-helpers';
@@ -28,22 +32,61 @@ function graph(): EvidenceGraphData {
   const g = emptyEvidenceGraph();
   g.projects = [
     {
-      id: P, name: 'Alpha', description: null, summary: null, role: 'Lead', startDate: null,
-      endDate: null, url: null, tags: [], status: 'ACTIVE', collaborators: [], talkingPoints: [],
-      origin: 'GITHUB', visibility: 'PRIVATE', userApproved: false, approvedForApplications: false,
+      id: P,
+      name: 'Alpha',
+      description: null,
+      summary: null,
+      role: 'Lead',
+      startDate: null,
+      endDate: null,
+      url: null,
+      tags: [],
+      status: 'ACTIVE',
+      collaborators: [],
+      talkingPoints: [],
+      origin: 'GITHUB',
+      visibility: 'PRIVATE',
+      userApproved: false,
+      approvedForApplications: false,
     },
   ];
-  g.skills = [{ id: S, name: 'TypeScript', category: null, visibility: 'PRIVATE', userApproved: true, approvedForApplications: false }];
+  g.skills = [
+    {
+      id: S,
+      name: 'TypeScript',
+      category: null,
+      visibility: 'PRIVATE',
+      userApproved: true,
+      approvedForApplications: false,
+    },
+  ];
   g.evidence = [
     {
-      id: E, userId: 'u', sourceType: 'USER_NOTE', sourceRef: null, sourceUrl: null, title: 'Note',
-      excerpt: 'x', occurredAt: null, confidence: null, verificationState: 'USER_PROVIDED',
-      visibility: 'PRIVATE', metadata: {}, createdAt: '2025-01-01T00:00:00.000Z', updatedAt: '2025-01-01T00:00:00.000Z',
+      id: E,
+      userId: 'u',
+      sourceType: 'USER_NOTE',
+      sourceRef: null,
+      sourceUrl: null,
+      title: 'Note',
+      excerpt: 'x',
+      occurredAt: null,
+      confidence: null,
+      verificationState: 'USER_PROVIDED',
+      visibility: 'PRIVATE',
+      metadata: {},
+      createdAt: '2025-01-01T00:00:00.000Z',
+      updatedAt: '2025-01-01T00:00:00.000Z',
     },
   ];
   g.edges = [
     edge({}),
-    edge({ fromType: 'EVIDENCE', fromId: E, toType: 'PROJECT', toId: P, relation: 'SUPPORTS' }),
+    edge({
+      fromType: 'EVIDENCE',
+      fromId: E,
+      toType: 'PROJECT',
+      toId: P,
+      relation: 'SUPPORTS',
+    }),
   ];
   return g;
 }

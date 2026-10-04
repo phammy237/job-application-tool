@@ -1,6 +1,7 @@
 import { extractRequirementsFromText, type RequirementInput } from '@career-os/shared';
 
-export type RequirementSource = 'ANALYSIS_RUN' | 'POSTING_LISTS' | 'EXTRACTED_FROM_TEXT' | 'NONE';
+export type RequirementSource =
+  'ANALYSIS_RUN' | 'POSTING_LISTS' | 'EXTRACTED_FROM_TEXT' | 'NONE';
 
 export interface ResolvedRequirements {
   source: RequirementSource;
@@ -33,7 +34,11 @@ function toInputs(
     if (seen.has(key)) continue;
     seen.add(key);
     if (out.length >= MAX_REQUIREMENTS) break;
-    out.push({ id: `req-${out.length + 1}`, text, ...(item.category ? { category: item.category } : {}) });
+    out.push({
+      id: `req-${out.length + 1}`,
+      text,
+      ...(item.category ? { category: item.category } : {}),
+    });
   }
   return out;
 }
@@ -53,20 +58,30 @@ export function resolveApplicationRequirements(input: {
     return {
       source: 'ANALYSIS_RUN',
       requirements: toInputs(
-        input.mappings.map((m) => ({ text: m.requirementText, category: m.requiredOrPreferred })),
+        input.mappings.map((m) => ({
+          text: m.requirementText,
+          category: m.requiredOrPreferred,
+        })),
       ),
     };
   }
   const snap = input.snapshot;
   if (snap) {
     const listed = toInputs([
-      ...snap.requiredQualifications.map((text) => ({ text, category: 'REQUIRED' as const })),
-      ...snap.preferredQualifications.map((text) => ({ text, category: 'PREFERRED' as const })),
+      ...snap.requiredQualifications.map((text) => ({
+        text,
+        category: 'REQUIRED' as const,
+      })),
+      ...snap.preferredQualifications.map((text) => ({
+        text,
+        category: 'PREFERRED' as const,
+      })),
     ]);
     if (listed.length > 0) return { source: 'POSTING_LISTS', requirements: listed };
     if (snap.description && snap.description.trim().length > 0) {
       const extracted = extractRequirementsFromText(snap.description);
-      if (extracted.length > 0) return { source: 'EXTRACTED_FROM_TEXT', requirements: extracted };
+      if (extracted.length > 0)
+        return { source: 'EXTRACTED_FROM_TEXT', requirements: extracted };
     }
   }
   return { source: 'NONE', requirements: [] };

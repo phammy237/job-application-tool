@@ -1,4 +1,8 @@
-import { myosStoryInputSchema, type MyosStory, type MyosStoryInput } from '@career-os/shared';
+import {
+  myosStoryInputSchema,
+  type MyosStory,
+  type MyosStoryInput,
+} from '@career-os/shared';
 import { assertNoError, unwrapRow } from '../errors';
 import type { CareerOsSupabaseClient } from '../types/client';
 import { rowToStory } from './myos-mappers';

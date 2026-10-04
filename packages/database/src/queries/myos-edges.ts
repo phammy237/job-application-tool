@@ -28,7 +28,9 @@ export async function listOwnEdges(
       throw new Error('listOwnEdges: invalid node filter');
     }
     const { nodeType: t, nodeId: id } = filter;
-    query = query.or(`and(from_type.eq.${t},from_id.eq.${id}),and(to_type.eq.${t},to_id.eq.${id})`);
+    query = query.or(
+      `and(from_type.eq.${t},from_id.eq.${id}),and(to_type.eq.${t},to_id.eq.${id})`,
+    );
   }
   const { data, error } = await query.order('created_at', { ascending: true });
   assertNoError(error, 'listOwnEdges');
@@ -82,7 +84,10 @@ export async function createOwnEdge(
   const parsed = myosEdgeInputSchema.parse(input);
 
   const upgradeIfStronger = async (existing: MyosEdge): Promise<MyosEdge> => {
-    if (VERIFICATION_RANK[parsed.verificationState] <= VERIFICATION_RANK[existing.verificationState]) {
+    if (
+      VERIFICATION_RANK[parsed.verificationState] <=
+      VERIFICATION_RANK[existing.verificationState]
+    ) {
       return existing;
     }
     const { data, error } = await supabase
@@ -127,7 +132,11 @@ export async function deleteOwnEdge(
   userId: string,
   id: string,
 ): Promise<void> {
-  const { error } = await supabase.from('myos_edges').delete().eq('id', id).eq('user_id', userId);
+  const { error } = await supabase
+    .from('myos_edges')
+    .delete()
+    .eq('id', id)
+    .eq('user_id', userId);
   assertNoError(error, 'deleteOwnEdge');
 }
 
@@ -159,7 +168,9 @@ export async function replaceOwnEdgesFrom(
   assertNoError(error, 'replaceOwnEdgesFrom.list');
 
   const wanted = new Set(input.targets.map((t) => t.toId));
-  const staleIds = (data ?? []).filter((row) => !wanted.has(row.to_id)).map((row) => row.id);
+  const staleIds = (data ?? [])
+    .filter((row) => !wanted.has(row.to_id))
+    .map((row) => row.id);
   if (staleIds.length > 0) {
     const { error: delError } = await supabase
       .from('myos_edges')

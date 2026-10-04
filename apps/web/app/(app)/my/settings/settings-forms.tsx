@@ -46,13 +46,25 @@ export function PortfolioSettingsForm({
         <label htmlFor="portfolio-name" className="text-sm font-medium">
           Display name
         </label>
-        <Input id="portfolio-name" name="displayName" defaultValue={displayName} maxLength={80} autoComplete="off" />
+        <Input
+          id="portfolio-name"
+          name="displayName"
+          defaultValue={displayName}
+          maxLength={80}
+          autoComplete="off"
+        />
       </div>
       <div>
         <label htmlFor="portfolio-headline" className="text-sm font-medium">
           Headline
         </label>
-        <Input id="portfolio-headline" name="headline" defaultValue={headline} maxLength={160} autoComplete="off" />
+        <Input
+          id="portfolio-headline"
+          name="headline"
+          defaultValue={headline}
+          maxLength={160}
+          autoComplete="off"
+        />
       </div>
       <div className="flex items-center gap-3">
         <Button type="submit" disabled={pending}>
@@ -86,11 +98,17 @@ export function ApiKeyPanel({ hasKey }: { hasKey: boolean }) {
   return (
     <div className="space-y-3">
       {state.key ? (
-        <div role="alert" className="space-y-2 rounded-md border border-amber-500/60 bg-amber-500/10 p-3">
-          <p className="text-sm font-medium">Copy your API key now. It will not be shown again.</p>
+        <div
+          role="alert"
+          className="space-y-2 rounded-md border border-amber-500/60 bg-amber-500/10 p-3"
+        >
+          <p className="text-sm font-medium">
+            Copy your API key now. It will not be shown again.
+          </p>
           <p className="text-muted-foreground text-xs">
-            Only a one-way hash is stored, so it cannot be recovered. If you lose it, rotate to get a new one.
-            Keep it on your website&apos;s server; never put it in browser code.
+            Only a one-way hash is stored, so it cannot be recovered. If you lose it,
+            rotate to get a new one. Keep it on your website&apos;s server; never put it
+            in browser code.
           </p>
           <div className="flex flex-col gap-2 sm:flex-row">
             <code
@@ -110,11 +128,14 @@ export function ApiKeyPanel({ hasKey }: { hasKey: boolean }) {
             <>
               <span className="font-medium">A key exists.</span>{' '}
               <span className="text-muted-foreground">
-                Its value is hidden. Rotating creates a new key and immediately stops the old one working.
+                Its value is hidden. Rotating creates a new key and immediately stops the
+                old one working.
               </span>
             </>
           ) : (
-            <span className="text-muted-foreground">No key yet. Generate one to let your website read the export.</span>
+            <span className="text-muted-foreground">
+              No key yet. Generate one to let your website read the export.
+            </span>
           )}
         </p>
       )}
@@ -131,7 +152,11 @@ export function ApiKeyPanel({ hasKey }: { hasKey: boolean }) {
           }
         }}
       >
-        <Button type="submit" variant={hasKey || state.key ? 'outline' : 'default'} disabled={pending}>
+        <Button
+          type="submit"
+          variant={hasKey || state.key ? 'outline' : 'default'}
+          disabled={pending}
+        >
           {pending ? 'Working…' : hasKey || state.key ? 'Rotate key' : 'Generate key'}
         </Button>
         {state.error && (

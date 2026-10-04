@@ -1,6 +1,7 @@
 import type { NodeType } from '@career-os/shared';
 
-export type NodeShape = 'circle' | 'diamond' | 'square' | 'triangle' | 'hexagon' | 'pill' | 'ring';
+export type NodeShape =
+  'circle' | 'diamond' | 'square' | 'triangle' | 'hexagon' | 'pill' | 'ring';
 
 export interface TypeStyle {
   label: string;
@@ -23,9 +24,24 @@ export const NODE_TYPES: readonly NodeType[] = [
 export const TYPE_STYLE: Record<NodeType, TypeStyle> = {
   PROJECT: { label: 'Project', plural: 'Projects', color: '#0072B2', shape: 'circle' },
   SKILL: { label: 'Skill', plural: 'Skills', color: '#E69F00', shape: 'diamond' },
-  EXPERIENCE: { label: 'Experience', plural: 'Experiences', color: '#009E73', shape: 'square' },
-  EDUCATION: { label: 'Education', plural: 'Education', color: '#CC79A7', shape: 'triangle' },
-  ACHIEVEMENT: { label: 'Achievement', plural: 'Achievements', color: '#D55E00', shape: 'hexagon' },
+  EXPERIENCE: {
+    label: 'Experience',
+    plural: 'Experiences',
+    color: '#009E73',
+    shape: 'square',
+  },
+  EDUCATION: {
+    label: 'Education',
+    plural: 'Education',
+    color: '#CC79A7',
+    shape: 'triangle',
+  },
+  ACHIEVEMENT: {
+    label: 'Achievement',
+    plural: 'Achievements',
+    color: '#D55E00',
+    shape: 'hexagon',
+  },
   STORY: { label: 'Story', plural: 'Stories', color: '#56B4E9', shape: 'pill' },
   EVIDENCE: { label: 'Evidence', plural: 'Evidence', color: '#8A8A8A', shape: 'ring' },
 };

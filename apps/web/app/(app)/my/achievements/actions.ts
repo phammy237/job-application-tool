@@ -20,7 +20,7 @@ import {
   okResult,
   toErrorResult,
   type ActionResult,
-} from '../skills/action-result';
+} from '../_components/action-result';
 import { parseAchievementForm } from './helpers';
 
 function revalidate() {
@@ -86,7 +86,9 @@ export async function deleteAchievementAction(formData: FormData): Promise<Actio
 }
 
 /** Links an existing evidence item to an achievement (USER_PROVIDED SUPPORTS edge). */
-export async function linkAchievementEvidenceAction(formData: FormData): Promise<ActionResult> {
+export async function linkAchievementEvidenceAction(
+  formData: FormData,
+): Promise<ActionResult> {
   const user = await requireUser();
   const id = uuidSchema.safeParse(formData.get('id'));
   const evidenceId = uuidSchema.safeParse(formData.get('evidenceId'));
@@ -97,7 +99,8 @@ export async function linkAchievementEvidenceAction(formData: FormData): Promise
       getOwnAchievement(supabase, user.id, id.data),
       getOwnEvidence(supabase, user.id, evidenceId.data),
     ]);
-    if (!achievement || !evidence) return errorResult('That item no longer exists. Refresh and try again.');
+    if (!achievement || !evidence)
+      return errorResult('That item no longer exists. Refresh and try again.');
     await createOwnEdge(supabase, user.id, {
       fromType: 'EVIDENCE',
       fromId: evidence.id,
@@ -114,7 +117,9 @@ export async function linkAchievementEvidenceAction(formData: FormData): Promise
 }
 
 /** Creates a new note/link evidence item and links it to the achievement. */
-export async function addAchievementEvidenceAction(formData: FormData): Promise<ActionResult> {
+export async function addAchievementEvidenceAction(
+  formData: FormData,
+): Promise<ActionResult> {
   const user = await requireUser();
   const parsed = parseAddEvidence(formData);
   if (!parsed.ok) return errorResult(parsed.error);
@@ -123,7 +128,8 @@ export async function addAchievementEvidenceAction(formData: FormData): Promise<
   const supabase = await createClient();
   try {
     const achievement = await getOwnAchievement(supabase, user.id, input.id);
-    if (!achievement) return errorResult('That item no longer exists. Refresh and try again.');
+    if (!achievement)
+      return errorResult('That item no longer exists. Refresh and try again.');
     const evidence = await createOwnEvidence(supabase, user.id, {
       sourceType: input.sourceUrl ? 'LINK' : 'USER_NOTE',
       sourceUrl: input.sourceUrl,
@@ -160,7 +166,9 @@ export async function addAchievementEvidenceAction(formData: FormData): Promise<
  * "Mark verified": only succeeds when at least one evidence item supports the achievement. It is
  * the user's confirmation that the linked evidence backs the claim; nothing is checked externally.
  */
-export async function markAchievementVerifiedAction(formData: FormData): Promise<ActionResult> {
+export async function markAchievementVerifiedAction(
+  formData: FormData,
+): Promise<ActionResult> {
   const user = await requireUser();
   const id = uuidSchema.safeParse(formData.get('id'));
   if (!id.success) return errorResult('Invalid achievement.');

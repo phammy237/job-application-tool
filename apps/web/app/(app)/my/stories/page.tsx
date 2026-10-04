@@ -1,12 +1,11 @@
-import { loadOwnEvidenceGraph } from '@career-os/database';
 import { COMPETENCIES, type MyosStory } from '@career-os/shared';
 import { Badge, Label, Select, buttonVariants } from '@career-os/ui';
 import Link from 'next/link';
-import { Feedback, firstParam } from '../projects/_components/feedback';
+import { Feedback, firstParam } from '../_components/feedback';
 import { requireUser } from '../../../../lib/auth';
-import { createClient } from '../../../../lib/supabase/server';
+import { loadEvidenceGraphForRequest } from '../../../../lib/myos/load-graph';
 import { EmptyState, VerificationBadge, VisibilityBadge } from '../_components/badges';
-import { ActionForm } from '../skills/action-form';
+import { ActionForm } from '../_components/action-form';
 import { deleteStoryAction, setStoryApprovedAction } from './actions';
 import {
   STAR_PROMPTS,
@@ -38,10 +37,11 @@ export default async function StoriesPage({
   const filter = parseStoryFilter(sp);
   const notice = firstParam(sp.notice);
   const user = await requireUser();
-  const supabase = await createClient();
-  const graph = await loadOwnEvidenceGraph(supabase, user.id);
+  const graph = await loadEvidenceGraphForRequest(user.id);
 
-  const stories = [...graph.stories].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const stories = [...graph.stories].sort((a, b) =>
+    b.createdAt.localeCompare(a.createdAt),
+  );
   const shown = filterStories(stories, filter);
   const coverage = competencyCoverage(stories);
   const covered = coverage.filter((c) => c.approvedCount > 0).length;
@@ -62,8 +62,8 @@ export default async function StoriesPage({
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Stories</h1>
         <p className="text-muted-foreground mt-1 text-sm">
-          Your STAR story bank for behavioral interviews. Only stories you mark ready count toward
-          coverage.
+          Your STAR story bank for behavioral interviews. Only stories you mark ready
+          count toward coverage.
         </p>
       </div>
 
@@ -79,7 +79,7 @@ export default async function StoriesPage({
                 className={
                   (c.approvedCount > 0
                     ? 'border-border bg-accent'
-                    : 'border-border border-dashed text-muted-foreground') +
+                    : 'border-border text-muted-foreground border-dashed') +
                   ' focus-visible:ring-ring inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs focus-visible:outline-none focus-visible:ring-2'
                 }
               >
@@ -118,10 +118,14 @@ export default async function StoriesPage({
             <ul className="text-muted-foreground list-disc space-y-1 pl-5 text-left text-xs">
               {STAR_PROMPTS.map((p) => (
                 <li key={p.label}>
-                  <span className="text-foreground font-medium">{p.label}:</span> {p.prompt}
+                  <span className="text-foreground font-medium">{p.label}:</span>{' '}
+                  {p.prompt}
                 </li>
               ))}
-              <li>Examples to look for: a time you led without authority, disagreed with a teammate, handled a vague goal, or learned from a miss.</li>
+              <li>
+                Examples to look for: a time you led without authority, disagreed with a
+                teammate, handled a vague goal, or learned from a miss.
+              </li>
             </ul>
           }
         />
@@ -157,22 +161,33 @@ export default async function StoriesPage({
               />
               Ready for interviews only
             </label>
-            <button type="submit" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+            <button
+              type="submit"
+              className={buttonVariants({ variant: 'outline', size: 'sm' })}
+            >
               Apply
             </button>
             {filter.competency || filter.approvedOnly ? (
-              <Link href="/my/stories" className={buttonVariants({ variant: 'ghost', size: 'sm' })}>
+              <Link
+                href="/my/stories"
+                className={buttonVariants({ variant: 'ghost', size: 'sm' })}
+              >
                 Clear
               </Link>
             ) : null}
           </form>
           <p className="text-muted-foreground text-sm" aria-live="polite">
-            Showing {shown.length} of {stories.length} stor{stories.length === 1 ? 'y' : 'ies'}.
+            Showing {shown.length} of {stories.length} stor
+            {stories.length === 1 ? 'y' : 'ies'}.
           </p>
 
           <ul className="space-y-3">
             {shown.map((story) => (
-              <StoryCard key={story.id} story={story} links={storyLinks(graph, story.id)} />
+              <StoryCard
+                key={story.id}
+                story={story}
+                links={storyLinks(graph, story.id)}
+              />
             ))}
           </ul>
         </section>
@@ -193,7 +208,10 @@ function StoryCard({
     <li className="border-border rounded-md border px-3 py-3 text-sm">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <h3 className="min-w-0 font-medium">
-          <Link href={`/my/stories/${story.id}`} className="underline-offset-2 hover:underline">
+          <Link
+            href={`/my/stories/${story.id}`}
+            className="underline-offset-2 hover:underline"
+          >
             {story.title}
           </Link>
         </h3>
@@ -209,7 +227,8 @@ function StoryCard({
       </div>
       {flagged ? (
         <p className="text-muted-foreground mt-1 text-xs">
-          This story was {story.verificationState === 'AI_GENERATED' ? 'AI-generated' : 'inferred'}.
+          This story was{' '}
+          {story.verificationState === 'AI_GENERATED' ? 'AI-generated' : 'inferred'}.
           Review every line for accuracy before relying on it.
         </p>
       ) : null}
@@ -223,18 +242,28 @@ function StoryCard({
         </ul>
       ) : null}
       {story.result ? (
-        <p className="text-muted-foreground mt-2 line-clamp-2 text-xs">Result: {story.result}</p>
+        <p className="text-muted-foreground mt-2 line-clamp-2 text-xs">
+          Result: {story.result}
+        </p>
       ) : null}
       {links.projects.length + links.experiences.length + links.evidence.length > 0 ? (
         <p className="mt-2 text-xs">
           <span className="text-muted-foreground">References: </span>
           {links.projects.map((p) => (
-            <Link key={p.id} href={`/my/projects/${p.id}`} className="mr-2 underline underline-offset-2">
+            <Link
+              key={p.id}
+              href={`/my/projects/${p.id}`}
+              className="mr-2 underline underline-offset-2"
+            >
               {p.name}
             </Link>
           ))}
           {links.experiences.map((e) => (
-            <Link key={e.id} href="/profile" className="mr-2 underline underline-offset-2">
+            <Link
+              key={e.id}
+              href="/profile"
+              className="mr-2 underline underline-offset-2"
+            >
               {e.name}
             </Link>
           ))}
@@ -246,7 +275,9 @@ function StoryCard({
       <div className="mt-2 flex flex-wrap items-start gap-x-3">
         <ActionForm
           action={setStoryApprovedAction}
-          submitLabel={story.userApproved ? 'Move back to draft' : 'Mark ready for interviews'}
+          submitLabel={
+            story.userApproved ? 'Move back to draft' : 'Mark ready for interviews'
+          }
           variant="outline"
         >
           <input type="hidden" name="id" value={story.id} />

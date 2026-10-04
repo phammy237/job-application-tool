@@ -23,13 +23,22 @@ describe('parseCreateProject', () => {
     expect(r.ok).toBe(false);
   });
   it('normalizes empties to null and accepts valid values', () => {
-    const r = parseCreateProject(fd({ name: ' Foo ', role: '', url: 'https://x.dev', status: 'ACTIVE' }));
-    expect(r).toMatchObject({ ok: true, data: { name: 'Foo', role: null, url: 'https://x.dev', status: 'ACTIVE' } });
+    const r = parseCreateProject(
+      fd({ name: ' Foo ', role: '', url: 'https://x.dev', status: 'ACTIVE' }),
+    );
+    expect(r).toMatchObject({
+      ok: true,
+      data: { name: 'Foo', role: null, url: 'https://x.dev', status: 'ACTIVE' },
+    });
   });
   it('rejects non-http urls, bad status and reversed dates', () => {
-    expect(parseCreateProject(fd({ name: 'a', url: 'javascript:alert(1)' })).ok).toBe(false);
+    expect(parseCreateProject(fd({ name: 'a', url: 'javascript:alert(1)' })).ok).toBe(
+      false,
+    );
     expect(parseCreateProject(fd({ name: 'a', status: 'DONE' })).ok).toBe(false);
-    const r = parseCreateProject(fd({ name: 'a', startDate: '2025-02-01', endDate: '2025-01-01' }));
+    const r = parseCreateProject(
+      fd({ name: 'a', startDate: '2025-02-01', endDate: '2025-01-01' }),
+    );
     expect(r).toMatchObject({ ok: false });
   });
   it('ignores any client-supplied user id', () => {
@@ -41,7 +50,9 @@ describe('parseCreateProject', () => {
 describe('parseUpdateProject', () => {
   it('requires a uuid id and splits collaborators', () => {
     expect(parseUpdateProject(fd({ id: 'nope', name: 'a' })).ok).toBe(false);
-    const r = parseUpdateProject(fd({ id: ID, name: 'a', collaborators: 'Ann, Bo\nann' }));
+    const r = parseUpdateProject(
+      fd({ id: ID, name: 'a', collaborators: 'Ann, Bo\nann' }),
+    );
     expect(r).toMatchObject({ ok: true, data: { collaborators: ['Ann', 'Bo'] } });
   });
 });
@@ -49,11 +60,19 @@ describe('parseUpdateProject', () => {
 describe('parseApproval', () => {
   it('cannot approve for applications without base approval', () => {
     const r = parseApproval(fd({ id: ID, approvedForApplications: 'on' }));
-    expect(r).toMatchObject({ ok: true, data: { userApproved: false, approvedForApplications: false } });
+    expect(r).toMatchObject({
+      ok: true,
+      data: { userApproved: false, approvedForApplications: false },
+    });
   });
   it('keeps both when both checked', () => {
-    const r = parseApproval(fd({ id: ID, userApproved: 'on', approvedForApplications: 'on' }));
-    expect(r).toMatchObject({ ok: true, data: { userApproved: true, approvedForApplications: true } });
+    const r = parseApproval(
+      fd({ id: ID, userApproved: 'on', approvedForApplications: 'on' }),
+    );
+    expect(r).toMatchObject({
+      ok: true,
+      data: { userApproved: true, approvedForApplications: true },
+    });
   });
 });
 
@@ -79,7 +98,9 @@ describe('parseAddEvidence', () => {
   it('needs a note or a link', () => {
     expect(parseAddEvidence(fd({ id: ID, title: 't' })).ok).toBe(false);
     expect(parseAddEvidence(fd({ id: ID, title: 't', excerpt: 'did it' })).ok).toBe(true);
-    expect(parseAddEvidence(fd({ id: ID, title: 't', sourceUrl: 'https://a.b' })).ok).toBe(true);
+    expect(
+      parseAddEvidence(fd({ id: ID, title: 't', sourceUrl: 'https://a.b' })).ok,
+    ).toBe(true);
   });
 });
 

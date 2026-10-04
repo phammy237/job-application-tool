@@ -112,7 +112,10 @@ describe('POST /api/myos/github/sync', () => {
   });
 
   it('marks token-less runs as ownership unverified', async () => {
-    mocks.getOwnGithubConnection.mockResolvedValue({ githubLogin: 'octo', hasToken: false });
+    mocks.getOwnGithubConnection.mockResolvedValue({
+      githubLogin: 'octo',
+      hasToken: false,
+    });
     await POST();
     expect(mocks.syncGithubRepositories).toHaveBeenCalledWith(
       expect.objectContaining({ ownershipVerified: false }),
@@ -132,7 +135,10 @@ describe('POST /api/myos/github/sync', () => {
   });
 
   it('limits token-less syncs to one per 10 minutes per user', async () => {
-    mocks.getOwnGithubConnection.mockResolvedValue({ githubLogin: 'octo', hasToken: false });
+    mocks.getOwnGithubConnection.mockResolvedValue({
+      githubLogin: 'octo',
+      hasToken: false,
+    });
     mocks.listOwnGithubSyncRuns.mockResolvedValue([
       { status: 'SUCCEEDED', startedAt: new Date(Date.now() - 5 * 60_000).toISOString() },
     ]);
@@ -143,12 +149,16 @@ describe('POST /api/myos/github/sync', () => {
   });
 
   it('caps concurrent token-less syncs per process', async () => {
-    mocks.getOwnGithubConnection.mockResolvedValue({ githubLogin: 'octo', hasToken: false });
+    mocks.getOwnGithubConnection.mockResolvedValue({
+      githubLogin: 'octo',
+      hasToken: false,
+    });
     let release!: () => void;
     mocks.syncGithubRepositories.mockImplementationOnce(
       () =>
         new Promise((resolve) => {
-          release = () => resolve({ runId: 'r', status: 'SUCCEEDED', stats: {}, error: null });
+          release = () =>
+            resolve({ runId: 'r', status: 'SUCCEEDED', stats: {}, error: null });
         }),
     );
     const first = POST();

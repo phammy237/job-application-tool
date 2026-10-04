@@ -7,11 +7,13 @@ import {
   extractRequirementsFromText,
   isSolidState,
   matchRequirementsToEvidence,
+  supportEntityTokens,
   type RequirementInput,
   type RequirementLevel,
   type SupportEntity,
+  type SupportIndex,
 } from './match-requirements';
-import { competencyLabel, detectCompetencies, scoreTextMatch } from './text';
+import { competencyLabel, detectCompetencies, scoreTokenMatch, tokenize } from './text';
 
 /**
  * Interview preparation from a job posting and the evidence graph.
@@ -71,15 +73,27 @@ export interface InterviewPrep {
 }
 
 const QUESTION_TEMPLATES: Record<Competency, string[]> = {
-  LEADERSHIP: ['Tell me about a time you led a team or initiative without formal authority.'],
-  CONFLICT: ['Describe a disagreement with a teammate or stakeholder and how you resolved it.'],
-  AMBIGUITY: ['Tell me about a time you had to make progress with unclear goals or requirements.'],
+  LEADERSHIP: [
+    'Tell me about a time you led a team or initiative without formal authority.',
+  ],
+  CONFLICT: [
+    'Describe a disagreement with a teammate or stakeholder and how you resolved it.',
+  ],
+  AMBIGUITY: [
+    'Tell me about a time you had to make progress with unclear goals or requirements.',
+  ],
   FAILURE: ['Describe a project that did not go as planned and what you learned.'],
   TECHNICAL_DECISION_MAKING: ['Walk me through a technical trade-off you made and why.'],
-  USER_RESEARCH: ['How have you gathered and used user feedback to shape a product decision?'],
+  USER_RESEARCH: [
+    'How have you gathered and used user feedback to shape a product decision?',
+  ],
   PRIORITIZATION: ['Tell me about a time you had to prioritize among competing demands.'],
-  CROSS_FUNCTIONAL_COLLABORATION: ['Tell me about working with people from other functions to ship something.'],
-  DATA_DRIVEN_DECISIONS: ['Describe a decision you made using data, and what the data showed.'],
+  CROSS_FUNCTIONAL_COLLABORATION: [
+    'Tell me about working with people from other functions to ship something.',
+  ],
+  DATA_DRIVEN_DECISIONS: [
+    'Describe a decision you made using data, and what the data showed.',
+  ],
   OWNERSHIP: ['Tell me about something you owned end to end.'],
   EXECUTION: ['Describe a time you delivered under a tight deadline.'],
 };
@@ -103,12 +117,18 @@ function storyStrength(e: SupportEntity): StoryStrength {
   return 'LIMITED';
 }
 
-const STRENGTH_RANK: Record<StoryStrength, number> = { STRONG: 2, MODERATE: 1, LIMITED: 0 };
+const STRENGTH_RANK: Record<StoryStrength, number> = {
+  STRONG: 2,
+  MODERATE: 1,
+  LIMITED: 0,
+};
 
 export function buildInterviewPrep(
   graph: EvidenceGraphData,
   job: InterviewJobInput,
   now: Date,
+  /** Prebuilt `buildSupportIndex(graph)`; built once here and shared with requirement matching. */
+  index: SupportIndex = buildSupportIndex(graph),
 ): InterviewPrep {
   const requirements: RequirementInput[] =
     job.requirements && job.requirements.length > 0
@@ -119,7 +139,6 @@ export function buildInterviewPrep(
           .map((text, i) => ({ id: `req-${i + 1}`, text: text.slice(0, 300) }))
       : extractRequirementsFromText(job.description);
 
-  const index = buildSupportIndex(graph);
   const storyByEntity = new Map(
     index.entities.filter((e) => e.entityType === 'STORY').map((e) => [e.entityId, e]),
   );
@@ -132,18 +151,23 @@ export function buildInterviewPrep(
     }
   }
   for (const c of detectCompetencies(`${job.title}\n${job.description}`)) {
-    if (!rationale.has(c)) rationale.set(c, `The job title or description mentions ${competencyLabel(c)}.`);
+    if (!rationale.has(c))
+      rationale.set(c, `The job title or description mentions ${competencyLabel(c)}.`);
   }
 
   const competencyAreas: CompetencyArea[] = [];
   for (const [competency, why] of rationale) {
     const stories: PrepStory[] = [];
+    const reqText = why.startsWith('Requirement: "') ? why.slice(14, -1) : '';
+    const reqTokens = reqText.length > 0 ? tokenize(reqText) : [];
     for (const s of graph.stories) {
       const entity = storyByEntity.get(s.id);
       if (!entity) continue;
       const tagged = s.competencies.includes(competency);
-      const reqText = why.startsWith('Requirement: "') ? why.slice(14, -1) : '';
-      const textual = !tagged && reqText.length > 0 && scoreTextMatch(reqText, entity.text).score >= 0.5;
+      const textual =
+        !tagged &&
+        reqText.length > 0 &&
+        scoreTokenMatch(reqTokens, supportEntityTokens(entity)).score >= 0.5;
       if (!tagged && !textual) continue;
       stories.push({
         storyId: s.id,
@@ -167,7 +191,7 @@ export function buildInterviewPrep(
   }
 
   // 2. Relevant projects through requirement matching.
-  const result = matchRequirementsToEvidence(graph, requirements, now);
+  const result = matchRequirementsToEvidence(graph, requirements, now, index);
   const projectAgg = new Map<string, PrepProject>();
   for (const m of result.matches) {
     for (const s of m.supports) {
@@ -177,7 +201,8 @@ export function buildInterviewPrep(
       if (cur) {
         cur.requirementIds.push(m.requirementId);
         cur.evidenceIds = [...new Set([...cur.evidenceIds, ...evIds])];
-        if (m.level === 'STRONG' || (m.level === 'MODERATE' && cur.level !== 'STRONG')) cur.level = m.level;
+        if (m.level === 'STRONG' || (m.level === 'MODERATE' && cur.level !== 'STRONG'))
+          cur.level = m.level;
       } else {
         projectAgg.set(s.entityId, {
           projectId: s.entityId,
@@ -208,11 +233,20 @@ export function buildInterviewPrep(
     if (!project) continue;
     for (const text of project.talkingPoints) {
       const comps = detectCompetencies(text);
-      const technical = findTechNames(text).length > 0 || comps.includes('TECHNICAL_DECISION_MAKING');
+      const technical =
+        findTechNames(text).length > 0 || comps.includes('TECHNICAL_DECISION_MAKING');
       const productish = comps.some((c) => PRODUCT_COMPETENCIES.includes(c));
-      const point: TalkingPoint = { text, projectId: rp.projectId, evidenceIds: rp.evidenceIds };
-      if (technical && technicalTalkingPoints.length < MAX_TALKING_POINTS) technicalTalkingPoints.push(point);
-      else if ((productish || !technical) && productTalkingPoints.length < MAX_TALKING_POINTS) {
+      const point: TalkingPoint = {
+        text,
+        projectId: rp.projectId,
+        evidenceIds: rp.evidenceIds,
+      };
+      if (technical && technicalTalkingPoints.length < MAX_TALKING_POINTS)
+        technicalTalkingPoints.push(point);
+      else if (
+        (productish || !technical) &&
+        productTalkingPoints.length < MAX_TALKING_POINTS
+      ) {
         productTalkingPoints.push(point);
       }
     }
@@ -221,7 +255,8 @@ export function buildInterviewPrep(
   // 4. Gaps and templated questions.
   const gaps: string[] = [];
   for (const m of result.matches) {
-    if (m.level === 'NONE') gaps.push(`No meaningful evidence found for: "${m.requirementText}"`);
+    if (m.level === 'NONE')
+      gaps.push(`No meaningful evidence found for: "${m.requirementText}"`);
   }
   for (const a of competencyAreas) {
     if (a.gap) {
@@ -232,7 +267,9 @@ export function buildInterviewPrep(
       );
     }
   }
-  const questionsToPrepare = competencyAreas.flatMap((a) => QUESTION_TEMPLATES[a.competency]);
+  const questionsToPrepare = competencyAreas.flatMap(
+    (a) => QUESTION_TEMPLATES[a.competency],
+  );
 
   return {
     competencyAreas,

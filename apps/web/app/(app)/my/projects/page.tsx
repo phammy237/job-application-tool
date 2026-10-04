@@ -1,11 +1,10 @@
-import { loadOwnEvidenceGraph } from '@career-os/database';
 import { Badge, Input, Label, Select, Textarea } from '@career-os/ui';
 import Link from 'next/link';
 import { requireUser } from '../../../../lib/auth';
-import { createClient } from '../../../../lib/supabase/server';
+import { loadEvidenceGraphForRequest } from '../../../../lib/myos/load-graph';
 import { EmptyState, FlagBadge, VisibilityBadge } from '../_components/badges';
 import { createProjectAction } from './actions';
-import { Feedback, firstParam } from './_components/feedback';
+import { Feedback, firstParam } from '../_components/feedback';
 import { SubmitButton } from './_components/submit-button';
 import { filterProjects, summarizeProjects } from './list-helpers';
 
@@ -18,7 +17,11 @@ const STATUS_LABEL: Record<string, string> = {
   ARCHIVED: 'Archived',
 };
 
-export default async function MyProjectsPage({ searchParams }: { searchParams: SearchParams }) {
+export default async function MyProjectsPage({
+  searchParams,
+}: {
+  searchParams: SearchParams;
+}) {
   const params = await searchParams;
   const q = firstParam(params.q) ?? '';
   const status = firstParam(params.status) ?? '';
@@ -26,8 +29,7 @@ export default async function MyProjectsPage({ searchParams }: { searchParams: S
   const error = firstParam(params.error);
 
   const user = await requireUser();
-  const supabase = await createClient();
-  const graph = await loadOwnEvidenceGraph(supabase, user.id);
+  const graph = await loadEvidenceGraphForRequest(user.id);
 
   const rows = summarizeProjects(graph);
   const visible = filterProjects(rows, { q, status });
@@ -39,8 +41,8 @@ export default async function MyProjectsPage({ searchParams }: { searchParams: S
           <h1 className="text-2xl font-semibold tracking-tight">Projects</h1>
           <p className="text-muted-foreground mt-1 text-sm">
             {rows.length} {rows.length === 1 ? 'project' : 'projects'}
-            {visible.length !== rows.length ? `, ${visible.length} shown` : ''}. Each one is a
-            container for the skills, achievements, and evidence that back it.
+            {visible.length !== rows.length ? `, ${visible.length} shown` : ''}. Each one
+            is a container for the skills, achievements, and evidence that back it.
           </p>
         </div>
       </header>
@@ -48,13 +50,22 @@ export default async function MyProjectsPage({ searchParams }: { searchParams: S
       <Feedback notice={notice} error={error} />
 
       <details className="border-border bg-card rounded-lg border" open={Boolean(error)}>
-        <summary className="focus-visible:ring-ring cursor-pointer rounded-lg px-4 py-3 text-sm font-medium focus-visible:ring-2 focus-visible:outline-none">
+        <summary className="focus-visible:ring-ring cursor-pointer rounded-lg px-4 py-3 text-sm font-medium focus-visible:outline-none focus-visible:ring-2">
           Add a project
         </summary>
-        <form action={createProjectAction} className="grid gap-3 border-t p-4 sm:grid-cols-2">
+        <form
+          action={createProjectAction}
+          className="grid gap-3 border-t p-4 sm:grid-cols-2"
+        >
           <div className="space-y-1.5 sm:col-span-2">
             <Label htmlFor="new-name">Name</Label>
-            <Input id="new-name" name="name" required maxLength={200} autoComplete="off" />
+            <Input
+              id="new-name"
+              name="name"
+              required
+              maxLength={200}
+              autoComplete="off"
+            />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="new-role">Your role</Label>
@@ -81,13 +92,20 @@ export default async function MyProjectsPage({ searchParams }: { searchParams: S
           </div>
           <div className="space-y-1.5 sm:col-span-2">
             <Label htmlFor="new-url">Link</Label>
-            <Input id="new-url" name="url" type="url" placeholder="https://" maxLength={500} />
+            <Input
+              id="new-url"
+              name="url"
+              type="url"
+              placeholder="https://"
+              maxLength={500}
+            />
           </div>
           <div className="space-y-1.5 sm:col-span-2">
             <Label htmlFor="new-summary">Summary</Label>
             <Textarea id="new-summary" name="summary" rows={3} maxLength={4000} />
             <p className="text-muted-foreground text-xs">
-              New projects start private and unapproved. You decide what they are used for.
+              New projects start private and unapproved. You decide what they are used
+              for.
             </p>
           </div>
           <div className="sm:col-span-2">
@@ -98,7 +116,12 @@ export default async function MyProjectsPage({ searchParams }: { searchParams: S
         </form>
       </details>
 
-      <form method="get" className="flex flex-wrap items-end gap-3" role="search" aria-label="Filter projects">
+      <form
+        method="get"
+        className="flex flex-wrap items-end gap-3"
+        role="search"
+        aria-label="Filter projects"
+      >
         <div className="space-y-1.5">
           <Label htmlFor="q">Search</Label>
           <Input id="q" name="q" defaultValue={q} placeholder="Name or role" />
@@ -135,7 +158,10 @@ export default async function MyProjectsPage({ searchParams }: { searchParams: S
           }
         />
       ) : visible.length === 0 ? (
-        <EmptyState title="No projects match" description="Try a different search or status." />
+        <EmptyState
+          title="No projects match"
+          description="Try a different search or status."
+        />
       ) : (
         <div className="border-border bg-card divide-border divide-y rounded-lg border">
           <div
@@ -162,14 +188,22 @@ export default async function MyProjectsPage({ searchParams }: { searchParams: S
                   >
                     {r.name}
                   </Link>
-                  {r.role ? <p className="text-muted-foreground truncate text-xs">{r.role}</p> : null}
+                  {r.role ? (
+                    <p className="text-muted-foreground truncate text-xs">{r.role}</p>
+                  ) : null}
                 </div>
                 <span className="text-muted-foreground">
                   <span className="md:hidden">Status: </span>
                   {r.status ? STATUS_LABEL[r.status] : 'Not set'}
                 </span>
                 <span>
-                  <Badge variant="outline">{r.origin === 'GITHUB' ? 'GitHub' : r.origin === 'RESUME' ? 'Resume' : 'Manual'}</Badge>
+                  <Badge variant="outline">
+                    {r.origin === 'GITHUB'
+                      ? 'GitHub'
+                      : r.origin === 'RESUME'
+                        ? 'Resume'
+                        : 'Manual'}
+                  </Badge>
                 </span>
                 <span className="text-muted-foreground">
                   <span className="md:hidden">Skills: </span>

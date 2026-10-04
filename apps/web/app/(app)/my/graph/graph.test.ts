@@ -1,10 +1,21 @@
 import type { NodeType, VizGraph, VizLink, VizNode } from '@career-os/shared';
 import { describe, expect, it } from 'vitest';
-import { filterGraph, groupNodes, neighborhood, relationPhrase, relationsOf } from './graph-filters';
+import {
+  filterGraph,
+  groupNodes,
+  neighborhood,
+  relationPhrase,
+  relationsOf,
+} from './graph-filters';
 import { layoutGraph } from './graph-layout';
 import { nodeHref, safeExternalUrl } from './node-links';
 
-const node = (id: string, type: NodeType, label = id, hint: VizNode['verificationHint'] = 'USER_PROVIDED'): VizNode => ({
+const node = (
+  id: string,
+  type: NodeType,
+  label = id,
+  hint: VizNode['verificationHint'] = 'USER_PROVIDED',
+): VizNode => ({
   id,
   type,
   label,
@@ -49,10 +60,29 @@ const viz: VizGraph = {
 };
 
 const ALL_TYPES = new Set<NodeType>([
-  'PROJECT', 'SKILL', 'EXPERIENCE', 'EDUCATION', 'ACHIEVEMENT', 'STORY', 'EVIDENCE',
+  'PROJECT',
+  'SKILL',
+  'EXPERIENCE',
+  'EDUCATION',
+  'ACHIEVEMENT',
+  'STORY',
+  'EVIDENCE',
 ]);
-const ALL_RELS = new Set(['DEMONSTRATES', 'USES', 'BELONGS_TO', 'SUPPORTS', 'REPRESENTS', 'REFERENCES'] as const);
-const base = { types: ALL_TYPES, relations: ALL_RELS, minVerification: null, focus: null, search: '' };
+const ALL_RELS = new Set([
+  'DEMONSTRATES',
+  'USES',
+  'BELONGS_TO',
+  'SUPPORTS',
+  'REPRESENTS',
+  'REFERENCES',
+] as const);
+const base = {
+  types: ALL_TYPES,
+  relations: ALL_RELS,
+  minVerification: null,
+  focus: null,
+  search: '',
+};
 
 describe('layoutGraph', () => {
   it('is deterministic and independent of input order', () => {
@@ -97,7 +127,10 @@ describe('filterGraph', () => {
   });
 
   it('filters by node type and drops links to hidden nodes', () => {
-    const r = filterGraph(viz, { ...base, types: new Set<NodeType>(['PROJECT', 'SKILL']) });
+    const r = filterGraph(viz, {
+      ...base,
+      types: new Set<NodeType>(['PROJECT', 'SKILL']),
+    });
     expect(r.nodeIds.has('EVIDENCE:e1')).toBe(false);
     expect([...r.linkIds].sort()).toEqual(['l1', 'l2']);
   });

@@ -31,7 +31,8 @@ export function matchesSearch(node: VizNode, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return false;
   return (
-    node.label.toLowerCase().includes(q) || (node.sublabel ?? '').toLowerCase().includes(q)
+    node.label.toLowerCase().includes(q) ||
+    (node.sublabel ?? '').toLowerCase().includes(q)
   );
 }
 
@@ -53,7 +54,12 @@ export function filterGraph(viz: VizGraph, opts: GraphFilterOptions): GraphFilte
 
   let nodeIds = new Set(passing.keys());
   if (opts.focus) {
-    nodeIds = neighborhood(links, opts.focus.id, opts.focus.depth, passing.has(opts.focus.id));
+    nodeIds = neighborhood(
+      links,
+      opts.focus.id,
+      opts.focus.depth,
+      passing.has(opts.focus.id),
+    );
   }
   const linkIds = new Set(
     links.filter((l) => nodeIds.has(l.source) && nodeIds.has(l.target)).map((l) => l.id),

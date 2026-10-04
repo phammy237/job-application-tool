@@ -8,8 +8,7 @@ function text(fd: FormData, key: string): string | undefined {
 }
 
 export type ParsedAchievement =
-  | { ok: true; input: MyosAchievementInput }
-  | { ok: false; message: string };
+  { ok: true; input: MyosAchievementInput } | { ok: false; message: string };
 
 /**
  * FormData -> validated achievement input. A user-typed achievement is always USER_PROVIDED
@@ -29,7 +28,10 @@ export function parseAchievementForm(fd: FormData): ParsedAchievement {
     visibility: text(fd, 'visibility') ?? 'PRIVATE',
   });
   if (!parsed.success) {
-    return { ok: false, message: parsed.error.issues[0]?.message ?? 'Invalid achievement.' };
+    return {
+      ok: false,
+      message: parsed.error.issues[0]?.message ?? 'Invalid achievement.',
+    };
   }
   return { ok: true, input: parsed.data };
 }

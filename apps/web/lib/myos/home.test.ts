@@ -1,6 +1,12 @@
 import { emptyEvidenceGraph, type GraphProject } from '@career-os/shared';
 import { describe, expect, it } from 'vitest';
-import { buildChecklist, buildSnapshot, buildUnknowns, formatDate, isNearlyEmpty } from './home';
+import {
+  buildChecklist,
+  buildSnapshot,
+  buildUnknowns,
+  formatDate,
+  isNearlyEmpty,
+} from './home';
 
 function project(over: Partial<GraphProject> = {}): GraphProject {
   return {
@@ -69,9 +75,9 @@ describe('formatDate', () => {
   });
 });
 
-describe("buildChecklist step 6", () => {
-  it("points at the projects page where approval toggles live", () => {
+describe('buildChecklist step 6', () => {
+  it('points at the projects page where approval toggles live', () => {
     const step = buildChecklist(emptyEvidenceGraph(), null, []).find((s) => s.step === 6);
-    expect(step?.href).toBe("/my/projects");
+    expect(step?.href).toBe('/my/projects');
   });
 });

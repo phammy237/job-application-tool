@@ -26,8 +26,7 @@ export interface ParsedStoryForm {
 }
 
 export type StoryFormParseResult =
-  | { ok: true; value: ParsedStoryForm }
-  | { ok: false; message: string };
+  { ok: true; value: ParsedStoryForm } | { ok: false; message: string };
 
 function text(fd: FormData, key: string): string | null {
   const v = fd.get(key);
@@ -94,7 +93,9 @@ export interface StoryFilter {
   approvedOnly: boolean;
 }
 
-export function parseStoryFilter(sp: Record<string, string | string[] | undefined>): StoryFilter {
+export function parseStoryFilter(
+  sp: Record<string, string | string[] | undefined>,
+): StoryFilter {
   const raw = Array.isArray(sp.competency) ? sp.competency[0] : sp.competency;
   const approved = Array.isArray(sp.approved) ? sp.approved[0] : sp.approved;
   return {
@@ -105,7 +106,10 @@ export function parseStoryFilter(sp: Record<string, string | string[] | undefine
   };
 }
 
-export function filterStories(stories: readonly MyosStory[], filter: StoryFilter): MyosStory[] {
+export function filterStories(
+  stories: readonly MyosStory[],
+  filter: StoryFilter,
+): MyosStory[] {
   return stories.filter(
     (s) =>
       (!filter.competency || s.competencies.includes(filter.competency)) &&
@@ -120,7 +124,9 @@ export interface CompetencyCoverageItem {
 }
 
 /** Per-competency story counts. "Covered" means at least one APPROVED story. */
-export function competencyCoverage(stories: readonly MyosStory[]): CompetencyCoverageItem[] {
+export function competencyCoverage(
+  stories: readonly MyosStory[],
+): CompetencyCoverageItem[] {
   return COMPETENCIES.map((competency) => {
     const tagged = stories.filter((s) => s.competencies.includes(competency));
     return {
@@ -131,8 +137,12 @@ export function competencyCoverage(stories: readonly MyosStory[]): CompetencyCov
   });
 }
 
-export function isFlaggedUnconfirmed(story: Pick<MyosStory, 'verificationState'>): boolean {
-  return story.verificationState === 'AI_GENERATED' || story.verificationState === 'INFERRED';
+export function isFlaggedUnconfirmed(
+  story: Pick<MyosStory, 'verificationState'>,
+): boolean {
+  return (
+    story.verificationState === 'AI_GENERATED' || story.verificationState === 'INFERRED'
+  );
 }
 
 export interface StoryLinks {
@@ -147,14 +157,20 @@ export function storyLinks(
   storyId: string,
 ): StoryLinks {
   const projects = new Map(graph.projects.map((p) => [p.id, p.name]));
-  const experiences = new Map(graph.experiences.map((e) => [e.id, `${e.title} at ${e.company}`]));
+  const experiences = new Map(
+    graph.experiences.map((e) => [e.id, `${e.title} at ${e.company}`]),
+  );
   const evidence = new Map(graph.evidence.map((e) => [e.id, e]));
   const out: StoryLinks = { projects: [], experiences: [], evidence: [] };
   const seen = new Set<string>();
   for (const edge of graph.edges) {
     let otherType: string;
     let otherId: string;
-    if (edge.fromType === 'STORY' && edge.fromId === storyId && edge.relation === 'REFERENCES') {
+    if (
+      edge.fromType === 'STORY' &&
+      edge.fromId === storyId &&
+      edge.relation === 'REFERENCES'
+    ) {
       otherType = edge.toType;
       otherId = edge.toId;
     } else if (

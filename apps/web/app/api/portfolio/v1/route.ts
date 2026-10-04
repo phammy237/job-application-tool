@@ -76,7 +76,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         status: 429,
         headers: {
           'Cache-Control': 'no-store',
-          'Retry-After': String(Math.max(ipLimit.retryAfterSeconds, keyLimit.retryAfterSeconds)),
+          'Retry-After': String(
+            Math.max(ipLimit.retryAfterSeconds, keyLimit.retryAfterSeconds),
+          ),
         },
       },
     );
@@ -114,7 +116,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       },
     });
   } catch (error) {
-    console.error('[career-os] portfolio export failed', error instanceof Error ? error.message : 'unknown');
-    return NextResponse.json({ error: 'internal_error' }, { status: 500, headers: { 'Cache-Control': 'no-store' } });
+    console.error(
+      '[career-os] portfolio export failed',
+      error instanceof Error ? error.name : 'unknown',
+    );
+    return NextResponse.json(
+      { error: 'internal_error' },
+      { status: 500, headers: { 'Cache-Control': 'no-store' } },
+    );
   }
 }

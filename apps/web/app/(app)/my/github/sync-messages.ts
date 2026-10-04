@@ -69,13 +69,17 @@ export function summarizeSync(stats: SyncStatsView): string {
 /** Maps a failed API response to a message; prefers the route's own `error` string. */
 export function describeApiError(status: number, body: unknown): string {
   const message =
-    body && typeof body === 'object' && typeof (body as { error?: unknown }).error === 'string'
+    body &&
+    typeof body === 'object' &&
+    typeof (body as { error?: unknown }).error === 'string'
       ? ((body as { error: string }).error as string)
       : null;
   if (message) return message;
   if (status === 401) return 'You are signed out. Sign in again.';
-  if (status === 409) return 'A sync is already running, or the stored token could not be read.';
-  if (status === 429 || status === 503) return 'GitHub is rate limiting requests. Try again later.';
+  if (status === 409)
+    return 'A sync is already running, or the stored token could not be read.';
+  if (status === 429 || status === 503)
+    return 'GitHub is rate limiting requests. Try again later.';
   return 'Something went wrong. Please try again.';
 }
 

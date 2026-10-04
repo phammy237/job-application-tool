@@ -40,13 +40,18 @@ export function MyosBulletGroundingPanel({
         }),
     [draft, grounding],
   );
-  const warningCount = rows.filter((r) => r.state === 'checked' && hasGroundingWarning(r.g!)).length;
+  const warningCount = rows.filter(
+    (r) => r.state === 'checked' && hasGroundingWarning(r.g!),
+  ).length;
   const unchecked = rows.filter((r) => r.state !== 'checked').length;
 
   if (rows.length === 0) return null;
 
   return (
-    <details className="border-border rounded-lg border p-3" data-testid="myos-grounding-panel">
+    <details
+      className="border-border rounded-lg border p-3"
+      data-testid="myos-grounding-panel"
+    >
       <summary className="cursor-pointer text-sm font-semibold">
         Evidence check (myOS)
         <span className="text-muted-foreground ml-2 text-xs font-normal">
@@ -55,14 +60,16 @@ export function MyosBulletGroundingPanel({
         </span>
       </summary>
       <p className="text-muted-foreground mt-2 text-xs">
-        Advisory only: compares each bullet with the evidence you recorded in myOS. Nothing here
-        changes your bullets. Save and reload to re-check edited text.
+        Advisory only: compares each bullet with the evidence you recorded in myOS.
+        Nothing here changes your bullets. Save and reload to re-check edited text.
       </p>
       <ul className="mt-3 space-y-3">
         {rows.map(({ bullet, g, state }) => (
           <li key={bullet.id} className="space-y-1 text-sm">
             <p>
-              <span className="text-muted-foreground text-xs">{bullet.sectionLabel}: </span>
+              <span className="text-muted-foreground text-xs">
+                {bullet.sectionLabel}:{' '}
+              </span>
               {bullet.text}
             </p>
             {state === 'unchecked' ? (
@@ -71,8 +78,8 @@ export function MyosBulletGroundingPanel({
               </p>
             ) : state === 'stale' ? (
               <p className="text-xs text-amber-700 dark:text-amber-400">
-                Edited since the last check, so any earlier result no longer applies. Save and
-                reload to re-check.
+                Edited since the last check, so any earlier result no longer applies. Save
+                and reload to re-check.
               </p>
             ) : (
               <BulletDetails g={g!} />
@@ -88,8 +95,12 @@ function BulletDetails({ g }: { g: BulletGrounding }) {
   return (
     <details>
       <summary className="cursor-pointer text-xs">
-        <span className="text-primary underline underline-offset-2">Why this bullet?</span>
-        <span className="text-muted-foreground ml-2">support: {g.supportLevel.toLowerCase()}</span>
+        <span className="text-primary underline underline-offset-2">
+          Why this bullet?
+        </span>
+        <span className="text-muted-foreground ml-2">
+          support: {g.supportLevel.toLowerCase()}
+        </span>
         {g.unsupportedNumbers.length > 0 ? (
           <span className="ml-2 rounded-full border border-amber-500/50 px-2 py-0.5 text-[11px] text-amber-700 dark:text-amber-400">
             number not backed: {g.unsupportedNumbers.join(', ')}
@@ -123,7 +134,9 @@ function BulletDetails({ g }: { g: BulletGrounding }) {
                     {m.entityType.toLowerCase()} · overlap: {m.matchedTerms.join(', ')}
                   </span>
                   {m.unconfirmed ? (
-                    <span className="ml-2 text-amber-700 dark:text-amber-400">unconfirmed</span>
+                    <span className="ml-2 text-amber-700 dark:text-amber-400">
+                      unconfirmed
+                    </span>
                   ) : !m.grounding ? (
                     <span className="ml-2 text-amber-700 dark:text-amber-400">
                       not approved for applications

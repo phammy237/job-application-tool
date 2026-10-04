@@ -331,7 +331,9 @@ describe('syncGithubRepositories', () => {
       const res = await run(m, client, { ownershipVerified: false });
       expect(res.stats.ownershipVerified).toBe(false);
       expect(res.stats.ownershipNote).toBe('ownership unverified');
-      expect(m.runs.at(-1)!.stats).toMatchObject({ ownershipNote: 'ownership unverified' });
+      expect(m.runs.at(-1)!.stats).toMatchObject({
+        ownershipNote: 'ownership unverified',
+      });
       expect(gh.calls.some((c) => c.startsWith('/search'))).toBe(false);
       expect([...m.evidence.keys()].some((k) => k.startsWith('GITHUB_PR'))).toBe(false);
       expect(m.evidence.size).toBeGreaterThan(0);
@@ -350,7 +352,9 @@ describe('syncGithubRepositories', () => {
       await run(m, client);
       const search = gh.calls.filter((c) => c.startsWith('/search'));
       expect(search).toHaveLength(1);
-      expect(m.evidence.get('GITHUB_PR|octo/alpha#1')!.verificationState).toBe('VERIFIED');
+      expect(m.evidence.get('GITHUB_PR|octo/alpha#1')!.verificationState).toBe(
+        'VERIFIED',
+      );
     });
   });
 

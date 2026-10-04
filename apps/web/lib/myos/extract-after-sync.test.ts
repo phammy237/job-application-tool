@@ -67,14 +67,34 @@ describe('generateCandidatesForSelectedRepos', () => {
     expect(mocks.createOwnCandidatesIdempotent).not.toHaveBeenCalled();
   });
 
+  it('writes the candidates of several repos in one batched call, keeping per-project scoping', async () => {
+    mocks.listOwnGithubRepositories.mockResolvedValue([
+      repo(),
+      repo({ id: 'r2', fullName: 'me/other', projectId: 'proj-2' }),
+    ]);
+    const r = await generateCandidatesForSelectedRepos(supabase, 'user-1');
+    expect(r.repositories).toBe(2);
+    expect(mocks.createOwnCandidatesIdempotent).toHaveBeenCalledTimes(1);
+    const inputs = mocks.createOwnCandidatesIdempotent.mock.calls[0]![2] as {
+      projectId: string;
+      evidenceIds: string[];
+      dedupeKey: string;
+    }[];
+    const byProject = (id: string) => inputs.filter((c) => c.projectId === id);
+    expect(byProject('proj-1').length).toBeGreaterThan(0);
+    expect(byProject('proj-2').length).toBeGreaterThan(0);
+    for (const c of byProject('proj-2')) expect(c.evidenceIds).toEqual(['e-other']);
+    expect(new Set(inputs.map((c) => c.dedupeKey)).size).toBe(inputs.length);
+  });
+
   it('is idempotent: running twice yields identical dedupe keys (store skips existing)', async () => {
     mocks.listOwnGithubRepositories.mockResolvedValue([repo()]);
     await generateCandidatesForSelectedRepos(supabase, 'user-1');
     await generateCandidatesForSelectedRepos(supabase, 'user-1');
     const keys = (i: number) =>
-      (mocks.createOwnCandidatesIdempotent.mock.calls[i]![2] as { dedupeKey: string }[]).map(
-        (c) => c.dedupeKey,
-      );
+      (
+        mocks.createOwnCandidatesIdempotent.mock.calls[i]![2] as { dedupeKey: string }[]
+      ).map((c) => c.dedupeKey);
     expect(keys(0)).toEqual(keys(1));
     expect(new Set(keys(0)).size).toBe(keys(0).length);
   });

@@ -25,10 +25,20 @@ export function summarizeProjects(graph: EvidenceGraphData): ProjectRow[] {
   };
   for (const e of graph.edges) {
     if (e.fromType === 'PROJECT' && e.toType === 'SKILL' && skillIds.has(e.toId)) {
-      if (e.relation === 'DEMONSTRATES' || e.relation === 'USES') add(skills, e.fromId, e.toId);
-    } else if (e.fromType === 'SKILL' && e.toType === 'PROJECT' && skillIds.has(e.fromId)) {
-      if (e.relation === 'DEMONSTRATES' || e.relation === 'USES') add(skills, e.toId, e.fromId);
-    } else if (e.fromType === 'EVIDENCE' && e.toType === 'PROJECT' && evidenceIds.has(e.fromId)) {
+      if (e.relation === 'DEMONSTRATES' || e.relation === 'USES')
+        add(skills, e.fromId, e.toId);
+    } else if (
+      e.fromType === 'SKILL' &&
+      e.toType === 'PROJECT' &&
+      skillIds.has(e.fromId)
+    ) {
+      if (e.relation === 'DEMONSTRATES' || e.relation === 'USES')
+        add(skills, e.toId, e.fromId);
+    } else if (
+      e.fromType === 'EVIDENCE' &&
+      e.toType === 'PROJECT' &&
+      evidenceIds.has(e.fromId)
+    ) {
       add(evidence, e.toId, e.fromId);
     }
   }
@@ -52,7 +62,8 @@ export function filterProjects(
   const needle = (q ?? '').trim().toLowerCase();
   return rows.filter((r) => {
     if (status && r.status !== status) return false;
-    if (needle && !`${r.name} ${r.role ?? ''}`.toLowerCase().includes(needle)) return false;
+    if (needle && !`${r.name} ${r.role ?? ''}`.toLowerCase().includes(needle))
+      return false;
     return true;
   });
 }

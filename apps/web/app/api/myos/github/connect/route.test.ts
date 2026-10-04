@@ -115,7 +115,10 @@ describe('POST /api/myos/github/connect', () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const res = await POST(post({ login: 'octo', token: TOKEN }));
     expect(res.status).toBe(500);
-    expect(mocks.deleteOwnGithubConnection).toHaveBeenCalledWith({ tag: 'user-client' }, USER_ID);
+    expect(mocks.deleteOwnGithubConnection).toHaveBeenCalledWith(
+      { tag: 'user-client' },
+      USER_ID,
+    );
     expect(JSON.stringify(await res.json())).not.toContain(TOKEN);
     spy.mockRestore();
   });

@@ -1,16 +1,16 @@
-import { loadOwnEvidenceGraph } from '@career-os/database';
 import {
   SKILL_STRENGTH_RULES,
   computeAllSkillStrengths,
   safeHttpHref,
+  type EvidenceGraphData,
   type RankedSkillStrength,
 } from '@career-os/shared';
 import { Badge, Input, Label, Select, buttonVariants } from '@career-os/ui';
 import Link from 'next/link';
 import { requireUser } from '../../../../lib/auth';
-import { createClient } from '../../../../lib/supabase/server';
+import { loadEvidenceGraphForRequest } from '../../../../lib/myos/load-graph';
 import { EmptyState, StrengthBadge, VerificationBadge } from '../_components/badges';
-import { ActionForm } from './action-form';
+import { ActionForm } from '../_components/action-form';
 import { addSkillAction, deleteSkillAction, linkSkillAction } from './actions';
 import {
   categoryLabel,
@@ -19,7 +19,9 @@ import {
   parseSkillListParams,
   qualityLabel,
   recencyLabel,
+  indexSupportingEvidence,
   skillEvidenceItems,
+  type SupportingEvidenceIndex,
 } from './helpers';
 
 export const metadata = { title: 'Skills · myOS' };
@@ -39,11 +41,11 @@ export default async function SkillsPage({
 }) {
   const params = parseSkillListParams(await searchParams);
   const user = await requireUser();
-  const supabase = await createClient();
-  const graph = await loadOwnEvidenceGraph(supabase, user.id);
+  const graph = await loadEvidenceGraphForRequest(user.id);
   const now = new Date();
 
   const all = computeAllSkillStrengths(graph, now);
+  const evidenceIndex = indexSupportingEvidence(graph);
   const rows = filterSortSkills(all, params);
   const categories = [
     ...new Set(graph.skills.map((s) => s.category).filter((c): c is string => !!c)),
@@ -56,8 +58,8 @@ export default async function SkillsPage({
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Skills</h1>
         <p className="text-muted-foreground mt-1 text-sm">
-          A skill is only as strong as the projects, experience, and evidence behind it. Strength is
-          derived, never self-rated.
+          A skill is only as strong as the projects, experience, and evidence behind it.
+          Strength is derived, never self-rated.
         </p>
       </div>
 
@@ -68,7 +70,10 @@ export default async function SkillsPage({
         <div className="border-border space-y-3 border-t px-3 py-3">
           <dl className="space-y-2">
             {SKILL_STRENGTH_RULES.levels.map((l) => (
-              <div key={l.level} className="flex flex-col gap-1 sm:flex-row sm:items-start sm:gap-3">
+              <div
+                key={l.level}
+                className="flex flex-col gap-1 sm:flex-row sm:items-start sm:gap-3"
+              >
                 <dt className="sm:w-28 sm:shrink-0">
                   <StrengthBadge level={l.level} />
                 </dt>
@@ -150,17 +155,28 @@ export default async function SkillsPage({
             </div>
             <div className="space-y-1">
               <Label htmlFor="filter-sort">Sort by</Label>
-              <Select id="filter-sort" name="sort" defaultValue={params.sort} className="w-40">
+              <Select
+                id="filter-sort"
+                name="sort"
+                defaultValue={params.sort}
+                className="w-40"
+              >
                 <option value="strength">Strength</option>
                 <option value="recency">Recency</option>
                 <option value="name">Name</option>
               </Select>
             </div>
-            <button type="submit" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+            <button
+              type="submit"
+              className={buttonVariants({ variant: 'outline', size: 'sm' })}
+            >
               Apply
             </button>
             {hasFilter ? (
-              <Link href="/my/skills" className={buttonVariants({ variant: 'ghost', size: 'sm' })}>
+              <Link
+                href="/my/skills"
+                className={buttonVariants({ variant: 'ghost', size: 'sm' })}
+              >
                 Clear
               </Link>
             ) : null}
@@ -172,7 +188,12 @@ export default async function SkillsPage({
 
           <ul className="space-y-2">
             {rows.map((row) => (
-              <SkillRow key={row.skill.id} row={row} graph={graph} />
+              <SkillRow
+                key={row.skill.id}
+                row={row}
+                graph={graph}
+                evidenceIndex={evidenceIndex}
+              />
             ))}
           </ul>
         </section>
@@ -186,18 +207,25 @@ export default async function SkillsPage({
           <Badge variant="outline">Inferred</Badge>
         </div>
         <p className="text-muted-foreground text-xs">
-          Found by matching a technology dictionary against your project and experience text. These
-          are suggestions only; nothing is added until you click Add.
+          Found by matching a technology dictionary against your project and experience
+          text. These are suggestions only; nothing is added until you click Add.
         </p>
         {suggestions.length === 0 ? (
           <p className="text-muted-foreground text-sm">No new technologies detected.</p>
         ) : (
           <ul className="grid gap-2 sm:grid-cols-2">
             {suggestions.map((s) => (
-              <li key={s.name} className="border-border rounded-md border px-3 py-2 text-sm">
+              <li
+                key={s.name}
+                className="border-border rounded-md border px-3 py-2 text-sm"
+              >
                 <ActionForm action={addSkillAction} submitLabel="Add" variant="outline">
                   <input type="hidden" name="name" value={s.name} />
-                  <input type="hidden" name="category" value={categoryLabel(s.category)} />
+                  <input
+                    type="hidden"
+                    name="category"
+                    value={categoryLabel(s.category)}
+                  />
                   <p className="font-medium">
                     {s.name}{' '}
                     <span className="text-muted-foreground font-normal">
@@ -221,9 +249,11 @@ export default async function SkillsPage({
 function SkillRow({
   row,
   graph,
+  evidenceIndex,
 }: {
   row: RankedSkillStrength;
-  graph: Awaited<ReturnType<typeof loadOwnEvidenceGraph>>;
+  graph: EvidenceGraphData;
+  evidenceIndex: SupportingEvidenceIndex;
 }) {
   const { skill, strength } = row;
   const projects = strength.supportingEntities.filter((e) => e.type === 'PROJECT');
@@ -235,17 +265,22 @@ function SkillRow({
     graph,
     skill.id,
     strength.supportingEntities.map((e) => e.id),
+    evidenceIndex,
   );
   const linkedIds = new Set(strength.supportingEntities.map((e) => e.id));
   const linkable = [
-    ...graph.projects.filter((p) => !linkedIds.has(p.id)).map((p) => ({
-      value: `PROJECT:${p.id}`,
-      label: `Project: ${p.name}`,
-    })),
-    ...graph.experiences.filter((e) => !linkedIds.has(e.id)).map((e) => ({
-      value: `EXPERIENCE:${e.id}`,
-      label: `Experience: ${e.title} at ${e.company}`,
-    })),
+    ...graph.projects
+      .filter((p) => !linkedIds.has(p.id))
+      .map((p) => ({
+        value: `PROJECT:${p.id}`,
+        label: `Project: ${p.name}`,
+      })),
+    ...graph.experiences
+      .filter((e) => !linkedIds.has(e.id))
+      .map((e) => ({
+        value: `EXPERIENCE:${e.id}`,
+        label: `Experience: ${e.title} at ${e.company}`,
+      })),
   ];
 
   return (
@@ -257,8 +292,9 @@ function SkillRow({
             {skill.category ? <Badge variant="outline">{skill.category}</Badge> : null}
           </h3>
           <p className="text-muted-foreground mt-1 text-xs">
-            {recencyLabel(strength.recency, strength.latestActivity)} · {strength.evidenceCount}{' '}
-            evidence ({strength.verifiedEvidenceCount} verified) · {qualityLabel(strength.quality)}
+            {recencyLabel(strength.recency, strength.latestActivity)} ·{' '}
+            {strength.evidenceCount} evidence ({strength.verifiedEvidenceCount} verified)
+            · {qualityLabel(strength.quality)}
           </p>
           <p className="mt-1 text-xs">
             <EntityLinks label="Projects" items={projects} />
@@ -284,7 +320,9 @@ function SkillRow({
           </ul>
 
           <div>
-            <h4 className="text-xs font-medium uppercase tracking-wide">Supporting items</h4>
+            <h4 className="text-xs font-medium uppercase tracking-wide">
+              Supporting items
+            </h4>
             {strength.supportingEntities.length === 0 ? (
               <p className="text-muted-foreground text-xs">None.</p>
             ) : (
@@ -293,7 +331,9 @@ function SkillRow({
                   const href = entityHref(e.type, e.id);
                   return (
                     <li key={`${e.type}:${e.id}`} className="text-xs">
-                      <span className="text-muted-foreground">{categoryLabel(e.type)}: </span>
+                      <span className="text-muted-foreground">
+                        {categoryLabel(e.type)}:{' '}
+                      </span>
                       {href ? (
                         <Link href={href} className="underline underline-offset-2">
                           {e.name}
@@ -315,7 +355,10 @@ function SkillRow({
             ) : (
               <ul className="mt-1 space-y-1.5">
                 {evidence.map((item) => (
-                  <li key={item.evidence.id} className="flex flex-wrap items-center gap-2 text-xs">
+                  <li
+                    key={item.evidence.id}
+                    className="flex flex-wrap items-center gap-2 text-xs"
+                  >
                     <VerificationBadge state={item.evidence.verificationState} />
                     {safeHttpHref(item.evidence.sourceUrl) ? (
                       <a

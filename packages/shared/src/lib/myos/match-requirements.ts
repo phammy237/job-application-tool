@@ -4,8 +4,9 @@ import type {
   NodeType,
   VerificationState,
 } from '../../schemas/myos';
+import { nodeKey, VERIFICATION_RANK } from './graph';
 import type { EvidenceGraphData } from './graph-types';
-import { matchTokensWithRelated, scoreTextMatch } from './text';
+import { matchTokenSetsWithRelated, scoreTokenMatch, tokenize } from './text';
 
 /**
  * Requirement ↔ evidence matching. Pure and deterministic; never invents anything: every
@@ -43,18 +44,14 @@ import { matchTokensWithRelated, scoreTextMatch } from './text';
 export type SupportEntityType = 'PROJECT' | 'EXPERIENCE' | 'ACHIEVEMENT' | 'STORY';
 export type RequirementLevel = 'STRONG' | 'MODERATE' | 'LIMITED' | 'NONE';
 
-const VERIFICATION_RANK: Record<VerificationState, number> = {
-  VERIFIED: 3,
-  USER_PROVIDED: 2,
-  INFERRED: 1,
-  AI_GENERATED: 0,
-};
-
 export function verificationRank(state: VerificationState): number {
   return VERIFICATION_RANK[state];
 }
 
-export function weakerState(a: VerificationState, b: VerificationState): VerificationState {
+export function weakerState(
+  a: VerificationState,
+  b: VerificationState,
+): VerificationState {
   return VERIFICATION_RANK[a] <= VERIFICATION_RANK[b] ? a : b;
 }
 
@@ -99,9 +96,8 @@ export interface SupportIndex {
   skillById: Map<string, { id: string; name: string; approved: boolean }>;
 }
 
-export function entityKey(type: NodeType, id: string): string {
-  return `${type}:${id}`;
-}
+/** Same `${TYPE}:${id}` key as the graph index. */
+export const entityKey: (type: NodeType, id: string) => string = nodeKey;
 
 function isSupportType(t: NodeType): t is SupportEntityType {
   return t === 'PROJECT' || t === 'EXPERIENCE' || t === 'ACHIEVEMENT' || t === 'STORY';
@@ -117,7 +113,9 @@ function joinText(parts: (string | null | undefined | string[])[]): string {
 export function buildSupportIndex(graph: EvidenceGraphData): SupportIndex {
   const entities: SupportEntity[] = [];
   const byKey = new Map<string, SupportEntity>();
-  const add = (e: Omit<SupportEntity, 'key' | 'skills' | 'evidence' | 'related'>): void => {
+  const add = (
+    e: Omit<SupportEntity, 'key' | 'skills' | 'evidence' | 'related'>,
+  ): void => {
     const full: SupportEntity = {
       ...e,
       key: entityKey(e.entityType, e.entityId),
@@ -215,8 +213,11 @@ export function buildSupportIndex(graph: EvidenceGraphData): SupportIndex {
       if (otherType === 'SKILL') {
         if (!skillById.has(otherId)) continue;
         const existing = self.skills.find((s) => s.skillId === otherId);
-        if (!existing) self.skills.push({ skillId: otherId, state: edge.verificationState });
-        else if (verificationRank(edge.verificationState) > verificationRank(existing.state)) {
+        if (!existing)
+          self.skills.push({ skillId: otherId, state: edge.verificationState });
+        else if (
+          verificationRank(edge.verificationState) > verificationRank(existing.state)
+        ) {
           existing.state = edge.verificationState;
         }
       } else if (otherType === 'EVIDENCE') {
@@ -253,6 +254,33 @@ export function buildSupportIndex(graph: EvidenceGraphData): SupportIndex {
     );
   }
   return { entities, byKey, skillById };
+}
+
+/**
+ * Token sets of an entity's text / a skill's name, computed once per index object and reused by
+ * every requirement, question or bullet compared against it. WeakMaps: the memo lives exactly as
+ * long as the (per-request) index does, so no user text outlives it.
+ */
+const ENTITY_TOKENS = new WeakMap<SupportEntity, ReadonlySet<string>>();
+const SKILL_TOKENS = new WeakMap<object, readonly string[]>();
+
+export function supportEntityTokens(e: SupportEntity): ReadonlySet<string> {
+  let t = ENTITY_TOKENS.get(e);
+  if (!t) {
+    t = new Set(tokenize(e.text));
+    ENTITY_TOKENS.set(e, t);
+  }
+  return t;
+}
+
+/** Tokens of a skill name; `skill` must be an entry of `SupportIndex.skillById`. */
+export function supportSkillTokens(skill: { name: string }): readonly string[] {
+  let t = SKILL_TOKENS.get(skill);
+  if (!t) {
+    t = tokenize(skill.name);
+    SKILL_TOKENS.set(skill, t);
+  }
+  return t;
 }
 
 /** Best effective evidence state of an entity, or null when it has no linked evidence. */
@@ -338,9 +366,10 @@ export function matchRequirementsToEvidence(
   graph: EvidenceGraphData,
   requirements: RequirementInput[],
   now: Date,
+  /** Prebuilt `buildSupportIndex(graph)`, to share one index across several computations. */
+  index: SupportIndex = buildSupportIndex(graph),
 ): RequirementMatchResult {
   void now; // reserved for recency weighting; matching itself is time-independent
-  const index = buildSupportIndex(graph);
   const matches = requirements.map((r) => matchOne(index, r));
 
   const counts = { STRONG: 0, MODERATE: 0, LIMITED: 0, NONE: 0 };
@@ -362,7 +391,11 @@ export function matchRequirementsToEvidence(
   }
   const fit = weightSum === 0 ? 0 : scoreSum / weightSum;
   let verdict: RequirementMatchSummary['overallVerdict'];
-  if (matches.length === 0 || fit < 0.35 || (requiredTotal > 0 && requiredGaps.length * 2 >= requiredTotal)) {
+  if (
+    matches.length === 0 ||
+    fit < 0.35 ||
+    (requiredTotal > 0 && requiredGaps.length * 2 >= requiredTotal)
+  ) {
     verdict = 'WEAK_FIT';
   } else if (
     fit >= 0.75 &&
@@ -391,8 +424,10 @@ function matchOne(index: SupportIndex, req: RequirementInput): RequirementMatch 
   const category = req.category ?? 'REQUIRED';
   const matchedSkills: { id: string; name: string; approved: boolean }[] = [];
   const relatedSkills: { id: string; name: string; approved: boolean }[] = [];
+  const reqTokens = tokenize(req.text);
+  const reqSet = new Set(reqTokens);
   for (const sk of index.skillById.values()) {
-    const kind = matchTokensWithRelated(req.text, sk.name);
+    const kind = matchTokenSetsWithRelated(reqSet, supportSkillTokens(sk));
     if (kind === 'exact') matchedSkills.push(sk);
     else if (kind === 'related') relatedSkills.push(sk);
   }
@@ -405,8 +440,16 @@ function matchOne(index: SupportIndex, req: RequirementInput): RequirementMatch 
     if (links.length > 0) {
       const firm =
         entity.approved &&
-        links.some((l) => isSolidState(l.state) && index.skillById.get(l.skillId)?.approved);
-      candidates.set(entity.key, { entity, via: 'skill-edge', firm, related: false, textScore: 0 });
+        links.some(
+          (l) => isSolidState(l.state) && index.skillById.get(l.skillId)?.approved,
+        );
+      candidates.set(entity.key, {
+        entity,
+        via: 'skill-edge',
+        firm,
+        related: false,
+        textScore: 0,
+      });
       continue;
     }
     if (entity.skills.some((l) => relatedIds.has(l.skillId))) {
@@ -419,7 +462,9 @@ function matchOne(index: SupportIndex, req: RequirementInput): RequirementMatch 
       });
       continue;
     }
-    const m = scoreTextMatch(req.text, entity.text, { allowRelated: true });
+    const m = scoreTokenMatch(reqTokens, supportEntityTokens(entity), {
+      allowRelated: true,
+    });
     const relatedOnly = m.relatedConcepts.length > 0 && !m.conceptMatch;
     if (
       m.score >= TEXT_MATCH_MIN_SCORE &&
@@ -453,7 +498,8 @@ function matchOne(index: SupportIndex, req: RequirementInput): RequirementMatch 
   let level: RequirementLevel;
   if (ranked.length === 0) level = 'NONE';
   else if (firm.length >= 2 && firmBacked.length >= 1) level = 'STRONG';
-  else if ((firm.length >= 1 && firmBacked.length >= 1) || firm.length >= 2) level = 'MODERATE';
+  else if ((firm.length >= 1 && firmBacked.length >= 1) || firm.length >= 2)
+    level = 'MODERATE';
   else level = 'LIMITED';
 
   const supports: RequirementSupport[] = ranked.slice(0, MAX_SUPPORTS).map((c) => ({
@@ -477,7 +523,12 @@ function matchOne(index: SupportIndex, req: RequirementInput): RequirementMatch 
       : {}),
     supports,
     explanation:
-      explain(level, supports, matchedSkills.map((s) => s.name), ranked) +
+      explain(
+        level,
+        supports,
+        matchedSkills.map((s) => s.name),
+        ranked,
+      ) +
       (supports.some((x) => x.related)
         ? ' Related, not identical: some matches rest on a related concept, so they cannot count beyond limited support.'
         : ''),
@@ -503,7 +554,10 @@ function explain(
 ): string {
   if (level === 'NONE') return 'No meaningful evidence found.';
   const names = supports.slice(0, 3).map(describe).join(', ');
-  const skillPart = skillNames.length > 0 ? ` Skills named in the requirement: ${skillNames.join(', ')}.` : '';
+  const skillPart =
+    skillNames.length > 0
+      ? ` Skills named in the requirement: ${skillNames.join(', ')}.`
+      : '';
   const unconfirmed = supports.some((s) => s.unconfirmed)
     ? ' Some matches are unconfirmed - approve them to count fully.'
     : '';
@@ -540,13 +594,16 @@ export function toRequirementEvidenceSummary(result: RequirementMatchResult): st
 const MAX_REQUIREMENTS = 25;
 const MAX_REQ_LENGTH = 300;
 const BULLET_RE = /^\s*(?:[-*•●▪–]|\d+[.)])\s+/;
-const PREFERRED_HEADING_RE = /\b(preferred|nice to have|bonus|pluses|good to have|a plus)\b/i;
+const PREFERRED_HEADING_RE =
+  /\b(preferred|nice to have|bonus|pluses|good to have|a plus)\b/i;
 const REQUIRED_HEADING_RE =
   /\b(requirements?|qualifications?|must[- ]have|minimum|what you.?ll bring|what we.?re looking for|you have|basic qualifications)\b/i;
-const DUTIES_HEADING_RE = /\b(responsibilit|what you.?ll do|the role|in this role|about the job)\b/i;
+const DUTIES_HEADING_RE =
+  /\b(responsibilit|what you.?ll do|the role|in this role|about the job)\b/i;
 const REQUIREMENT_CUE_RE =
   /\b(experience|ability|proficien|knowledge|familiar|skills?|years|must|required|degree|expertise|understanding|background|comfortable|capable|passion)\b/i;
-const PREFERRED_CUE_RE = /\b(preferred|nice to have|bonus|a plus|ideally|is a plus|are a plus)\b/i;
+const PREFERRED_CUE_RE =
+  /\b(preferred|nice to have|bonus|a plus|ideally|is a plus|are a plus)\b/i;
 const REQUIRED_CUE_RE = /\b(required|must|minimum|need to|requires?)\b/i;
 
 function isHeading(line: string): boolean {
@@ -591,10 +648,23 @@ export function extractRequirementsFromText(jobDescription: string): Requirement
           : undefined;
       if (isBullet) {
         const category =
-          inlineCategory ?? (section === 'PREFERRED' ? 'PREFERRED' : section === 'REQUIRED' ? 'REQUIRED' : undefined);
+          inlineCategory ??
+          (section === 'PREFERRED'
+            ? 'PREFERRED'
+            : section === 'REQUIRED'
+              ? 'REQUIRED'
+              : undefined);
         push(piece, category);
       } else if (REQUIREMENT_CUE_RE.test(piece) && (section !== null || inlineCategory)) {
-        push(piece, inlineCategory ?? (section === 'PREFERRED' ? 'PREFERRED' : section === 'REQUIRED' ? 'REQUIRED' : undefined));
+        push(
+          piece,
+          inlineCategory ??
+            (section === 'PREFERRED'
+              ? 'PREFERRED'
+              : section === 'REQUIRED'
+                ? 'REQUIRED'
+                : undefined),
+        );
       } else if (REQUIREMENT_CUE_RE.test(piece) && /\b(you|candidate)\b/i.test(piece)) {
         push(piece, inlineCategory);
       }

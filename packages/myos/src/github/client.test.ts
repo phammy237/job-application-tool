@@ -57,7 +57,10 @@ describe('GithubClient', () => {
     const seen: (RequestInit | undefined)[] = [];
     const f = async (_u: string, init?: RequestInit) => {
       seen.push(init);
-      return new Response(null, { status: 302, headers: { location: 'https://evil.example/x' } });
+      return new Response(null, {
+        status: 302,
+        headers: { location: 'https://evil.example/x' },
+      });
     };
     await expect(client(f, TOKEN).c.getAuthenticatedUser()).rejects.toThrow(/redirect/);
     expect(seen[0]!.redirect).toBe('manual');

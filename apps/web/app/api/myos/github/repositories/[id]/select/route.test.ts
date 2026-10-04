@@ -171,7 +171,11 @@ describe('POST /api/myos/github/repositories/[id]/select', () => {
     const res = await POST(req({ selected: true }), ctx());
     expect(res.status).toBe(500);
     expect(mocks.upsertOwnEvidenceBySource).not.toHaveBeenCalled();
-    expect(mocks.deleteOwnProject).toHaveBeenCalledWith(expect.anything(), USER_ID, PROJECT_ID);
+    expect(mocks.deleteOwnProject).toHaveBeenCalledWith(
+      expect.anything(),
+      USER_ID,
+      PROJECT_ID,
+    );
     spy.mockRestore();
   });
 
@@ -196,7 +200,11 @@ describe('POST /api/myos/github/repositories/[id]/select', () => {
       .mockResolvedValueOnce({ ...repo, projectId: OTHER });
     const res = await POST(req({ selected: true }), ctx());
     expect(res.status).toBe(200);
-    expect(mocks.deleteOwnProject).toHaveBeenCalledWith(expect.anything(), USER_ID, PROJECT_ID);
+    expect(mocks.deleteOwnProject).toHaveBeenCalledWith(
+      expect.anything(),
+      USER_ID,
+      PROJECT_ID,
+    );
     expect(mocks.createOwnEdge).toHaveBeenCalledWith(
       expect.anything(),
       USER_ID,
@@ -216,7 +224,11 @@ describe('POST /api/myos/github/repositories/[id]/select', () => {
       REPO_ID,
       null,
     );
-    expect(mocks.deleteOwnProject).toHaveBeenCalledWith(expect.anything(), USER_ID, PROJECT_ID);
+    expect(mocks.deleteOwnProject).toHaveBeenCalledWith(
+      expect.anything(),
+      USER_ID,
+      PROJECT_ID,
+    );
     spy.mockRestore();
   });
 

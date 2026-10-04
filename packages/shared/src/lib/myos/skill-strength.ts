@@ -11,7 +11,7 @@ import {
   type GraphIndex,
   type IndexedNode,
 } from './graph';
-import { findTechnologies, techEntryFor } from './tech-dictionary';
+import { escapeRegex, findTechnologies, techEntryFor } from './tech-dictionary';
 import type { NodeType } from '../../schemas/myos';
 
 /**
@@ -112,7 +112,8 @@ const SUPPORTING_TYPES: ReadonlySet<NodeType> = new Set<NodeType>([
   'STORY',
 ]);
 
-const LEVEL_RANK: Record<SkillStrengthLevel, number> = {
+/** Ordering of strength levels (higher = stronger). */
+export const SKILL_LEVEL_RANK: Readonly<Record<SkillStrengthLevel, number>> = {
   NONE: 0,
   LIMITED: 1,
   MODERATE: 2,
@@ -158,23 +159,51 @@ function activityDate(node: IndexedNode, now: Date): Date | null {
   }
 }
 
-function escapeRe(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/**
+ * Per-computation memo: the technologies found in an evidence text and the matcher for a skill
+ * name are computed once and reused across every (skill, evidence) pair of one ranking.
+ */
+interface MentionCache {
+  techInText: Map<string, Set<string>>;
+  matcherForSkill: Map<string, { canonical: string } | { re: RegExp }>;
+}
+
+function newMentionCache(): MentionCache {
+  return { techInText: new Map(), matcherForSkill: new Map() };
 }
 
 /** True when the evidence text mentions the skill name or a tech-dictionary alias. */
-function evidenceMentionsSkill(text: string, skillName: string): boolean {
+function evidenceMentionsSkill(
+  text: string,
+  skillName: string,
+  cache: MentionCache,
+): boolean {
   const name = skillName.trim();
   if (!name || !text) return false;
-  const entry = techEntryFor(name) ?? techEntryFor(findTechnologies(name)[0]?.canonical ?? '');
-  if (entry) {
-    return findTechnologies(text).some((m) => m.canonical === entry.canonical);
+  let matcher = cache.matcherForSkill.get(name);
+  if (!matcher) {
+    const entry =
+      techEntryFor(name) ?? techEntryFor(findTechnologies(name)[0]?.canonical ?? '');
+    matcher = entry
+      ? { canonical: entry.canonical }
+      : { re: new RegExp(`(?<![A-Za-z0-9_])${escapeRegex(name)}(?![A-Za-z0-9_])`, 'i') };
+    cache.matcherForSkill.set(name, matcher);
   }
-  const re = new RegExp(`(?<![A-Za-z0-9_])${escapeRe(name)}(?![A-Za-z0-9_])`, 'i');
-  return re.test(text);
+  if ('re' in matcher) return matcher.re.test(text);
+  let found = cache.techInText.get(text);
+  if (!found) {
+    found = new Set(findTechnologies(text).map((m) => m.canonical));
+    cache.techInText.set(text, found);
+  }
+  return found.has(matcher.canonical);
 }
 
-function strengthFromIndex(index: GraphIndex, skillId: string, now: Date): SkillStrength {
+function strengthFromIndex(
+  index: GraphIndex,
+  skillId: string,
+  now: Date,
+  cache: MentionCache,
+): SkillStrength {
   const skillKey = nodeKey('SKILL', skillId);
   const entities = new Map<string, IndexedNode>();
   const confirmedEdgeTo = new Set<string>();
@@ -188,7 +217,8 @@ function strengthFromIndex(index: GraphIndex, skillId: string, now: Date): Skill
   // Counted = approved entity reached by at least one user-confirmed edge.
   const counted = new Map<string, IndexedNode>();
   for (const [key, node] of entities) {
-    if (confirmedEdgeTo.has(key) && node.meta.userApproved !== false) counted.set(key, node);
+    if (confirmedEdgeTo.has(key) && node.meta.userApproved !== false)
+      counted.set(key, node);
   }
   const unconfirmedNames = [...entities.values()]
     .filter((e) => !counted.has(e.key))
@@ -203,7 +233,10 @@ function strengthFromIndex(index: GraphIndex, skillId: string, now: Date): Skill
       if (ie.edge.relation !== 'SUPPORTS') continue;
       const ev = index.nodes.get(otherEnd(ie, anchor));
       if (!ev || ev.type !== 'EVIDENCE') continue;
-      if (anchor !== skillKey && !evidenceMentionsSkill(ev.searchText ?? ev.label, skillName)) {
+      if (
+        anchor !== skillKey &&
+        !evidenceMentionsSkill(ev.searchText ?? ev.label, skillName, cache)
+      ) {
         related.set(ev.key, ev);
         continue;
       }
@@ -334,7 +367,7 @@ export function computeSkillStrength(
   skillId: string,
   now: Date,
 ): SkillStrength {
-  return strengthFromIndex(asIndex(graph), skillId, now);
+  return strengthFromIndex(asIndex(graph), skillId, now, newMentionCache());
 }
 
 export interface RankedSkillStrength {
@@ -342,19 +375,23 @@ export interface RankedSkillStrength {
   strength: SkillStrength;
 }
 
-/** All skills, strongest first (level, then verified evidence, entities, recency, name). */
+/**
+ * All skills, strongest first (level, then verified evidence, entities, recency, name). Pass the
+ * graph's prebuilt `index` (from `buildGraphIndex(graph)`) to avoid rebuilding it.
+ */
 export function computeAllSkillStrengths(
   graph: EvidenceGraphData,
   now: Date,
+  index: GraphIndex = buildGraphIndex(graph),
 ): RankedSkillStrength[] {
-  const index = buildGraphIndex(graph);
+  const cache = newMentionCache();
   return graph.skills
-    .map((skill) => ({ skill, strength: strengthFromIndex(index, skill.id, now) }))
+    .map((skill) => ({ skill, strength: strengthFromIndex(index, skill.id, now, cache) }))
     .sort((a, b) => {
       const x = a.strength;
       const y = b.strength;
       return (
-        LEVEL_RANK[y.level] - LEVEL_RANK[x.level] ||
+        SKILL_LEVEL_RANK[y.level] - SKILL_LEVEL_RANK[x.level] ||
         y.verifiedEvidenceCount - x.verifiedEvidenceCount ||
         y.supportingEntities.length - x.supportingEntities.length ||
         (x.monthsSinceLatest ?? Infinity) - (y.monthsSinceLatest ?? Infinity) ||

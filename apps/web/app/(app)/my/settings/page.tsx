@@ -1,7 +1,8 @@
-import { getOwnPortfolioSettings, loadOwnEvidenceGraph } from '@career-os/database';
+import { getOwnPortfolioSettings } from '@career-os/database';
 import { buildPortfolioExport } from '@career-os/shared';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@career-os/ui';
 import { requireUser } from '../../../../lib/auth';
+import { loadEvidenceGraphForRequest } from '../../../../lib/myos/load-graph';
 import { createClient } from '../../../../lib/supabase/server';
 import { ApiKeyPanel, PortfolioSettingsForm } from './settings-forms';
 import { countByVisibility } from './visibility-counts';
@@ -13,7 +14,7 @@ export default async function PortfolioSettingsPage() {
   const supabase = await createClient();
   const [settings, graph] = await Promise.all([
     getOwnPortfolioSettings(supabase, user.id),
-    loadOwnEvidenceGraph(supabase, user.id),
+    loadEvidenceGraphForRequest(user.id),
   ]);
 
   const enabled = settings?.enabled ?? false;
@@ -37,17 +38,23 @@ export default async function PortfolioSettingsPage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-lg">What stays private</CardTitle>
-          <CardDescription>Nothing leaves Career OS unless all three of these are true.</CardDescription>
+          <CardDescription>
+            Nothing leaves Career OS unless all three of these are true.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <ol className="list-decimal space-y-1 pl-5 text-sm">
             <li>You turned portfolio export on below (it is off by default).</li>
-            <li>The item&apos;s visibility is set to Public. Private and Career OS only items are never exported.</li>
+            <li>
+              The item&apos;s visibility is set to Public. Private and Career OS only
+              items are never exported.
+            </li>
             <li>You approved the item.</li>
           </ol>
           <p className="text-muted-foreground mt-3 text-sm">
-            Stories, candidates, your experience and education, evidence notes and private GitHub data are never
-            exported. The preview below is exactly what the API would return right now.
+            Stories, candidates, your experience and education, evidence notes and private
+            GitHub data are never exported. The preview below is exactly what the API
+            would return right now.
           </p>
         </CardContent>
       </Card>
@@ -55,9 +62,7 @@ export default async function PortfolioSettingsPage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-lg">Settings</CardTitle>
-          <CardDescription>
-            Status: {enabled ? 'enabled' : 'disabled'}
-          </CardDescription>
+          <CardDescription>Status: {enabled ? 'enabled' : 'disabled'}</CardDescription>
         </CardHeader>
         <CardContent>
           <PortfolioSettingsForm
@@ -84,7 +89,9 @@ export default async function PortfolioSettingsPage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-lg">Visibility summary</CardTitle>
-          <CardDescription>How many items sit at each level, and how many the export can include.</CardDescription>
+          <CardDescription>
+            How many items sit at each level, and how many the export can include.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
@@ -92,11 +99,21 @@ export default async function PortfolioSettingsPage() {
               <caption className="sr-only">Item counts by visibility</caption>
               <thead>
                 <tr className="text-muted-foreground border-b text-left">
-                  <th scope="col" className="py-2 pr-3 font-medium">Type</th>
-                  <th scope="col" className="px-3 py-2 font-medium">Public</th>
-                  <th scope="col" className="px-3 py-2 font-medium">Career OS only</th>
-                  <th scope="col" className="px-3 py-2 font-medium">Private</th>
-                  <th scope="col" className="py-2 pl-3 font-medium">In export</th>
+                  <th scope="col" className="py-2 pr-3 font-medium">
+                    Type
+                  </th>
+                  <th scope="col" className="px-3 py-2 font-medium">
+                    Public
+                  </th>
+                  <th scope="col" className="px-3 py-2 font-medium">
+                    Career OS only
+                  </th>
+                  <th scope="col" className="px-3 py-2 font-medium">
+                    Private
+                  </th>
+                  <th scope="col" className="py-2 pl-3 font-medium">
+                    In export
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -121,7 +138,10 @@ export default async function PortfolioSettingsPage() {
         <CardHeader>
           <CardTitle className="text-lg">Export preview</CardTitle>
           <CardDescription>
-            Read-only. {enabled ? 'This is what a valid key receives.' : 'Export is off, so the API currently returns nothing; this is what it would return once enabled.'}
+            Read-only.{' '}
+            {enabled
+              ? 'This is what a valid key receives.'
+              : 'Export is off, so the API currently returns nothing; this is what it would return once enabled.'}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -133,7 +153,8 @@ export default async function PortfolioSettingsPage() {
             {previewJson}
           </pre>
           <p className="text-muted-foreground text-sm">
-            Endpoint and schema details: <code>docs/myos/PORTFOLIO_API.md</code> in the repository.
+            Endpoint and schema details: <code>docs/myos/PORTFOLIO_API.md</code> in the
+            repository.
           </p>
         </CardContent>
       </Card>

@@ -3,9 +3,9 @@ import {
   listOwnCandidates,
   listOwnGithubRepositories,
   listOwnGithubSyncRuns,
-  loadOwnEvidenceGraph,
 } from '@career-os/database';
 import {
+  buildGraphIndex,
   computeAllSkillStrengths,
   evidenceCoverage,
   type CoverageGap,
@@ -21,8 +21,14 @@ import {
   formatDate,
   isNearlyEmpty,
 } from '../../../lib/myos/home';
+import { loadEvidenceGraphForRequest } from '../../../lib/myos/load-graph';
 import { createClient } from '../../../lib/supabase/server';
-import { EmptyState, FlagBadge, StrengthBadge, VerificationBadge } from './_components/badges';
+import {
+  EmptyState,
+  FlagBadge,
+  StrengthBadge,
+  VerificationBadge,
+} from './_components/badges';
 
 function sortByRecent<T>(items: T[], date: (item: T) => string | null): T[] {
   return [...items].sort((a, b) => (date(b) ?? '').localeCompare(date(a) ?? ''));
@@ -65,7 +71,7 @@ export default async function MyOverviewPage() {
   const now = new Date();
 
   const [graph, pending, connection, repos, runs] = await Promise.all([
-    loadOwnEvidenceGraph(supabase, user.id),
+    loadEvidenceGraphForRequest(user.id),
     listOwnCandidates(supabase, user.id, 'PENDING'),
     getOwnGithubConnection(supabase, user.id),
     listOwnGithubRepositories(supabase, user.id),
@@ -73,16 +79,21 @@ export default async function MyOverviewPage() {
   ]);
 
   const snapshot = buildSnapshot(graph);
-  const coverage = evidenceCoverage(graph);
+  // One graph index shared by coverage and skill strengths (previously built twice).
+  const index = buildGraphIndex(graph);
+  const coverage = evidenceCoverage(index);
   const checklist = buildChecklist(graph, connection, pending);
   const unknowns = buildUnknowns(graph, connection);
   const nearlyEmpty = isNearlyEmpty(snapshot);
 
-  const strengths = computeAllSkillStrengths(graph, now)
+  const strengths = computeAllSkillStrengths(graph, now, index)
     .filter((s) => s.strength.level !== 'NONE')
     .slice(0, 6);
   const recentProjects = sortByRecent(graph.projects, (p) => p.startDate).slice(0, 5);
-  const recentAchievements = sortByRecent(graph.achievements, (a) => a.occurredOn ?? a.createdAt).slice(0, 5);
+  const recentAchievements = sortByRecent(
+    graph.achievements,
+    (a) => a.occurredOn ?? a.createdAt,
+  ).slice(0, 5);
   const readyStories = graph.stories.filter((s) => s.userApproved).slice(0, 5);
   const evidenceCountByProject = new Map<string, number>();
   for (const e of graph.edges) {
@@ -93,7 +104,8 @@ export default async function MyOverviewPage() {
 
   const pendingByProject = new Map<string, number>();
   for (const c of pending) {
-    if (c.projectId) pendingByProject.set(c.projectId, (pendingByProject.get(c.projectId) ?? 0) + 1);
+    if (c.projectId)
+      pendingByProject.set(c.projectId, (pendingByProject.get(c.projectId) ?? 0) + 1);
   }
   const projectName = new Map(graph.projects.map((p) => [p.id, p.name]));
   const selectedRepos = repos.filter((r) => r.selected).length;
@@ -102,7 +114,9 @@ export default async function MyOverviewPage() {
   return (
     <div className="space-y-4">
       <header>
-        <h1 className="text-2xl font-semibold tracking-tight">What does Career OS know about me?</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">
+          What does Career OS know about me?
+        </h1>
         <p className="mt-2 text-sm" data-testid="myos-snapshot">
           {snapshot.sentence}
         </p>
@@ -135,9 +149,9 @@ export default async function MyOverviewPage() {
           </ol>
           {unknowns.length > 0 ? (
             <p className="border-border text-muted-foreground border-t pt-3 text-sm">
-              What Career OS does <span className="text-foreground font-medium">not</span> know right
-              now: {unknowns.join('; ')}. It will not guess, and it never invents facts to fill these
-              gaps.
+              What Career OS does <span className="text-foreground font-medium">not</span>{' '}
+              know right now: {unknowns.join('; ')}. It will not guess, and it never
+              invents facts to fill these gaps.
             </p>
           ) : null}
         </Section>
@@ -159,21 +173,25 @@ export default async function MyOverviewPage() {
           ) : (
             <>
               <p className="text-sm">
-                {coverage.covered} of {coverage.total} projects, achievements, and stories have at
-                least one linked evidence item
+                {coverage.covered} of {coverage.total} projects, achievements, and stories
+                have at least one linked evidence item
                 <span className="text-muted-foreground">
                   {' '}
-                  (projects {coverage.byType.PROJECT.covered}/{coverage.byType.PROJECT.total},
-                  achievements {coverage.byType.ACHIEVEMENT.covered}/
-                  {coverage.byType.ACHIEVEMENT.total}, stories {coverage.byType.STORY.covered}/
-                  {coverage.byType.STORY.total})
+                  (projects {coverage.byType.PROJECT.covered}/
+                  {coverage.byType.PROJECT.total}, achievements{' '}
+                  {coverage.byType.ACHIEVEMENT.covered}/
+                  {coverage.byType.ACHIEVEMENT.total}, stories{' '}
+                  {coverage.byType.STORY.covered}/{coverage.byType.STORY.total})
                 </span>
                 .
               </p>
               {coverage.gaps.length > 0 ? (
                 <ul className="divide-border divide-y text-sm">
                   {coverage.gaps.slice(0, 6).map((gap) => (
-                    <li key={`${gap.type}-${gap.id}`} className="flex items-center justify-between gap-2 py-1.5">
+                    <li
+                      key={`${gap.type}-${gap.id}`}
+                      className="flex items-center justify-between gap-2 py-1.5"
+                    >
                       <span className="min-w-0 truncate">{gap.message}</span>
                       <Link href={gapHref(gap, graph)} className={`${linkCls} shrink-0`}>
                         Fix
@@ -204,16 +222,23 @@ export default async function MyOverviewPage() {
           ) : (
             <>
               <p className="text-sm">
-                {pending.length} inferred {pending.length === 1 ? 'suggestion is' : 'suggestions are'}{' '}
-                not yet part of your profile.
+                {pending.length} inferred{' '}
+                {pending.length === 1 ? 'suggestion is' : 'suggestions are'} not yet part
+                of your profile.
               </p>
               <ul className="divide-border divide-y text-sm">
                 {[...pendingByProject.entries()].slice(0, 5).map(([projectId, n]) => (
-                  <li key={projectId} className="flex items-center justify-between gap-2 py-1.5">
+                  <li
+                    key={projectId}
+                    className="flex items-center justify-between gap-2 py-1.5"
+                  >
                     <span className="min-w-0 truncate">
                       {projectName.get(projectId) ?? 'Project'}: {n}
                     </span>
-                    <Link href={`/my/projects/${projectId}#suggestions`} className={`${linkCls} shrink-0`}>
+                    <Link
+                      href={`/my/projects/${projectId}#suggestions`}
+                      className={`${linkCls} shrink-0`}
+                    >
                       Review
                     </Link>
                   </li>
@@ -239,8 +264,14 @@ export default async function MyOverviewPage() {
           ) : (
             <ul className="divide-border divide-y text-sm">
               {recentProjects.map((p) => (
-                <li key={p.id} className="flex flex-wrap items-center justify-between gap-2 py-1.5">
-                  <Link href={`/my/projects/${p.id}`} className="font-medium hover:underline">
+                <li
+                  key={p.id}
+                  className="flex flex-wrap items-center justify-between gap-2 py-1.5"
+                >
+                  <Link
+                    href={`/my/projects/${p.id}`}
+                    className="font-medium hover:underline"
+                  >
                     {p.name}
                   </Link>
                   <span className="flex flex-wrap items-center gap-1">
@@ -263,7 +294,10 @@ export default async function MyOverviewPage() {
           ) : (
             <ul className="divide-border divide-y text-sm">
               {strengths.map(({ skill, strength }) => (
-                <li key={skill.id} className="flex items-center justify-between gap-2 py-1.5">
+                <li
+                  key={skill.id}
+                  className="flex items-center justify-between gap-2 py-1.5"
+                >
                   <span className="min-w-0 truncate font-medium">{skill.name}</span>
                   <span className="text-muted-foreground flex shrink-0 items-center gap-2 text-xs">
                     {strength.supportingEntities.length}{' '}
@@ -284,16 +318,24 @@ export default async function MyOverviewPage() {
           ) : (
             <ul className="divide-border divide-y text-sm">
               {recentAchievements.map((a) => (
-                <li key={a.id} className="flex flex-wrap items-center justify-between gap-2 py-1.5">
+                <li
+                  key={a.id}
+                  className="flex flex-wrap items-center justify-between gap-2 py-1.5"
+                >
                   <span className="min-w-0">
                     {a.projectId ? (
-                      <Link href={`/my/projects/${a.projectId}`} className="font-medium hover:underline">
+                      <Link
+                        href={`/my/projects/${a.projectId}`}
+                        className="font-medium hover:underline"
+                      >
                         {a.title}
                       </Link>
                     ) : (
                       <span className="font-medium">{a.title}</span>
                     )}
-                    <span className="text-muted-foreground ml-2 text-xs">{formatDate(a.occurredOn)}</span>
+                    <span className="text-muted-foreground ml-2 text-xs">
+                      {formatDate(a.occurredOn)}
+                    </span>
                   </span>
                   <VerificationBadge state={a.verificationState} />
                 </li>
@@ -338,11 +380,14 @@ export default async function MyOverviewPage() {
           {connection ? (
             <p className="text-sm">
               Connected as <span className="font-medium">{connection.githubLogin}</span>.{' '}
-              {selectedRepos} of {repos.length} {repos.length === 1 ? 'repository' : 'repositories'}{' '}
-              selected for import. Last sync:{' '}
+              {selectedRepos} of {repos.length}{' '}
+              {repos.length === 1 ? 'repository' : 'repositories'} selected for import.
+              Last sync:{' '}
               {lastRun?.finishedAt
                 ? `${formatDate(lastRun.finishedAt)} (${lastRun.status.toLowerCase()})`
-                : (connection.lastSyncedAt ? formatDate(connection.lastSyncedAt) : 'never')}
+                : connection.lastSyncedAt
+                  ? formatDate(connection.lastSyncedAt)
+                  : 'never'}
               .
             </p>
           ) : (
@@ -365,7 +410,10 @@ export default async function MyOverviewPage() {
 
       {!nearlyEmpty ? (
         <p>
-          <Link href="/my/projects" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+          <Link
+            href="/my/projects"
+            className={buttonVariants({ variant: 'outline', size: 'sm' })}
+          >
             Review projects
           </Link>
         </p>

@@ -23,7 +23,11 @@ function resumeWith(texts: string[]) {
       role: null,
       url: null,
       dateRange: { start: null, end: null, isPresent: false },
-      bullets: texts.map((text, i) => ({ id: `b${i}`, text, provenance: { type: 'MANUAL' } })),
+      bullets: texts.map((text, i) => ({
+        id: `b${i}`,
+        text,
+        provenance: { type: 'MANUAL' },
+      })),
     },
   ] as never;
   return r;
@@ -31,7 +35,10 @@ function resumeWith(texts: string[]) {
 
 describe('bullet grounding', () => {
   it('lists bullets across sections', () => {
-    expect(listResumeBullets(resumeWith(['a', 'b'])).map((b) => b.id)).toEqual(['b0', 'b1']);
+    expect(listResumeBullets(resumeWith(['a', 'b'])).map((b) => b.id)).toEqual([
+      'b0',
+      'b1',
+    ]);
   });
 
   it('grounds a supported bullet with evidence and no warnings', () => {
@@ -47,7 +54,9 @@ describe('bullet grounding', () => {
   it('flags numbers and technologies the evidence does not back', () => {
     const [g] = groundResumeBullets(
       testGraph(),
-      resumeWith(['Built a scheduling app in React and Kubernetes used by 9000 students']),
+      resumeWith([
+        'Built a scheduling app in React and Kubernetes used by 9000 students',
+      ]),
     );
     expect(g!.unsupportedNumbers.length).toBeGreaterThan(0);
     expect(g!.unsupportedTechnologies).toContain('Kubernetes');
@@ -55,7 +64,10 @@ describe('bullet grounding', () => {
   });
 
   it('an empty graph yields NONE and a warning', () => {
-    const map = groundResumeBulletsToMap(emptyEvidenceGraph(), resumeWith(['Led a team']));
+    const map = groundResumeBulletsToMap(
+      emptyEvidenceGraph(),
+      resumeWith(['Led a team']),
+    );
     expect(map['b0']!.supportLevel).toBe('NONE');
     expect(hasGroundingWarning(map['b0']!)).toBe(true);
   });

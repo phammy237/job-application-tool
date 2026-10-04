@@ -75,8 +75,22 @@ describe('parseStoryForm', () => {
   });
 
   it('rejects unknown competencies and bad ids', () => {
-    expect(parseStoryForm(form([['title', 'x'], ['competencies', 'CHARISMA']])).ok).toBe(false);
-    expect(parseStoryForm(form([['title', 'x'], ['projectIds', 'nope']])).ok).toBe(false);
+    expect(
+      parseStoryForm(
+        form([
+          ['title', 'x'],
+          ['competencies', 'CHARISMA'],
+        ]),
+      ).ok,
+    ).toBe(false);
+    expect(
+      parseStoryForm(
+        form([
+          ['title', 'x'],
+          ['projectIds', 'nope'],
+        ]),
+      ).ok,
+    ).toBe(false);
   });
 });
 
@@ -88,9 +102,15 @@ describe('filters and coverage', () => {
   ];
 
   it('filters by competency and approved-only', () => {
-    expect(filterStories(stories, { competency: 'LEADERSHIP', approvedOnly: false })).toHaveLength(2);
-    expect(filterStories(stories, { competency: 'LEADERSHIP', approvedOnly: true })).toHaveLength(1);
-    expect(filterStories(stories, { competency: null, approvedOnly: false })).toHaveLength(3);
+    expect(
+      filterStories(stories, { competency: 'LEADERSHIP', approvedOnly: false }),
+    ).toHaveLength(2);
+    expect(
+      filterStories(stories, { competency: 'LEADERSHIP', approvedOnly: true }),
+    ).toHaveLength(1);
+    expect(
+      filterStories(stories, { competency: null, approvedOnly: false }),
+    ).toHaveLength(3);
   });
 
   it('parses filter params defensively', () => {

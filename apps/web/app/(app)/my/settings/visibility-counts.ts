@@ -17,7 +17,13 @@ function tally<T extends { visibility: Visibility }>(
   isExported: (item: T) => boolean,
   note?: string,
 ): VisibilityCountRow {
-  const row: VisibilityCountRow = { label, PUBLIC: 0, CAREER_OS_ONLY: 0, PRIVATE: 0, exported: 0 };
+  const row: VisibilityCountRow = {
+    label,
+    PUBLIC: 0,
+    CAREER_OS_ONLY: 0,
+    PRIVATE: 0,
+    exported: 0,
+  };
   for (const item of items) {
     row[item.visibility] += 1;
     if (isExported(item)) row.exported += 1;
@@ -28,8 +34,10 @@ function tally<T extends { visibility: Visibility }>(
 
 /** Counts per visibility level for every exportable-or-not item type. Pure. */
 export function countByVisibility(graph: EvidenceGraphData): VisibilityCountRow[] {
-  const publicApproved = (x: { visibility: Visibility; userApproved: boolean }): boolean =>
-    x.visibility === 'PUBLIC' && x.userApproved;
+  const publicApproved = (x: {
+    visibility: Visibility;
+    userApproved: boolean;
+  }): boolean => x.visibility === 'PUBLIC' && x.userApproved;
   return [
     tally('Projects', graph.projects, publicApproved),
     tally('Skills', graph.skills, publicApproved),

@@ -1,4 +1,8 @@
-import { emptyEvidenceGraph, type EvidenceGraphData, type GraphProject } from '@career-os/shared';
+import {
+  emptyEvidenceGraph,
+  type EvidenceGraphData,
+  type GraphProject,
+} from '@career-os/shared';
 import { NextRequest } from 'next/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetRateLimits } from '../rate-limit';
@@ -45,11 +49,19 @@ const graph: EvidenceGraphData = {
     project({ id: 'pub', name: 'Public Project', visibility: 'PUBLIC' }),
     project({ id: 'priv', name: 'SECRET-PRIVATE', visibility: 'PRIVATE' }),
     project({ id: 'cos', name: 'SECRET-CAREEROS', visibility: 'CAREER_OS_ONLY' }),
-    project({ id: 'unapproved', name: 'SECRET-UNAPPROVED', visibility: 'PUBLIC', userApproved: false }),
+    project({
+      id: 'unapproved',
+      name: 'SECRET-UNAPPROVED',
+      visibility: 'PUBLIC',
+      userApproved: false,
+    }),
   ],
 };
 
-function req(headers: Record<string, string> = {}, url = 'http://localhost/api/portfolio/v1'): NextRequest {
+function req(
+  headers: Record<string, string> = {},
+  url = 'http://localhost/api/portfolio/v1',
+): NextRequest {
   return new NextRequest(url, { headers });
 }
 
@@ -58,7 +70,13 @@ beforeEach(() => {
   resetRateLimits();
   getUserId.mockResolvedValue(USER);
   loadGraph.mockResolvedValue(graph);
-  getSettings.mockResolvedValue({ userId: USER, enabled: true, hasApiKey: true, displayName: 'Ada', headline: 'Builder' });
+  getSettings.mockResolvedValue({
+    userId: USER,
+    enabled: true,
+    hasApiKey: true,
+    displayName: 'Ada',
+    headline: 'Builder',
+  });
 });
 
 describe('GET /api/portfolio/v1', () => {
@@ -81,7 +99,13 @@ describe('GET /api/portfolio/v1', () => {
   });
 
   it('treats a key whose settings are disabled at read time as unauthorized', async () => {
-    getSettings.mockResolvedValue({ userId: USER, enabled: false, hasApiKey: true, displayName: null, headline: null });
+    getSettings.mockResolvedValue({
+      userId: USER,
+      enabled: false,
+      hasApiKey: true,
+      displayName: null,
+      headline: null,
+    });
     const unknown = await (async () => {
       getUserId.mockResolvedValueOnce(null);
       return GET(req({ authorization: 'Bearer cos_pub_x' }));
@@ -101,7 +125,9 @@ describe('GET /api/portfolio/v1', () => {
     const body = JSON.parse(text);
     expect(body.schemaVersion).toBe('myos.portfolio.v1');
     expect(body.profile).toEqual({ displayName: 'Ada', headline: 'Builder' });
-    expect(body.projects.map((p: { name: string }) => p.name)).toEqual(['Public Project']);
+    expect(body.projects.map((p: { name: string }) => p.name)).toEqual([
+      'Public Project',
+    ]);
     expect(text).not.toContain('SECRET');
     expect(getUserId).toHaveBeenCalledWith(admin, 'cos_pub_good');
     expect(loadGraph).toHaveBeenCalledWith(admin, USER);
@@ -131,7 +157,9 @@ describe('GET /api/portfolio/v1', () => {
     const hit = async (xff: string, n: number) => {
       let last = 200;
       for (let i = 0; i < n; i++) {
-        last = (await GET(req({ authorization: 'Bearer cos_pub_good', 'x-forwarded-for': xff }))).status;
+        last = (
+          await GET(req({ authorization: 'Bearer cos_pub_good', 'x-forwarded-for': xff }))
+        ).status;
       }
       return last;
     };

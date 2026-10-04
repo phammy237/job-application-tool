@@ -1,14 +1,18 @@
-import { loadOwnEvidenceGraph } from '@career-os/database';
 import { safeHttpHref } from '@career-os/shared';
 import { Badge, buttonVariants } from '@career-os/ui';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { requireUser } from '../../../../../lib/auth';
-import { createClient } from '../../../../../lib/supabase/server';
+import { loadEvidenceGraphForRequest } from '../../../../../lib/myos/load-graph';
 import { VerificationBadge, VisibilityBadge } from '../../_components/badges';
-import { ActionForm } from '../../skills/action-form';
+import { ActionForm } from '../../_components/action-form';
 import { deleteStoryAction, setStoryApprovedAction } from '../actions';
-import { STAR_PROMPTS, competencyLabel, isFlaggedUnconfirmed, storyLinks } from '../helpers';
+import {
+  STAR_PROMPTS,
+  competencyLabel,
+  isFlaggedUnconfirmed,
+  storyLinks,
+} from '../helpers';
 import { StoryForm } from '../story-form';
 
 export const metadata = { title: 'Story · myOS' };
@@ -17,8 +21,7 @@ export default async function StoryPage({ params }: { params: Promise<{ id: stri
   const { id } = await params;
   if (!/^[0-9a-fA-F-]{36}$/.test(id)) notFound();
   const user = await requireUser();
-  const supabase = await createClient();
-  const graph = await loadOwnEvidenceGraph(supabase, user.id);
+  const graph = await loadEvidenceGraphForRequest(user.id);
   const story = graph.stories.find((s) => s.id === id);
   if (!story) notFound();
 
@@ -27,7 +30,10 @@ export default async function StoryPage({ params }: { params: Promise<{ id: stri
 
   return (
     <div className="space-y-6">
-      <Link href="/my/stories" className="text-muted-foreground text-sm underline underline-offset-2">
+      <Link
+        href="/my/stories"
+        className="text-muted-foreground text-sm underline underline-offset-2"
+      >
         Back to stories
       </Link>
 
@@ -36,11 +42,16 @@ export default async function StoryPage({ params }: { params: Promise<{ id: stri
         <div className="flex flex-wrap items-center gap-1">
           <VerificationBadge state={story.verificationState} />
           <VisibilityBadge visibility={story.visibility} />
-          {story.userApproved ? <Badge>Ready for interviews</Badge> : <Badge variant="outline">Draft</Badge>}
+          {story.userApproved ? (
+            <Badge>Ready for interviews</Badge>
+          ) : (
+            <Badge variant="outline">Draft</Badge>
+          )}
         </div>
         {isFlaggedUnconfirmed(story) ? (
           <p className="text-muted-foreground text-sm">
-            This story was {story.verificationState === 'AI_GENERATED' ? 'AI-generated' : 'inferred'}.
+            This story was{' '}
+            {story.verificationState === 'AI_GENERATED' ? 'AI-generated' : 'inferred'}.
             Review every line for accuracy before marking it ready.
           </p>
         ) : null}
@@ -67,7 +78,9 @@ export default async function StoryPage({ params }: { params: Promise<{ id: stri
           </div>
         ))}
         {story.themes.length > 0 ? (
-          <p className="text-muted-foreground text-xs">Themes: {story.themes.join(', ')}</p>
+          <p className="text-muted-foreground text-xs">
+            Themes: {story.themes.join(', ')}
+          </p>
         ) : null}
       </section>
 
@@ -75,7 +88,8 @@ export default async function StoryPage({ params }: { params: Promise<{ id: stri
         <h2 id="linked-heading" className="text-sm font-medium">
           Linked projects, experience, and evidence
         </h2>
-        {links.projects.length + links.experiences.length + links.evidence.length === 0 ? (
+        {links.projects.length + links.experiences.length + links.evidence.length ===
+        0 ? (
           <p className="text-muted-foreground text-sm">
             Nothing linked yet. Link what backs this story using the edit form below.
           </p>
@@ -84,7 +98,10 @@ export default async function StoryPage({ params }: { params: Promise<{ id: stri
             {links.projects.map((p) => (
               <li key={p.id}>
                 <span className="text-muted-foreground">Project: </span>
-                <Link href={`/my/projects/${p.id}`} className="underline underline-offset-2">
+                <Link
+                  href={`/my/projects/${p.id}`}
+                  className="underline underline-offset-2"
+                >
                   {p.name}
                 </Link>
               </li>
@@ -122,7 +139,9 @@ export default async function StoryPage({ params }: { params: Promise<{ id: stri
       <div className="flex flex-wrap items-start gap-x-3">
         <ActionForm
           action={setStoryApprovedAction}
-          submitLabel={story.userApproved ? 'Move back to draft' : 'Mark ready for interviews'}
+          submitLabel={
+            story.userApproved ? 'Move back to draft' : 'Mark ready for interviews'
+          }
           variant="outline"
         >
           <input type="hidden" name="id" value={story.id} />
@@ -137,7 +156,10 @@ export default async function StoryPage({ params }: { params: Promise<{ id: stri
         >
           <input type="hidden" name="id" value={story.id} />
         </ActionForm>
-        <Link href="/my/stories" className={buttonVariants({ variant: 'ghost', size: 'sm' }) + ' mt-2'}>
+        <Link
+          href="/my/stories"
+          className={buttonVariants({ variant: 'ghost', size: 'sm' }) + ' mt-2'}
+        >
           Back to list
         </Link>
       </div>
@@ -150,8 +172,14 @@ export default async function StoryPage({ params }: { params: Promise<{ id: stri
           key={story.updatedAt}
           story={story}
           projects={graph.projects.map((p) => ({ id: p.id, label: p.name }))}
-          experiences={graph.experiences.map((e) => ({ id: e.id, label: `${e.title} at ${e.company}` }))}
-          evidence={graph.evidence.map((e) => ({ id: e.id, label: `${e.title} (${e.sourceType})` }))}
+          experiences={graph.experiences.map((e) => ({
+            id: e.id,
+            label: `${e.title} at ${e.company}`,
+          }))}
+          evidence={graph.evidence.map((e) => ({
+            id: e.id,
+            label: `${e.title} (${e.sourceType})`,
+          }))}
           selectedProjectIds={links.projects.map((p) => p.id)}
           selectedExperienceIds={links.experiences.map((e) => e.id)}
           selectedEvidenceIds={links.evidence.map((e) => e.id)}

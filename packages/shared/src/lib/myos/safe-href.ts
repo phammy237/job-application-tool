@@ -9,7 +9,9 @@ export function safeHttpHref(url: string | null | undefined): string | null {
   if (!trimmed) return null;
   try {
     const parsed = new URL(trimmed);
-    return parsed.protocol === 'https:' || parsed.protocol === 'http:' ? parsed.toString() : null;
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:'
+      ? parsed.toString()
+      : null;
   } catch {
     return null;
   }

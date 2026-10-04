@@ -98,7 +98,12 @@ export async function POST(
     if (originError) throw new Error('origin update failed');
 
     // Atomic claim: only one concurrent request can attach a project to this repository.
-    const claimed = await claimOwnGithubRepositoryProject(supabase, user.id, id, project.id);
+    const claimed = await claimOwnGithubRepositoryProject(
+      supabase,
+      user.id,
+      id,
+      project.id,
+    );
     if (!claimed) {
       await deleteOwnProject(supabase, user.id, project.id);
       projectId = null;
@@ -166,5 +171,3 @@ async function ensureRepresentsEdge(
     verificationState: 'USER_PROVIDED',
   });
 }
-
-

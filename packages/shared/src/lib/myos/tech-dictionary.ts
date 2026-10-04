@@ -289,7 +289,8 @@ export interface TechMatch {
 
 const WORD_CHAR = /[A-Za-z0-9_]/;
 
-function escapeRegex(s: string): string {
+/** Escapes every regex metacharacter (also `/` and `-`), for building literal-match patterns. */
+export function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\/-]/g, '\\$&');
 }
 
@@ -324,6 +325,7 @@ interface CompiledAlias {
   strict: boolean;
 }
 
+/** Every alias regex is compiled once, at module load. */
 const COMPILED: CompiledAlias[] = (() => {
   const out: CompiledAlias[] = [];
   for (const entry of TECH_DICTIONARY) {
