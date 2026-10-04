@@ -6,8 +6,8 @@ that follow from it.
 
 ## Baseline
 
-`npm test` (all workspaces) passes before any change: web 139, shared 651, database 314, ai 254,
-discovery 291, email 19, ui/other 931-count suite — all green. No Docker is available locally,
+`npm test` (all workspaces) passes before any change: 2,599 tests. By workspace: extension 139,
+web 651, ai 314, database 254, discovery 291, email 19, shared 931. All green. No Docker is available locally,
 so the pgTAP suite (`supabase test db`) cannot run here; it runs in CI (`db-tests` job).
 
 ## Architecture
