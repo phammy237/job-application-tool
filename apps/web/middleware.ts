@@ -17,6 +17,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 const PROTECTED_PREFIXES = [
   '/dashboard',
   '/profile',
+  '/my',
   '/applications',
   '/discover',
   '/network',
