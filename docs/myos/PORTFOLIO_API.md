@@ -59,3 +59,18 @@ sequenceDiagram
 
 This matches CLAUDE.md's sanctioned boundary: a versioned JSON export, never a live database link or
 scraped HTML.
+
+## Implementation notes
+
+- **Failures**: every authentication failure (missing/malformed `Authorization`, unknown or rotated
+  key, export disabled) returns `401 {"error":"unauthorized"}` with `Cache-Control: no-store`.
+  Backend errors return a generic `500 {"error":"internal_error"}`.
+- **Rate limiting (best effort)**: an in-memory fixed window of 60 requests/minute per key+IP and 120
+  requests/minute per IP returns `429 {"error":"rate_limited"}` with `Retry-After`. State is per
+  server instance and resets on cold start, so treat it as abuse dampening, not a guarantee; add an
+  edge/WAF limit for hard guarantees.
+- **CORS**: no CORS headers are sent; the endpoint is server-to-server only.
+- **Scoping**: the user id comes only from the key hash. The service-role reads
+  (`loadOwnEvidenceGraph`, `getOwnPortfolioSettings`) are filtered by that id, and the response is
+  validated with `portfolioExportSchema`. Query/body/header user ids are ignored.
+- **Preview**: `/my/settings` renders the exact `buildPortfolioExport` output for the current graph.
