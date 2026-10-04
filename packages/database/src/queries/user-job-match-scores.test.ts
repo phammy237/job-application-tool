@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { CareerOsSupabaseClient } from '../types/client';
-import { getOwnMatchScore, upsertUserJobMatchScoresBatch } from './user-job-match-scores';
+import {
+  getOwnMatchScore,
+  listOwnAutoQueueCandidateMatchScores,
+  listOwnMatchScoresForJobCatalogIds,
+  upsertUserJobMatchScoresBatch,
+} from './user-job-match-scores';
 
 const USER_ID = 'aaaaaaaa-0000-4000-8000-000000000001';
 const JOB_ID = 'bbbbbbbb-0000-4000-8000-000000000001';
@@ -93,5 +98,51 @@ describe('upsertUserJobMatchScoresBatch', () => {
     const supabase = { from: vi.fn(() => chain) } as unknown as CareerOsSupabaseClient;
     await upsertUserJobMatchScoresBatch(supabase, USER_ID, []);
     expect(chain.upsert).not.toHaveBeenCalled();
+  });
+});
+
+describe('listOwnAutoQueueCandidateMatchScores', () => {
+  it('filters on user_id, HIGH coverage, non-CONFLICT eligibility, and the given match-score floor', async () => {
+    const chain: Record<string, unknown> = {};
+    chain.select = vi.fn(() => chain);
+    chain.eq = vi.fn(() => chain);
+    chain.neq = vi.fn(() => chain);
+    chain.gte = vi.fn(() => chain);
+    chain.order = vi.fn(() => chain);
+    chain.limit = vi.fn().mockResolvedValue({ data: [BASE_ROW], error: null });
+    const supabase = { from: vi.fn(() => chain) } as unknown as CareerOsSupabaseClient;
+
+    const result = await listOwnAutoQueueCandidateMatchScores(supabase, USER_ID, {
+      minMatchScore: 70,
+      limit: 25,
+    });
+
+    expect(result).toHaveLength(1);
+    expect(chain.eq).toHaveBeenCalledWith('user_id', USER_ID);
+    expect(chain.eq).toHaveBeenCalledWith('coverage_bucket', 0);
+    expect(chain.neq).toHaveBeenCalledWith('eligibility_status', 'CONFLICT');
+    expect(chain.gte).toHaveBeenCalledWith('match_score', 70);
+    expect(chain.limit).toHaveBeenCalledWith(25);
+  });
+});
+
+describe('listOwnMatchScoresForJobCatalogIds', () => {
+  it('returns an empty map without a network call for an empty input', async () => {
+    const supabase = { from: vi.fn() } as unknown as CareerOsSupabaseClient;
+    const result = await listOwnMatchScoresForJobCatalogIds(supabase, USER_ID, []);
+    expect(result.size).toBe(0);
+    expect(supabase.from).not.toHaveBeenCalled();
+  });
+
+  it('keys the returned map by job_catalog_id', async () => {
+    const chain: Record<string, unknown> = {};
+    chain.select = vi.fn(() => chain);
+    chain.eq = vi.fn(() => chain);
+    chain.in = vi.fn().mockResolvedValue({ data: [BASE_ROW], error: null });
+    const supabase = { from: vi.fn(() => chain) } as unknown as CareerOsSupabaseClient;
+
+    const result = await listOwnMatchScoresForJobCatalogIds(supabase, USER_ID, [JOB_ID]);
+    expect(result.get(JOB_ID)?.matchScore).toBe(87.78);
+    expect(chain.in).toHaveBeenCalledWith('job_catalog_id', [JOB_ID]);
   });
 });

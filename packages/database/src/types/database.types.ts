@@ -328,6 +328,15 @@ export interface Database {
            * row this application was started from, if any. Nullable; null for every non-discovery
            * application. */
           job_catalog_id: string | null;
+          /** Added in migration 0046 — true only for an application created by the background
+           * Gmail cron job from an unmatched confirmation email. */
+          auto_tracked: boolean;
+          /** Added in migration 0047 (D9 Phase A) — true only for an application created by the
+           * Auto Mode cron job from a high-Match/high-Coverage/non-CONFLICT discovery candidate. */
+          auto_queued: boolean;
+          /** Added in migration 0047 (D9 Phase A) — review lifecycle for an auto-queued
+           * application: NOT_APPLICABLE/PENDING_REVIEW/KEPT/DISMISSED. */
+          auto_queue_status: string;
           created_at: string;
           updated_at: string;
         };
@@ -367,6 +376,10 @@ export interface Database {
         Row: {
           user_id: string;
           gmail_integration_enabled: boolean;
+          /** Added in migration 0046 — separate opt-in for the background Gmail cron job. */
+          background_gmail_tracking_enabled: boolean;
+          /** Added in migration 0047 (D9 Phase A) — separate opt-in for the Auto Mode cron job. */
+          auto_mode_enabled: boolean;
           ai_requests_this_period: number;
           ai_request_period_started_at: string;
           ai_request_limit: number;
@@ -990,6 +1003,22 @@ export interface Database {
           eligibility_version: string;
         };
         Update: Partial<Database['public']['Tables']['user_job_match_scores']['Row']>;
+        Relationships: [];
+      };
+      pending_resume_tailoring_drafts: {
+        Row: {
+          id: string;
+          user_id: string;
+          application_id: string;
+          proposal: Json;
+          created_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['pending_resume_tailoring_drafts']['Row']> & {
+          user_id: string;
+          application_id: string;
+          proposal: Json;
+        };
+        Update: Partial<Database['public']['Tables']['pending_resume_tailoring_drafts']['Row']>;
         Relationships: [];
       };
     };

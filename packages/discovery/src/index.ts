@@ -1,5 +1,7 @@
 export * from './types';
+export * from './config';
 export * from './normalize';
+export * from './build-catalog-snapshot';
 export * from './adapters/greenhouse';
 export * from './adapters/lever';
 export * from './adapters/ashby';
@@ -12,5 +14,6 @@ export * from './official-posting-resolution';
 export * from './official-posting-revalidation';
 export * from './orchestrator/sync-source';
 export * from './orchestrator/run-sync';
+export * from './orchestrator/run-auto-queue';
 export * from './ranking/extract-features';
 export * from './ranking/rank-user';

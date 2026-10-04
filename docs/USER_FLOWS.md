@@ -327,14 +327,33 @@ false`, `visibleOnPublicProfile = false`. Nothing extracted is usable until step
 1. User opts in from `/settings` (only visible if `gmail_integration_enabled` is on) and
    completes Google OAuth server-side; refresh token is encrypted at rest
    (`docs/EMAIL_INTEGRATION.md`).
-2. User clicks **Sync Gmail** (manual — no background polling in v1).
+2. User clicks **Sync Gmail** (manual), or the throttled page-load auto-check fires the same
+   sync. Both are attended — see §7B for the one scheduled-background exception.
 3. Server searches for likely recruiting messages, runs deterministic classification first,
    falls back to Claude only for ambiguous cases, and attempts to match each message to an
    existing `applications` row.
 4. Any match with confidence ≥ 0.85 is proposed as a status update; below that threshold, the
    user must explicitly confirm before the application timeline changes.
 5. User can disconnect Gmail and delete all stored signals at any time from `/settings`; this
-   also stops future syncs immediately.
+   also stops future syncs immediately, including the background job in §7B.
+
+## 7B. Background auto-tracking (optional, Phase 5 extension, migration 0046)
+
+1. From the same Gmail section on `/settings`, once Gmail is connected, a second, separate
+   toggle — **Track applications automatically** — appears, off by default. Connecting Gmail
+   never turns this on by itself.
+2. Turning it on lets a scheduled job (not a page load, not a click) check this inbox every
+   ~15 minutes. It runs the identical search/classify/match pipeline as §7 step 3 — the only
+   difference is what happens on a message that matches *nothing*: a confident
+   "application received" confirmation for a job the user never told Career OS about creates
+   a new tracked application automatically, status `APPLIED`, company/title parsed
+   deterministically from the message itself (never guessed by a model), and visibly flagged
+   "Auto-detected" everywhere it appears. Anything less certain (a different classification,
+   a less confident match, no extractable company name) is left alone, exactly as it would be
+   today — this never lowers the bar §7 step 4 already sets, it only adds one new action for
+   the single most unambiguous case.
+3. Turning it off, or disconnecting Gmail entirely, stops the scheduled checks immediately —
+   same as stopping manual sync, just for the one additional trigger.
 
 ## 7A. Networking / contacts (Phase 6A)
 
@@ -434,9 +453,11 @@ Each of the following is a first-class, discoverable action (not "contact suppor
 - Any flow where the system submits, signs, or attests on the user's behalf. This includes the
   Phase 5C.3 follow-up draft and interview prep — Career OS drafts/suggests, the user always sends
   or acts. No Gmail send scope exists anywhere in this product.
-- Any flow that runs without a preceding, attended user action. Extension analysis and
-  autofill are strictly click-triggered. Gmail sync is either click-triggered (**Sync
-  Gmail**) or a throttled auto-check on `/settings` page load/reload — both require the
-  signed-in user to actually have the app open in that moment; neither is scheduled,
-  background, or unattended (`docs/EMAIL_INTEGRATION.md` §1, `docs/IMPLEMENTATION_PLAN.md`
-  Phase 5 auto-sync note).
+- Any flow that runs without a preceding, attended user action — **except** the one
+  explicitly opt-in exception in §7B (background Gmail auto-tracking, migration 0046), which
+  exists precisely because a user asked for scheduled background checking and explicitly
+  turned it on as a second, separate toggle. Extension analysis and autofill remain strictly
+  click-triggered, with no background exception at all. Manual Gmail sync is either
+  click-triggered (**Sync Gmail**) or a throttled auto-check on `/settings` page load/reload
+  — both still require the signed-in user to actually have the app open in that moment
+  (`docs/EMAIL_INTEGRATION.md` §1, `docs/IMPLEMENTATION_PLAN.md` Phase 5 auto-sync note).

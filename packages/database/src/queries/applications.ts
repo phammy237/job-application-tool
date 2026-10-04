@@ -98,6 +98,11 @@ function rowToApplication(row: Row): Application {
       'working_resume_version_id' in row ? row.working_resume_version_id : null,
     // Added in migration 0032 (D6) — same missing-key-on-an-unmigrated-database degrade.
     jobCatalogId: 'job_catalog_id' in row ? row.job_catalog_id : null,
+    // Added in migration 0046 — same missing-key-on-an-unmigrated-database degrade.
+    autoTracked: 'auto_tracked' in row ? row.auto_tracked : false,
+    // Added in migration 0047 (D9 Phase A) — same missing-key-on-an-unmigrated-database degrade.
+    autoQueued: 'auto_queued' in row ? row.auto_queued : false,
+    autoQueueStatus: 'auto_queue_status' in row ? row.auto_queue_status : 'NOT_APPLICABLE',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });
@@ -107,6 +112,50 @@ export interface ApplicationFilters {
   status?: ApplicationStatus;
   company?: string;
   search?: string;
+}
+
+/** Candidate applications for the Auto Mode auto-tailoring cron job (D9 Phase B,
+ * `runAutoTailorDraftingForUser`) — this user's own auto-queued applications they've explicitly
+ * KEPT, that already have a working résumé version attached. Deliberately scoped to the Auto
+ * Mode queue only (`auto_queued = true`), never every `SAVED` application a user has — Phase B
+ * only drafts for applications the user's own Auto Mode queue produced and they chose to keep,
+ * never silently expanding to applications they added manually. Also deliberately does NOT
+ * auto-select a working résumé for an application that has none — attaching one is still always
+ * the user's own explicit action; this just reads whichever one (if any) they already picked. */
+export async function listOwnApplicationsEligibleForAutoTailorDraft(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+): Promise<Application[]> {
+  const { data, error } = await supabase
+    .from('applications')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('auto_queued', true)
+    .eq('auto_queue_status', 'KEPT')
+    .not('working_resume_version_id', 'is', null);
+  assertNoError(error, 'listOwnApplicationsEligibleForAutoTailorDraft');
+  return (data ?? []).map(rowToApplication);
+}
+
+/** Which of these `job_catalog_id`s this user already has a tracked application for — a bulk
+ * pre-filter the Auto Mode orchestrator (D9 Phase A, `runAutoQueueForUser`) uses to skip calling
+ * `startApplicationFromCatalogJob` for a candidate it already knows is tracked, purely as a
+ * work/event-noise reduction (that RPC's own Tier-1 idempotency would catch it anyway — this
+ * never substitutes for that guarantee). Returns an empty set for an empty input without a
+ * network call. */
+export async function listOwnTrackedJobCatalogIds(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+  jobCatalogIds: string[],
+): Promise<Set<string>> {
+  if (jobCatalogIds.length === 0) return new Set();
+  const { data, error } = await supabase
+    .from('applications')
+    .select('job_catalog_id')
+    .eq('user_id', userId)
+    .in('job_catalog_id', jobCatalogIds);
+  assertNoError(error, 'listOwnTrackedJobCatalogIds');
+  return new Set((data ?? []).map((row) => row.job_catalog_id).filter((id): id is string => id !== null));
 }
 
 export async function listOwnApplications(
@@ -187,6 +236,56 @@ export async function createOwnApplication(
     fromStatus: null,
     toStatus: application.status,
     source: 'USER',
+  });
+
+  return application;
+}
+
+/**
+ * The one sanctioned exception alongside markOwnApplicationApplied/the historical-revert path
+ * (migration 0015's own trigger comment anticipates exactly this case: "mirrors truly legacy
+ * pre-Phase-5B.1 data, or test fixture setup") — creates a new application already at
+ * status='APPLIED', for the background Gmail cron job (migration 0046) when a confirmation
+ * email can't be matched to anything the user already tracks. Service-role only: inserting with
+ * `applied_at` set (always non-null here — see below) requires `current_user = service_role`
+ * per that trigger, so calling this with an ordinary session-scoped client fails at the database
+ * level, not merely by convention.
+ *
+ * `appliedAt` should be the triggering email's own receivedAt — the closest honest proxy for
+ * when the user actually applied, since Career OS has no record of the real event and must
+ * never fabricate one. `company`/`title` come from best-effort deterministic parsing of the
+ * email (packages/email's extractApplicationIdentity), never invented — `auto_tracked: true` is
+ * permanent provenance so the UI can plainly flag this application's data as lower-confidence
+ * than one built through Analyze Job / Save Application, instead of presenting it as equivalent.
+ */
+export async function createAutoTrackedApplicationFromEmail(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+  input: { company: string; title: string; appliedAt: string | null; emailSignalId: string },
+): Promise<Application> {
+  const { data, error } = await supabase
+    .from('applications')
+    .insert({
+      user_id: userId,
+      company: input.company,
+      title: input.title,
+      status: 'APPLIED',
+      applied_at: input.appliedAt,
+      auto_tracked: true,
+    })
+    .select('*')
+    .single();
+  const application = rowToApplication(
+    unwrapRow(data, error, 'createAutoTrackedApplicationFromEmail'),
+  );
+
+  await recordApplicationEvent(supabase, userId, {
+    applicationId: application.id,
+    eventType: 'STATUS_CHANGE',
+    fromStatus: null,
+    toStatus: 'APPLIED',
+    source: 'GMAIL_SYNC',
+    emailSignalId: input.emailSignalId,
   });
 
   return application;
@@ -568,6 +667,10 @@ export interface StartApplicationFromCatalogJobInput {
   snapshotTruncatedFields: string[];
   canonicalUrl: string | null;
   eventMetadata: DiscoveryHandoffEventMetadata;
+  /** Added in migration 0047 (D9 Phase A) — defaults to `'USER'` server-side (the RPC's own
+   * parameter default) when omitted, exactly matching every call site that predates this field.
+   * The Auto Mode orchestrator is the one caller that passes `'AUTO_QUEUE'`. */
+  eventSource?: ApplicationEventSource;
 }
 
 export interface StartApplicationFromCatalogJobResult {
@@ -618,6 +721,7 @@ export async function startApplicationFromCatalogJob(
       p_snapshot_truncated_fields: input.snapshotTruncatedFields,
       p_canonical_url: input.canonicalUrl,
       p_event_metadata: input.eventMetadata as unknown as Json,
+      ...(input.eventSource ? { p_event_source: input.eventSource } : {}),
     })
     .single();
   const row = unwrapRow(data, error, 'startApplicationFromCatalogJob');
@@ -627,6 +731,85 @@ export async function startApplicationFromCatalogJob(
     status: row.application_status as ApplicationStatus,
     jobSnapshotId: row.job_snapshot_id,
   };
+}
+
+/**
+ * The one place `auto_queued`/`auto_queue_status` ever moves to `true`/`PENDING_REVIEW` (D9 Phase
+ * A) — called by `runAutoQueueForUser` immediately after `startApplicationFromCatalogJob` returns
+ * `created: true` for a brand-new row. Never called when `created` is `false`: an application the
+ * user or extension already has a real relationship with must never be relabeled as "pending your
+ * review." Scoped by both `id` and `user_id` even though the caller already knows both from the
+ * creation call immediately before this, same explicit-filtering discipline as every other
+ * service-role-client write in this codebase (CLAUDE.md: "RLS is the backstop, not the only
+ * check" — the admin client this is called through bypasses RLS entirely).
+ */
+export async function markOwnApplicationAutoQueued(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+  id: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from('applications')
+    .update({ auto_queued: true, auto_queue_status: 'PENDING_REVIEW' })
+    .eq('id', id)
+    .eq('user_id', userId);
+  assertNoError(error, 'markOwnApplicationAutoQueued');
+}
+
+/** Every application this user still needs to review from the Auto Mode queue (/dashboard's
+ * "Needs your review" section) — mirrors `listOwnEmailSignalsNeedingConfirmation`'s shape. */
+export async function listOwnApplicationsPendingAutoQueueReview(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+): Promise<Application[]> {
+  const { data, error } = await supabase
+    .from('applications')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('auto_queue_status', 'PENDING_REVIEW')
+    .order('created_at', { ascending: false });
+  assertNoError(error, 'listOwnApplicationsPendingAutoQueueReview');
+  return (data ?? []).map(rowToApplication);
+}
+
+/**
+ * The user's own Keep/Dismiss decision on one Auto Mode-queued application (D9 Phase A). KEEP
+ * only ever flips `auto_queue_status` to `KEPT` — `status` stays `SAVED`, untouched, and no
+ * `application_events` row is recorded (not a real status change, same reasoning
+ * `updateOwnApplication`'s plain column updates elsewhere in this file never create one). DISMISS
+ * routes through the existing `changeOwnApplicationStatus` (source defaults to `'USER'` — a
+ * direct result of the human's own click, same as any other manual status change) to set
+ * `WITHDRAWN`, then separately marks `auto_queue_status: 'DISMISSED'` — never a delete, the full
+ * audit trail (including the original AUTO_QUEUE creation event) survives.
+ *
+ * Only ever acts on a row still `PENDING_REVIEW` — resolving an already-resolved or never-queued
+ * application throws, the same "not found or not owned" message shape `confirmOwnEmailSignal`
+ * uses, so a double-submit (e.g. a double-tapped button on a slow phone connection) fails loudly
+ * rather than silently re-applying a decision.
+ */
+export async function resolveOwnAutoQueuedApplication(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+  id: string,
+  action: 'KEEP' | 'DISMISS',
+): Promise<Application> {
+  const current = await getOwnApplication(supabase, userId, id);
+  if (!current || current.autoQueueStatus !== 'PENDING_REVIEW') {
+    throw new DatabaseError('Application not found or not owned by this user.');
+  }
+
+  if (action === 'DISMISS') {
+    await changeOwnApplicationStatus(supabase, userId, id, 'WITHDRAWN');
+  }
+
+  const { data, error } = await supabase
+    .from('applications')
+    .update({ auto_queue_status: action === 'KEEP' ? 'KEPT' : 'DISMISSED' })
+    .eq('id', id)
+    .eq('user_id', userId)
+    .select('*')
+    .single();
+  return rowToApplication(unwrapRow(data, error, 'resolveOwnAutoQueuedApplication'));
 }
 
 export interface MarkOwnApplicationAppliedOptions {

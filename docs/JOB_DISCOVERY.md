@@ -1583,3 +1583,128 @@ hostile DNS server that answers differently the second time can still steer one 
 address. Closing it needs a connection-level guard (an `undici` dispatcher with a validating
 `connect.lookup`, or `http(s).request` with a custom `lookup`). Not done. Also unchanged: a redirect's
 destination host is not re-scored against the employer (only fetched safely and reported).
+
+## 56. D9 Phase A — Auto Mode: opt-in background auto-queue (migration 0047)
+
+A new tentacle off D6, not a deepening of D4/D5's scoring — "find opportunities" gains a
+background mode, but nothing about how Match/Coverage/Eligibility are computed changes. An
+explicit, separate opt-in (`user_settings.auto_mode_enabled`, same column-privilege-grant pattern
+migration 0046 established for `background_gmail_tracking_enabled`) lets a new Vercel Cron job
+(`/api/cron/auto-queue`, every 30 minutes) auto-queue a bounded number of each opted-in user's own
+high-Match (≥70), high-coverage-tier (`coverage_bucket = 0`, i.e. HIGH), non-`CONFLICT` `/discover`
+candidates per tick — by calling the EXISTING D6 handoff, `start_application_from_catalog_job`.
+Zero new RPC, zero new scoring system: `status` stays structurally hardcoded to `'SAVED'` exactly
+as D6 already guarantees, and the candidate query
+(`listOwnAutoQueueCandidateMatchScores`, `packages/database`) reads `user_job_match_scores`
+directly with an explicit `user_id` filter rather than through `list_own_discovery_feed` — that
+RPC is `SECURITY INVOKER` and reads `auth.uid()`, which is `null` under the service-role admin
+client the cron orchestrator (`runAutoQueueForUser`, `packages/discovery/src/orchestrator/
+run-auto-queue.ts`) runs on.
+
+Already-tracked candidates are excluded before any write (`listOwnTrackedJobCatalogIds`) — an
+optimization, since `start_application_from_catalog_job`'s own Tier-1 idempotency would catch it
+regardless. Bounded three ways per tick, mirroring the Gmail cron's own bounding philosophy
+(`packages/discovery/src/config.ts`): `MAX_AUTO_QUEUE_CANDIDATES_PER_RUN` (25, how many candidates
+are even looked at), `MAX_AUTO_QUEUED_PER_USER_PER_RUN` (5, how many new cards can appear per
+tick), and `MAX_PENDING_AUTO_QUEUE_PER_USER` (20, a backlog cap — a user who never opens their
+review queue gets nothing further queued until they do). `MAX_USERS_PER_AUTO_QUEUE_RUN`/
+`MAX_CONCURRENT_AUTO_QUEUE_USERS` bound the cron route itself, structurally identical to
+`/api/cron/gmail-background-sync`'s own auth/bounded-concurrency/per-user-isolation shape
+(including the extracted shared `mapWithConcurrency` util both cron routes now import from
+`apps/web/lib/map-with-concurrency.ts`, rather than each carrying its own copy).
+
+Two new columns on `applications` — `auto_queued` (permanent provenance, mirrors `auto_tracked`)
+and `auto_queue_status` (`NOT_APPLICABLE`/`PENDING_REVIEW`/`KEPT`/`DISMISSED`, mirroring
+`email_signals.confirmation_status`'s enum shape) — need no new RLS policies, since they ride
+along on the table's existing 4-policy RLS; a cross-column check constraint
+(`applications_auto_queue_consistency_check`) keeps the two from ever disagreeing. The review
+surface is a new "Needs your review" section on `/dashboard` (reusing the existing
+`MatchCoverageEligibility` badges — nothing new to compute or render), with Keep (`auto_queue_status
+→ KEPT`, `status` stays `SAVED` untouched, no new event — not a real status change) and Dismiss
+(`auto_queue_status → DISMISSED`, `status → WITHDRAWN` via the existing `changeOwnApplicationStatus`,
+never a delete) actions, backed by `POST /api/applications/:id/auto-queue-review`.
+
+**A genuine correctness fix surfaced while building this, not a pre-existing bug**: tagging the
+auto-creation event. `application_events.source` gained a fourth value, `AUTO_QUEUE` — deliberately
+NOT `SYSTEM`. `SYSTEM` is reserved, by an explicit documented invariant in
+`listOwnRelevantStatusChangeEvents` (`packages/database/src/queries/application-events.ts`), for
+exactly one call site (`revertApplicationEvent`'s own bookkeeping event), and is specifically
+excluded (`.neq('source', 'SYSTEM')`) so a revert-bookkeeping event never becomes a follow-up-anchor
+date. Tagging the auto-queue cron's own application-creation `STATUS_CHANGE` event (`null -> SAVED`)
+as `SYSTEM` would have silently broken that invariant a second way — excluding a genuine, relevant
+transition from ever anchoring the follow-up heuristic. `AUTO_QUEUE` getting its own value instead
+mirrors the exact reasoning that already justified `GMAIL_SYNC` existing rather than every
+background-sourced status change overloading `SYSTEM`. Reaching it required a `create or replace
+function` addition to `start_application_from_catalog_job` itself: one new, defaulted parameter,
+`p_event_source text default 'USER'` — every pre-existing call site (the manual `/discover` "Start
+application" click) keeps getting the exact same `'USER'` it always hardcoded, byte-for-byte, with
+no code change on its end; the Auto Mode orchestrator is the one new caller that passes
+`'AUTO_QUEUE'`. `CREATE OR REPLACE FUNCTION` preserves the function's existing grants
+(service_role only) automatically — no re-grant needed, unlike `list_own_discovery_feed`'s own
+migration, which had to drop+recreate because it changed its `RETURNS TABLE` column list; this
+change only appends one defaulted input parameter, which `CREATE OR REPLACE FUNCTION` supports
+without dropping the function at all.
+
+`apps/web/app/(app)/layout.tsx` gained a minimal responsive fix (the sidebar stacks above `md`
+instead of staying fixed-width at every size, no hamburger/JS) — a direct prerequisite for the
+review queue to be usable from a phone, which was the feature's explicit motivating request.
+
+**Hard boundary, unaffected by any of the above**: Auto Mode's job structurally ends at "here is a
+reviewed, kept, ordinary tracked application, ready for you to work on." It never fills a form or
+submits anything — CLAUDE.md's "the extension never submits a form, the submit click is always the
+human's" is completely untouched by this phase. Zero AI/Claude calls in Phase A — Match/Coverage/
+Eligibility are pre-computed D4/D5A outputs, not generated text, so `ai_request_limit` is never
+touched either.
+
+## 57. D9 Phase B — auto-drafted résumé tailoring review (migration 0048)
+
+Layers automatic résumé-tailoring drafts on top of Phase A's queue, reusing the EXISTING Phase
+7E/7F pipeline (`generateResumeTailoringPlan`, `buildReviewedTailoredResume`,
+`save_reviewed_tailored_resume`) completely unmodified — same "never a parallel pipeline" posture
+Phase 7H/7I established for company research and interview prep. Because that pipeline was built
+fully synchronous/ephemeral (only ever runs from a live user click, persists nothing until the
+user's own accept pass), unattended use needed one genuinely new concept: a user-owned
+`pending_resume_tailoring_drafts` table (full 4-policy RLS + its own pgTAP cross-user-isolation
+test in the same migration, per CLAUDE.md), storing the ENTIRE `ResumeTailoringProposal` — the
+exact same shape `POST /api/applications/:id/resume-tailoring` already returns and
+`ResumeTailoringReviewSession` already renders today. No new review UI, no new data model beyond
+"store this one already-validated object" — see `docs/DATA_MODEL.md`'s own section on this table
+for the column list.
+
+A new cron job (`/api/cron/auto-tailor-drafts`, hourly — same `auto_mode_enabled` toggle as Phase
+A, no separate opt-in) generates at most `MAX_AUTO_TAILOR_DRAFTS_PER_USER_PER_RUN` (3, deliberately
+small relative to Phase A's constants: unlike auto-queueing, every draft here is a real, billed
+Claude call) pending drafts per user per tick, scoped to `listOwnApplicationsEligibleForAutoTailorDraft`
+— this user's own `auto_queued = true, auto_queue_status = 'KEPT'` applications that already have a
+`working_resume_version_id` set. Deliberately NOT every `SAVED` application a user has, and
+deliberately does NOT auto-select a résumé for an application that has none — attaching one is
+still always the user's own explicit action; Phase B only ever drafts for one the user already
+picked. `runAutoTailorDraftsForUser` (`packages/ai/src/run-auto-tailor-drafts.ts`) skips an
+application that already has a pending draft (`hasOwnPendingResumeTailoringDraft`) rather than
+silently replacing an unreviewed one, stops early for a user the instant a call comes back
+`rate_limited` (every further call would just fail the same way), and isolates one application's
+failure from the rest of the batch — the same per-item isolation discipline as every other
+background job in this codebase.
+
+Staleness uses the SAME anchors `save_reviewed_tailored_resume` itself already re-checks before
+persisting anything — the stored `proposal.baseResumeVersionId`/`proposal.jobSnapshotId` compared
+against the application's CURRENT `working_resume_version_id`/`job_snapshot_id` — read once, at the
+application detail page's own render time (never a second fingerprint column that could drift out
+of sync with what the save RPC actually trusts). A stale draft is deleted on read — self-healing
+cleanup, so the next cron tick generates a fresh one instead of the stale row lingering forever —
+and simply never passed to `ResumeTailoringPanel`, exactly as if none existed. A consumed draft
+(the user reviewed and saved it) is deleted by `/resume-tailoring/save` immediately after a
+successful save, best-effort: cleanup failing there never fails an already-successful save, and the
+next page load's own staleness check would catch and delete a leftover row anyway.
+
+The one UI change: `ResumeTailoringPanel` accepts an optional `pendingDraft` prop and, when given
+one, initializes straight into the `ready` review state instead of `idle` — the review session
+renders immediately, no click, no additional Claude call, with a plain banner ("Auto Mode already
+tailored this for you — review the changes below, or click Regenerate for a fresh pass") so the
+user understands why a review appeared without them doing anything. Clicking Regenerate still does
+exactly what it always did (a fresh, live, ephemeral call) — it does not itself touch the persisted
+draft row; only a successful save or a staleness check ever deletes one.
+
+**Hard boundary, identical to Phase A**: this still ends at "a reviewed, saved résumé version" —
+never anything closer to filling or submitting a form. The extension-never-submits boundary is
+exactly as unaffected by Phase B as by Phase A.

@@ -24,6 +24,7 @@ export async function ResumeSection({
   workingResumeVersionId,
   company,
   title,
+  isAutoQueuedAndKept = false,
 }: {
   supabase: CareerOsSupabaseClient;
   userId: string;
@@ -31,6 +32,13 @@ export async function ResumeSection({
   workingResumeVersionId: string | null;
   company: string;
   title: string;
+  /** D9 Phase B — true only for an application Auto Mode queued and the user kept
+   * (`autoQueued && autoQueueStatus === 'KEPT'`). Auto Mode's auto-tailoring cron job
+   * (`runAutoTailorDraftsForUser`) only ever drafts for an application that already has a
+   * working résumé attached — it never picks one on the user's behalf — so a kept Auto
+   * Mode application with none selected gets a plain explanation here instead of silently never
+   * receiving a draft with no visible reason why. */
+  isAutoQueuedAndKept?: boolean;
 }) {
   const [workingVersion, resumes, allVersions] = await Promise.all([
     workingResumeVersionId
@@ -78,7 +86,15 @@ export async function ResumeSection({
           </div>
         </div>
       ) : (
-        <p className="text-muted-foreground text-sm">No resume selected.</p>
+        <div className="space-y-1">
+          <p className="text-muted-foreground text-sm">No resume selected.</p>
+          {isAutoQueuedAndKept ? (
+            <p className="text-muted-foreground text-xs">
+              Select one below to let Auto Mode draft a tailored version for this job
+              automatically.
+            </p>
+          ) : null}
+        </div>
       )}
 
       {allVersions.length > 0 ? (

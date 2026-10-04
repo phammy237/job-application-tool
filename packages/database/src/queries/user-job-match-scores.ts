@@ -93,6 +93,56 @@ export async function getOwnMatchScore(
   return data ? rowToMatchScore(data) : null;
 }
 
+/** Batched lookup for a known set of `job_catalog_id`s — used by the Auto Mode review queue
+ * (/dashboard's "Needs your review" section) to render each queued application's current Match/
+ * Coverage/Eligibility in one query rather than one `getOwnMatchScore` call per card. Returns a
+ * map keyed by `jobCatalogId`; a candidate with no entry simply has no score to show (the job was
+ * never scored, or scoring was later removed) — never treated as an error. */
+export async function listOwnMatchScoresForJobCatalogIds(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+  jobCatalogIds: string[],
+): Promise<Map<string, UserJobMatchScore>> {
+  if (jobCatalogIds.length === 0) return new Map();
+  const { data, error } = await supabase
+    .from('user_job_match_scores')
+    .select('*')
+    .eq('user_id', userId)
+    .in('job_catalog_id', jobCatalogIds);
+  assertNoError(error, 'listOwnMatchScoresForJobCatalogIds');
+  return new Map((data ?? []).map((row) => [row.job_catalog_id, rowToMatchScore(row)]));
+}
+
+/**
+ * Candidate jobs for the Auto Mode cron job (D9 Phase A, `runAutoQueueForUser`) — this user's own
+ * high-Match, high-Coverage (`coverage_bucket = 0`, i.e. HIGH — the same generated column/tiering
+ * `packages/shared/src/lib/default-discovery-order.ts`'s `getCoverageBucket` mirrors, migration
+ * 0031), non-CONFLICT scores, highest `match_score` first. Deliberately a direct filtered query
+ * over this table rather than the `list_own_discovery_feed` RPC: that RPC is `security invoker`
+ * and reads `auth.uid()`, which is null under the service-role admin client this orchestrator
+ * runs on — composing the identical filter here, with an explicit `user_id` eq, is the correct
+ * replacement, not a new RPC. Reuses the existing D4/D5A scoring outputs verbatim; introduces no
+ * new scoring system.
+ */
+export async function listOwnAutoQueueCandidateMatchScores(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+  options: { minMatchScore: number; limit: number },
+): Promise<UserJobMatchScore[]> {
+  const { data, error } = await supabase
+    .from('user_job_match_scores')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('coverage_bucket', 0)
+    .neq('eligibility_status', 'CONFLICT')
+    .gte('match_score', options.minMatchScore)
+    .order('match_score', { ascending: false })
+    .order('job_catalog_id', { ascending: true })
+    .limit(options.limit);
+  assertNoError(error, 'listOwnAutoQueueCandidateMatchScores');
+  return (data ?? []).map(rowToMatchScore);
+}
+
 /** Ranked (highest match first) page of the caller's own scores — the shape a future D5
  * `/discover` list will page through. */
 export async function listOwnMatchScoresRanked(

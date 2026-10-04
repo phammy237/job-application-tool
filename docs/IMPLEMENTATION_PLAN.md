@@ -174,6 +174,11 @@ found" phases above. Full design record: `docs/JOB_DISCOVERY.md`.
 - [x] D6 — Discovery → existing Career OS application handoff
 - [ ] D7 — Generic company career-site crawler
 - [ ] D8 — Feedback-driven ranking
+- [x] D9 — Auto Mode: opt-in background auto-queue + mobile/web review (Phase A); auto-drafted
+      tailored résumé review (Phase B). vitest/typecheck/lint green across every workspace;
+      pgTAP (`0043_auto_mode.test.sql`, `0044_pending_resume_tailoring_drafts.test.sql`) written
+      but not yet run live against a linked Supabase project (no local Postgres/Docker in this
+      sandbox) — same caveat Phase 5's original migration carried until its own live pass.
 
 **D1–D3 (migration `0029_job_discovery_catalog.sql`)**: `job_sources` (global ATS board
 registry) + `job_catalog` (global, mutable "what jobs currently exist" catalog) — deliberately
@@ -359,6 +364,54 @@ change to ranking/eligibility semantics or to D4/D5's math. Live-verified agains
 Supabase project with a disposable test user: zero `user_job_match_scores` rows before, 1,371
 after one `discovery:rank` run, immediately visible through a real signed-in call to
 `list_own_discovery_feed`, no preference edit needed. See `docs/JOB_DISCOVERY.md` §53.
+
+**D9 — Auto Mode** (migration `0047_auto_mode.sql`): an explicit, separate opt-in
+(`user_settings.auto_mode_enabled`, same column-privilege-grant pattern migration 0046 established
+for `background_gmail_tracking_enabled`) that lets a new Vercel Cron job (`/api/cron/auto-queue`,
+literal structural copy of `/api/cron/gmail-background-sync`'s auth/bounded-concurrency/per-user-
+isolation shape) auto-queue a bounded number of the user's own high-Match (≥70), high-Coverage,
+non-CONFLICT `/discover` candidates per tick, by calling the EXISTING D6 handoff
+(`start_application_from_catalog_job`) — zero new RPC, zero new scoring system, and `status` stays
+structurally hardcoded to `SAVED` exactly as D6 already guarantees. Two new columns on
+`applications` (`auto_queued`, `auto_queue_status` — `NOT_APPLICABLE`/`PENDING_REVIEW`/`KEPT`/
+`DISMISSED`, mirroring `email_signals.confirmation_status`'s enum shape) need no new RLS policies,
+since they ride along on the table's existing 4-policy RLS. A new `AUTO_QUEUE` application-event
+source (extending `application_events_source_check`, migration 0001, alongside `USER`/`GMAIL_SYNC`/
+`SYSTEM`) tags the auto-creation event distinctly from `SYSTEM` — deliberately, since
+`listOwnRelevantStatusChangeEvents` excludes `SYSTEM` specifically to keep `revertApplicationEvent`'s
+own bookkeeping event from ever becoming a follow-up-anchor date, and an auto-queued application's
+real first-creation event must NOT be excluded that way. The user reviews each auto-queued
+application from a new "Needs your review" section on `/dashboard` (reusing the existing Match/
+Coverage/Eligibility badges, no new scoring display) — Keep leaves `status` at `SAVED` untouched
+(it becomes an ordinary tracked application from that point on); Dismiss calls the existing
+`changeOwnApplicationStatus` to set `WITHDRAWN` (source `USER` — a direct result of the human's own
+click), never a delete, never a new hidden status. `apps/web/app/(app)/layout.tsx` gained a minimal
+responsive fix (sidebar stacks above `md`, no hamburger/JS) so the review queue is actually usable
+from a phone, which was the user's explicit motivating request. **Auto Mode's job structurally ends
+at "here is a reviewed, kept, ordinary tracked application" — it never fills a form or submits
+anything; CLAUDE.md's "the extension never submits a form, the submit click is always the human's"
+is completely untouched by this phase, and remains untouched by Phase B below.** Zero AI/Claude
+calls in this phase — Match/Coverage/Eligibility are pre-computed D4/D5A outputs, not generated
+text, so `ai_request_limit` is never touched either.
+
+**D9 Phase B — auto-drafted résumé tailoring review**: layers automatic résumé-tailoring drafts on
+top of Phase A's queue, reusing the existing Phase 7E/7F pipeline (`generateResumeTailoringPlan`,
+`buildReviewedTailoredResume`, `save_reviewed_tailored_resume`) completely unmodified. Because that
+pipeline was built fully synchronous/ephemeral (only ever runs from a live user click, persists
+nothing until the user's own accept pass), unattended use needed one genuinely new concept: a
+user-owned `pending_resume_tailoring_drafts` table (migration `0048_pending_resume_tailoring_
+drafts.sql`, full 4-policy RLS + its own pgTAP cross-user-isolation test in the same PR, per
+CLAUDE.md), keyed to `application_id` plus the same base-résumé/job-snapshot content fingerprint
+`save_reviewed_tailored_resume` already uses to detect staleness. A new cron job
+(`/api/cron/auto-tailor-drafts`) generates at most one pending draft per `KEPT` auto-queued
+application with a `STRUCTURED_V1` working résumé already attached, respecting the existing
+`ai_request_limit` rate-limit seam exactly like every other AI call in this codebase — every
+operation in the stored plan still defaults to `PENDING`, never auto-accepted, never auto-saved.
+The review screen is the EXACT existing Phase 7F accept/reject/edit UI, pointed at a persisted
+draft instead of a freshly-generated one; saving still goes through the same
+`save_reviewed_tailored_resume` RPC, which independently re-verifies staleness/ownership/grounding
+server-side regardless of where the plan came from. This phase still ends at "a reviewed, saved
+résumé version" — never anything closer to filling or submitting a form.
 
 The whole Phase 5B line (5B.0 through 5B.4, plus the hardening pass) is complete. Phase 5C is now
 complete end to end — 5C.1 (deterministic next actions) through 5C.4 (polish and closure) — see

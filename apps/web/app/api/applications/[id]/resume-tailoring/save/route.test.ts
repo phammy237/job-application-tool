@@ -19,6 +19,7 @@ class MockSaveReviewedTailoredResumeError extends Error {
 }
 
 const mocks = vi.hoisted(() => ({
+  deleteOwnPendingResumeTailoringDraft: vi.fn(),
   getOwnApplication: vi.fn(),
   getOwnProfile: vi.fn(),
   getOwnResume: vi.fn(),
@@ -33,6 +34,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@career-os/database', () => ({
+  deleteOwnPendingResumeTailoringDraft: mocks.deleteOwnPendingResumeTailoringDraft,
   getOwnApplication: mocks.getOwnApplication,
   getOwnProfile: mocks.getOwnProfile,
   getOwnResume: mocks.getOwnResume,
@@ -136,6 +138,7 @@ beforeEach(() => {
   mocks.getCurrentUser.mockResolvedValue({ id: USER_ID });
   mocks.createAdminClient.mockReturnValue({});
   mocks.createClient.mockResolvedValue({});
+  mocks.deleteOwnPendingResumeTailoringDraft.mockResolvedValue(undefined);
   mocks.getOwnApplication.mockResolvedValue({
     id: APPLICATION_ID,
     company: 'Acme',
@@ -344,6 +347,22 @@ describe('POST /api/applications/[id]/resume-tailoring/save', () => {
       ),
       PARAMS,
     );
+    expect((await response.json()).status).toBe('ok');
+  });
+
+  it('D9 Phase B: a successful save consumes any pending Auto Mode draft for this application', async () => {
+    const response = await POST(postRequest(validBody()), PARAMS);
+    expect((await response.json()).status).toBe('ok');
+    expect(mocks.deleteOwnPendingResumeTailoringDraft).toHaveBeenCalledWith(
+      expect.anything(),
+      USER_ID,
+      APPLICATION_ID,
+    );
+  });
+
+  it('D9 Phase B: draft cleanup failing is best-effort — it never fails an already-successful save', async () => {
+    mocks.deleteOwnPendingResumeTailoringDraft.mockRejectedValue(new Error('cleanup boom'));
+    const response = await POST(postRequest(validBody()), PARAMS);
     expect((await response.json()).status).toBe('ok');
   });
 

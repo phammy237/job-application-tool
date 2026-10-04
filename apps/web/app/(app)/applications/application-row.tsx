@@ -2,7 +2,7 @@
 
 import type { Application, NextAction } from '@career-os/shared';
 import { formatNextAction } from '@career-os/shared';
-import { StatusBadge } from '@career-os/ui';
+import { Badge, StatusBadge } from '@career-os/ui';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { formatFriendlyDate } from '../../../lib/format-friendly-date';
@@ -32,13 +32,23 @@ export function ApplicationRow({
       className="border-border hover:bg-accent/40 border-b last:border-0 cursor-pointer"
     >
       <td className="px-4 py-3">
-        <Link
-          href={href}
-          onClick={(e) => e.stopPropagation()}
-          className="hover:text-primary font-medium hover:underline"
-        >
-          {application.company}
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            href={href}
+            onClick={(e) => e.stopPropagation()}
+            className="hover:text-primary font-medium hover:underline"
+          >
+            {application.company}
+          </Link>
+          {application.autoTracked ? (
+            <Badge
+              variant="outline"
+              title="Created automatically from a Gmail confirmation — company/title may need a correction"
+            >
+              Auto-detected
+            </Badge>
+          ) : null}
+        </div>
       </td>
       <td className="px-4 py-3">{application.title}</td>
       <td className="px-4 py-3">

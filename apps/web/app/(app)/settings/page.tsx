@@ -1,4 +1,5 @@
 import {
+  getOrCreateOwnUserSettings,
   getOwnEmailConnection,
   isFeatureEnabled,
   listOwnApplications,
@@ -11,6 +12,7 @@ import Link from 'next/link';
 import { requireUser } from '../../../lib/auth';
 import { formatFriendlyDateTime } from '../../../lib/format-friendly-date';
 import { createClient } from '../../../lib/supabase/server';
+import { AutoModeSection } from './auto-mode-section';
 import { DeleteAccountButton } from './delete-account-button';
 import { GmailSection } from './gmail-section';
 import { RevokeExtensionSessionButton } from './revoke-extension-session-button';
@@ -37,6 +39,7 @@ export default async function SettingsPage({
     FEATURE_FLAG_KEYS.GMAIL_INTEGRATION_ENABLED,
   );
   const gmailConnection = gmailGloballyEnabled ? await getOwnEmailConnection(supabase, user.id) : null;
+  const settings = await getOrCreateOwnUserSettings(supabase, user.id);
   const [pendingSignals, applications] = gmailConnection
     ? await Promise.all([
         listOwnEmailSignalsNeedingConfirmation(supabase, user.id),
@@ -145,6 +148,7 @@ export default async function SettingsPage({
             <GmailSection
               connection={gmailConnection}
               pendingSignals={pendingSignals}
+              backgroundTrackingEnabled={settings?.backgroundGmailTrackingEnabled ?? false}
               applications={applications.map((app) => ({
                 id: app.id,
                 company: app.company,
@@ -153,6 +157,19 @@ export default async function SettingsPage({
             />
           </CardContent>
         ) : null}
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Auto Mode</CardTitle>
+          <CardDescription>
+            Let Career OS find and queue high-match jobs for you in the background — you review
+            and decide on each one.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <AutoModeSection initialEnabled={settings.autoModeEnabled} />
+        </CardContent>
       </Card>
 
       <Card className="border-destructive/40 mt-6 border-t-2 pt-1">

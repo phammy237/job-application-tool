@@ -48,6 +48,16 @@ export type {
 } from './generate-company-research';
 export { generateResumeExtraction } from './generate-resume-extraction';
 export type { GenerateResumeExtractionResult } from './generate-resume-extraction';
+export { runAutoTailorDraftsForUser } from './run-auto-tailor-drafts';
+export type {
+  RunAutoTailorDraftsOptions,
+  RunAutoTailorDraftsUserResult,
+} from './run-auto-tailor-drafts';
+export {
+  MAX_AUTO_TAILOR_DRAFTS_PER_USER_PER_RUN,
+  MAX_CONCURRENT_AUTO_TAILOR_USERS,
+  MAX_USERS_PER_AUTO_TAILOR_RUN,
+} from './config';
 export { deriveEligibleNextAction } from './derive-eligible-next-action';
 export { NEVER_SUGGEST_CLASSIFICATIONS } from './config';
 /** D7.1 — the project's existing external search capability (docs/JOB_DISCOVERY.md "Official

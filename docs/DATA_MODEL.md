@@ -343,6 +343,9 @@ Indexes: `(user_id)`, `(user_id, source_url)`. RLS: standard.
 | `job_snapshot_id`      | `uuid references job_snapshots(id) on delete set null (job_snapshot_id)`           | Phase 5A — points at the immutable posting content captured when this application was last saved; **frozen** (never repointed) once `status` moves past `SAVED`/`IN_PROGRESS`, see "Job snapshots" below                                                                                                                                                                             |
 | `submission_packet_id` | `uuid references submission_packets(id) on delete set null (submission_packet_id)` | Phase 5B.1 — set exactly once, atomically, the first time `status` becomes `APPLIED` through the canonical `mark_application_applied` function; never repointed afterward. `null` for an application that has never been APPLIED under this mechanism, **including a legacy application that was already `APPLIED` before this migration shipped** — see "Submission packets" below. |
 | `job_catalog_id`       | `uuid references job_catalog(id) on delete set null`                              | D6 (migration 0032) — durable provenance back to the global `job_catalog` row this application was started from via `/discover`, if any. `null` for every manually-created or extension-created application, and for every application that predates D6 (no retroactive backfill). `on delete set null` is defensive only — no existing code path ever hard-deletes a `job_catalog` row (see "job_catalog / job_catalog_features / user_job_match_scores" below); the application and its `job_snapshot_id` both survive regardless. |
+| `auto_tracked`         | `boolean not null default false`                                                  | migration 0046 — permanent, never cleared: `true` only for an application the background Gmail cron job created from an unmatched confirmation email (`createAutoTrackedApplicationFromEmail`, service-role only). `company`/`title` on such a row came from best-effort deterministic parsing of the email, never a real job posting — the UI flags this plainly rather than presenting it as equivalent data. |
+| `auto_queued`          | `boolean not null default false`                                                  | migration 0047 (D9 Phase A) — permanent, never cleared: `true` only for an application the Auto Mode cron job (`runAutoQueueForUser`) created from a high-Match/high-Coverage/non-CONFLICT `/discover` candidate, via the same `start_application_from_catalog_job` handoff D6 already uses (never a second write path). |
+| `auto_queue_status`    | `text not null default 'NOT_APPLICABLE'`                                          | migration 0047 (D9 Phase A) — `NOT_APPLICABLE, PENDING_REVIEW, KEPT, DISMISSED`. The review lifecycle for an auto-queued application, independent of `status`: `KEPT` leaves `status` at `SAVED` untouched (the row becomes an ordinary tracked application from that point on); `DISMISSED` moves `status` to `WITHDRAWN` via the existing `changeOwnApplicationStatus`, never a delete. A check constraint (`applications_auto_queue_consistency_check`) enforces `auto_queued = false ⇔ auto_queue_status = 'NOT_APPLICABLE'`. |
 
 Indexes: `(user_id)`, `(user_id, status)`, `(user_id, company)`, `(user_id, applied_at desc)`,
 `(job_snapshot_id)`, `(submission_packet_id)`, `(job_catalog_id)`, unique partial `(user_id, canonical_url) where canonical_url is not null
@@ -350,7 +353,8 @@ and external_id is null`, unique partial `(user_id, ats_provider, external_id) w
 external_id is not null`, unique partial `(user_id, job_catalog_id) where job_catalog_id is not
 null` (D6's actual database-enforced idempotency guarantee — at most one application per
 (user, catalog opportunity); see `docs/JOB_DISCOVERY.md` "Idempotency guarantee").
-RLS: standard.
+RLS: standard — `auto_queued`/`auto_queue_status` ride along on the table's existing 4 policies,
+no new policy needed (plain columns on an already-isolated row, not a new table).
 
 ### Extension-save duplicate prevention (`upsert_application_from_extension`, Phase 4C/4D)
 
@@ -633,12 +637,24 @@ plus "undo for automated updates."
 | `event_type`      | `text not null`                                               | `STATUS_CHANGE, NOTE, EMAIL_MATCHED, MANUAL_EDIT, DISCOVERY_HANDOFF` (last one added D6, migration 0032) |
 | `from_status`     | `text`                                                        | nullable                                          |
 | `to_status`       | `text`                                                        | nullable                                          |
-| `source`          | `text not null`                                               | `USER, GMAIL_SYNC, SYSTEM`                        |
+| `source`          | `text not null`                                               | `USER, GMAIL_SYNC, SYSTEM, AUTO_QUEUE` (last one added migration 0047, D9 Phase A) |
 | `email_signal_id` | `uuid references email_signals(id) on delete set null`        | nullable, set when `source = 'GMAIL_SYNC'`        |
 | `metadata`        | `jsonb`                                                       | D6 (migration 0032) — only ever populated on `DISCOVERY_HANDOFF` events: `{jobCatalogId, sourceType, matchScore, coverage, eligibilityStatus, rankingVersion, featureVersion, eligibilityVersion}`, a historical snapshot of what `/discover` showed at the moment of handoff — never live/authoritative, never drives any lifecycle behavior. Bounded to 4000 chars as text (`application_events_metadata_bounded` check) — never the posting description or any large payload. `null` for every other event type. |
 | `reverted_at`     | `timestamptz`                                                 | set when the user undoes an automated update      |
 
 Indexes: `(user_id)`, `(application_id, created_at)`. RLS: standard.
+
+`AUTO_QUEUE` (migration 0047, D9 Phase A) is deliberately NOT `SYSTEM`: `SYSTEM` is reserved for
+exactly one call site (`revertApplicationEvent`'s own bookkeeping event) and is specifically
+excluded by `listOwnRelevantStatusChangeEvents` (`.neq('source', 'SYSTEM')`) from ever becoming a
+follow-up-anchor date — the Auto Mode cron job's own application-creation `STATUS_CHANGE` event
+(`null -> SAVED`) is a genuine, relevant transition and must not be excluded that way. Same
+reasoning that already justified `GMAIL_SYNC` getting its own value instead of overloading
+`SYSTEM` for background Gmail-sourced status changes.
+`start_application_from_catalog_job` (migration 0032) gained a defaulted `p_event_source`
+parameter (`default 'USER'`) in migration 0047 so this one caller can pass `AUTO_QUEUE` while
+every pre-existing caller (the manual `/discover` "Start application" click) keeps getting the
+exact same `'USER'` it always hardcoded.
 
 ---
 
@@ -723,7 +739,7 @@ Deliberately minimal — never full email bodies (see `docs/EMAIL_INTEGRATION.md
 | `classification`         | `text`                                                      | `APPLICATION_RECEIVED, ASSESSMENT, INTERVIEW, ACTION_REQUIRED, OFFER, REJECTED, OTHER`                                                                                                                                                                                                                                                                                                                                                             |
 | `confidence`             | `numeric(3,2)`                                              |                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `evidence`               | `text`                                                      | short snippet/reason, not the full email                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `confirmation_status`    | `text not null default 'PENDING'`                           | `PENDING, CONFIRMED, DECLINED, AUTO_APPLIED, NOT_APPLICABLE` — tracks whether a below-threshold match has been reviewed, so a declined suggestion never resurfaces identically on a later sync. Same role as `generated_answers.user_decision`. `AUTO_APPLIED` is set at insert time for matches meeting the 0.85 auto-apply threshold (already written to `application_events`); `NOT_APPLICABLE` for a zero-match or `OTHER`-classified message. |
+| `confirmation_status`    | `text not null default 'PENDING'`                           | `PENDING, CONFIRMED, DECLINED, AUTO_APPLIED, AUTO_CREATED, NOT_APPLICABLE` — tracks whether a below-threshold match has been reviewed, so a declined suggestion never resurfaces identically on a later sync. Same role as `generated_answers.user_decision`. `AUTO_APPLIED` is set at insert time for matches meeting the 0.85 auto-apply threshold (already written to `application_events`); `AUTO_CREATED` (migration 0046) is the background cron job's own case — a new application was created, not an existing one updated, so `matched_application_id` on this row stays null (the link instead lives on that application's own first `application_events` row); `NOT_APPLICABLE` for a zero-match or `OTHER`-classified message. |
 | `processed_at`           | `timestamptz not null default now()`                        |                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 
 Unique: `(email_connection_id, provider_message_id)` — the dedup constraint referenced in
@@ -737,13 +753,16 @@ Unique: `(email_connection_id, provider_message_id)` — the dedup constraint re
 | ------------------------------ | -------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
 | `user_id`                      | `uuid primary key references auth.users(id) on delete cascade` |                                                                                       |
 | `gmail_integration_enabled`    | `boolean not null default false`                               | user's own toggle, still gated by the global `gmail_integration_enabled` feature flag |
+| `background_gmail_tracking_enabled` | `boolean not null default false`                          | migration 0046 — separate, narrower opt-in layered on top of `gmail_integration_enabled`; lets the scheduled cron job scan this inbox with no app open at all. Connecting Gmail never sets this true by itself. |
+| `auto_mode_enabled`            | `boolean not null default false`                                | migration 0047 (D9 Phase A) — independent of both Gmail toggles above, no connection prerequisite. Lets `/api/cron/auto-queue` auto-queue this user's own high-Match `/discover` candidates, and `/api/cron/auto-tailor-drafts` auto-draft a tailored résumé for the ones they keep (D9 Phase B — same single toggle covers both). |
 | `ai_requests_this_period`      | `int not null default 0`                                       |                                                                                       |
 | `ai_request_period_started_at` | `timestamptz not null default now()`                           |                                                                                       |
 | `ai_request_limit`             | `int not null default 50`                                      | reserved for future plan-based limits, see `docs/IMPLEMENTATION_PLAN.md` Phase 8      |
 | `theme`                        | `text not null default 'system'`                               |                                                                                       |
 
-RLS: standard, plus column privileges (migration 0044): the three `ai_*` quota columns are
-server-authoritative. `authenticated` may update only `gmail_integration_enabled`/`theme`, may
+RLS: standard, plus column privileges (migration 0044, extended by 0046 and 0047): the three `ai_*`
+quota columns are server-authoritative. `authenticated` may update only
+`gmail_integration_enabled`/`background_gmail_tracking_enabled`/`auto_mode_enabled`/`theme`, may
 insert only a bare row (`user_id`), and may not delete; `increment_ai_request_usage` /
 `decrement_ai_request_usage` are service-role only. Otherwise a user could raise or reset their
 own quota directly through PostgREST — so every AI pipeline reserves/refunds quota through the
@@ -1142,3 +1161,46 @@ with exactly one reporting `created: true` (see `docs/JOB_DISCOVERY.md` §51).
 The snapshot itself reuses `job_snapshots`/`_upsert_job_snapshot` verbatim (see "job_snapshots"
 above) — `source_job_id` there is populated with the `job_catalog.id`, not a `jobs.id`, which the
 column's own pre-existing lack of a foreign key was always loose enough to allow honestly.
+
+## Auto Mode (D9, migration 0047)
+
+Full design record: `docs/IMPLEMENTATION_PLAN.md` "D9 — Auto Mode". Phase A adds no new table —
+two columns on `applications` (`auto_queued`, `auto_queue_status`, see "applications" above), a
+new `AUTO_QUEUE` value on `application_events.source`, a new `auto_mode_enabled` column on
+`user_settings`, and one defaulted new parameter (`p_event_source`) on the existing
+`start_application_from_catalog_job` (see "application_events" and "Discovery → Application
+Handoff" above). The candidate-selection query (`listOwnAutoQueueCandidateMatchScores`) reads
+`user_job_match_scores` directly with an explicit `user_id` filter rather than through
+`list_own_discovery_feed` — that RPC is `SECURITY INVOKER` and reads `auth.uid()`, which is
+`null` under the service-role admin client the cron orchestrator runs on.
+
+## `pending_resume_tailoring_drafts` (D9 Phase B, migration 0048)
+
+| column           | type                                                            | notes                                                                                                                                                                                                 |
+| ---------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `id`              | `uuid pk`                                                        |                                                                                                                                                                                                        |
+| `user_id`         | `uuid not null references auth.users(id) on delete cascade`      |                                                                                                                                                                                                        |
+| `application_id`  | `uuid not null unique references applications(id) on delete cascade` | at most one pending draft per application — the orchestrator (`runAutoTailorDraftsForUser`) skips generating a new one while one already exists, rather than silently overwriting an unreviewed draft. |
+| `proposal`        | `jsonb not null`                                                  | the ENTIRE `ResumeTailoringProposal` (`packages/shared`) — the exact same shape `POST /api/applications/:id/resume-tailoring` already returns and `ResumeTailoringReviewSession` already renders. No new review UI, no new data model beyond "store this one already-validated object." |
+| `created_at`      | `timestamptz not null default now()`                              |                                                                                                                                                                                                        |
+
+Indexes: `(user_id)`. RLS: standard 4-policy.
+
+The only genuinely new concept Phase B needed: Phase 7E/7F's tailoring pipeline
+(`generateResumeTailoringPlan`, `save_reviewed_tailored_resume`) was built fully synchronous and
+ephemeral — it only ever ran from a live user click and persisted nothing until the user's own
+accept pass. Running it unattended from a cron job (`/api/cron/auto-tailor-drafts`, hourly) needs
+somewhere to put the result until the user opens the review screen. Staleness uses the SAME
+anchors `save_reviewed_tailored_resume` itself re-checks — the stored `proposal.
+baseResumeVersionId`/`proposal.jobSnapshotId` compared against the application's CURRENT
+`working_resume_version_id`/`job_snapshot_id` — read at the application detail page's own render
+time, not a separate fingerprint column that could drift out of sync with what the save RPC
+actually trusts. A stale draft is deleted on read (self-healing cleanup, so the next cron tick
+generates a fresh one); a consumed draft is deleted by `/resume-tailoring/save` immediately after
+a successful save, best-effort (cleanup failing never fails an already-successful save).
+
+Candidates for drafting (`listOwnApplicationsEligibleForAutoTailorDraft`) are deliberately scoped
+to this user's own `auto_queued = true, auto_queue_status = 'KEPT'` applications that already
+have a `working_resume_version_id` set — never every `SAVED` application a user has, and Auto
+Mode never chooses a résumé on the user's behalf; it only ever drafts for one the user already
+attached themselves.

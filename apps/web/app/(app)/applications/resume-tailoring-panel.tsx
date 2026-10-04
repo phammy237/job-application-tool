@@ -41,11 +41,21 @@ export interface LatestCompanyResearchSummary {
 export function ResumeTailoringPanel({
   applicationId,
   latestCompanyResearch,
+  pendingDraft,
 }: {
   applicationId: string;
   latestCompanyResearch: LatestCompanyResearchSummary | null;
+  /** D9 Phase B — a résumé-tailoring proposal Auto Mode's own cron job already generated for
+   * this application, already matching its current working résumé and job snapshot (the page
+   * itself discards a stale one before this component ever sees it). When present, the review
+   * session below is shown immediately — no click, no additional Claude call — exactly as if the
+   * user had just clicked "Tailor resume for this job" themselves and it had just come back. */
+  pendingDraft?: ResumeTailoringProposal | null;
 }) {
-  const [generation, setGeneration] = useState<GenerationState>({ status: 'idle' });
+  const [generation, setGeneration] = useState<GenerationState>(
+    pendingDraft ? { status: 'ready', proposal: pendingDraft } : { status: 'idle' },
+  );
+  const [showingAutoModeDraft, setShowingAutoModeDraft] = useState(pendingDraft != null);
   const [researchMode, setResearchMode] = useState<ResumeTailoringResearchMode>(
     latestCompanyResearch ? 'JOB_PLUS_COMPANY_RESEARCH' : 'JOB_ONLY',
   );
@@ -61,6 +71,7 @@ export function ResumeTailoringPanel({
     }
 
     setGeneration({ status: 'generating' });
+    setShowingAutoModeDraft(false);
     try {
       const response = await fetch(
         `/api/applications/${applicationId}/resume-tailoring`,
@@ -215,6 +226,13 @@ export function ResumeTailoringPanel({
       ) : null}
       {generation.status === 'error' ? (
         <p className="text-destructive text-sm">{generation.message}</p>
+      ) : null}
+
+      {isReady && showingAutoModeDraft ? (
+        <p className="bg-accent/50 text-muted-foreground rounded-md p-2 text-sm">
+          Auto Mode already tailored this for you — review the changes below, or click
+          Regenerate for a fresh pass.
+        </p>
       ) : null}
 
       {isReady ? (

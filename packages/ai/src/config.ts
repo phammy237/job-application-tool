@@ -188,3 +188,13 @@ export const RESEARCH_TAILORING_AUTO_RESOLVE_CANDIDATE_LIMIT = 3;
 export const RESUME_EXTRACTION_MAX_OUTPUT_TOKENS = 8192;
 export const RESUME_EXTRACTION_PROMPT_VERSION = 'resume-extraction-v1';
 export const RESUME_EXTRACTION_TEXT_CHAR_CAP = 15_000;
+
+/**
+ * Auto Mode auto-tailoring (D9 Phase B) tuning constants — every bound
+ * `runAutoTailorDraftingForUser` and its cron route observe. Deliberately small relative to
+ * Phase A's discovery-queue constants: unlike auto-queueing, every draft generated here is a
+ * real, billed Claude call against the user's own `ai_request_limit`.
+ */
+export const MAX_AUTO_TAILOR_DRAFTS_PER_USER_PER_RUN = 3;
+export const MAX_USERS_PER_AUTO_TAILOR_RUN = 20;
+export const MAX_CONCURRENT_AUTO_TAILOR_USERS = 5;

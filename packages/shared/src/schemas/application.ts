@@ -21,6 +21,19 @@ export type ApplicationStatus = z.infer<typeof applicationStatusSchema>;
 
 export const APPLICATION_STATUSES = applicationStatusSchema.options;
 
+/** Added in migration 0047 (D9 Phase A) — the review lifecycle for an Auto Mode-queued
+ * application, independent of `status`. Mirrors `email_signals.confirmation_status`'s enum
+ * shape. `NOT_APPLICABLE` is the permanent value for every application that was never auto-queued
+ * (every pre-existing row, every manually/extension-created one); the other three only ever apply
+ * to a row with `autoQueued: true`. */
+export const autoQueueStatusSchema = z.enum([
+  'NOT_APPLICABLE',
+  'PENDING_REVIEW',
+  'KEPT',
+  'DISMISSED',
+]);
+export type AutoQueueStatus = z.infer<typeof autoQueueStatusSchema>;
+
 /**
  * Counts only, no per-field content (docs/IMPLEMENTATION_PLAN.md Phase 4C) — how many approved
  * fields existed, how many the fill engine actually wrote, how many were skipped/failed, and
@@ -119,6 +132,25 @@ export const applicationSchema = z.object({
    * the referenced catalog row is later removed (`on delete set null`) — this is provenance, not
    * a dependency the application's own historical record relies on. */
   jobCatalogId: uuidSchema.nullable().default(null),
+  /** Added in migration 0046 — permanent provenance, never cleared: true only for an application
+   * created by the background Gmail cron job from a confirmation email Career OS couldn't match
+   * to anything already tracked (createAutoTrackedApplicationFromEmail), never for one built
+   * through Analyze Job / Save Application or the manual "Add application" form. Its
+   * company/title came from best-effort deterministic parsing of an email, never a real job
+   * posting — the UI surfaces this plainly rather than presenting it as equivalent data.
+   * `.default(false)` so a database missing migration 0046 degrades to "not auto-tracked". */
+  autoTracked: z.boolean().default(false),
+  /** Added in migration 0047 (D9 Phase A) — permanent provenance, never cleared: true only for an
+   * application created by the Auto Mode cron job (runAutoQueueForUser) from a high-Match/
+   * high-Coverage/non-CONFLICT /discover candidate via the existing D6 handoff, never for one
+   * built through Analyze Job / Save Application, the manual "Add application" form, or the
+   * extension. `.default(false)` so a database missing migration 0047 degrades to "not
+   * auto-queued". */
+  autoQueued: z.boolean().default(false),
+  /** Added in migration 0047 (D9 Phase A) — the review lifecycle described on
+   * `autoQueueStatusSchema`. `.default('NOT_APPLICABLE')` so a database missing migration 0047
+   * degrades to the same value every non-auto-queued row already has. */
+  autoQueueStatus: autoQueueStatusSchema.default('NOT_APPLICABLE'),
   createdAt: isoDateTimeSchema,
   updatedAt: isoDateTimeSchema,
 });

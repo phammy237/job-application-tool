@@ -1,20 +1,27 @@
 # Email Integration
 
 Gmail sync is optional, off by default (`gmail_integration_enabled` feature flag, plus a
-per-user toggle in `user_settings`), and **attended-only** in v1 — every sync run happens
-inside a real request made while the signed-in user actually has the app open, never while
-they're away. Two things trigger it:
+per-user toggle in `user_settings`). Three things can trigger it:
 
 - **Manual.** The user clicks **Sync Gmail** in `/settings`.
 - **Throttled auto-check on page load.** `/settings` also fires the same sync automatically
   when the page loads or reloads, if the connection's last sync was more than five minutes
   ago (`AUTO_SYNC_THROTTLE_MS` in `apps/web/app/(app)/settings/gmail-section.tsx`).
+- **Scheduled background sync (migration 0046), opt-in, separate from the two above.** A
+  Vercel cron job (`apps/web/vercel.json`, `/api/cron/gmail-background-sync`) runs on a
+  schedule with no app open at all — the one genuinely unattended entry point in this
+  integration. It only ever runs for a user who has flipped a second, explicit
+  `backgroundGmailTrackingEnabled` toggle in `/settings` on top of the base Gmail connection;
+  connecting Gmail alone never implies this. See §1A below for exactly what it's allowed to
+  do that the attended paths aren't.
 
-Neither is background/unattended sync. The distinction this doc cares about is **attended vs.
-unattended**, not **click vs. no-click**: there is still no cron job, no webhook, no push
-notification, no IMAP idle connection, and no polling that runs while the user doesn't have
-the page open. See `docs/IMPLEMENTATION_PLAN.md`'s Phase 5 auto-sync note for why the
-auto-check was added on top of the originally-specified manual-only design.
+The first two remain attended-only — every run happens inside a real request made while the
+signed-in user actually has the app open. There is still no webhook, no push notification,
+and no IMAP idle connection anywhere in this integration; the cron job is deterministic
+polling on a fixed schedule, not an always-listening connection. See
+`docs/IMPLEMENTATION_PLAN.md`'s Phase 5 auto-sync note for why the page-load auto-check was
+added on top of the originally-specified manual-only design, and its background-tracking
+note for the background cron job's own design decision.
 
 ## 1. Flow
 
@@ -40,7 +47,8 @@ ACTION_REQUIRED, OFFER, REJECTED, OTHER`. This handles the large majority of
    sender/subject/snippet, not the full email, following the same data-minimization principle
    as `docs/AI_GROUNDING.md` §6.
 6. **Match to an application.** Each classified message is matched against the user's
-   `applications` (by company name, sender domain, and job title overlap).
+   `applications` (by company name, sender domain, and job title overlap). If nothing
+   matches, the attended paths stop here — see §1A for the one exception.
 7. **Return classification + confidence + evidence.** Every result carries a short,
    human-readable evidence string (e.g. "subject contains 'interview availability'"), not
    the underlying reasoning trace.
@@ -53,6 +61,31 @@ provider_message_id)` (see `docs/DATA_MODEL.md`), so re-running sync never repro
 10. **Disconnect + delete.** User can disconnect Gmail and delete all stored signals at any
     time; disconnecting revokes the OAuth grant server-side (not just deletes the local row)
     and deletes the `email_connections` row, cascading to `email_signals`.
+
+## 1A. Background auto-tracking (migration 0046) — the one exception to "match only"
+
+Every attended sync path (manual click, page-load auto-check) only ever *updates* an
+application the user already tracks — it never creates one. The background cron job is the
+single exception, and only for one narrow, high-confidence case:
+
+- Only runs `runGmailSync` with `allowAutoCreate: true` — every other caller passes the
+  default `false`, preserving the exact original "never creates" behavior.
+- Only creates a new application when a message is **unmatched** (no existing application it
+  could instead update), classifies as `APPLICATION_RECEIVED` specifically (the one
+  unambiguous "you applied somewhere" signal — never `INTERVIEW`/`OFFER`/etc. on its own),
+  and clears the same 0.85 confidence bar every other auto-action in this integration uses.
+- Company and title are extracted deterministically from the message's own sender/subject
+  (`packages/email/src/extract-application-identity.ts`) — never a Claude call, never
+  invented. No confident company name at all means no application is created, full stop;
+  a missing title alone degrades to a plain placeholder ("Role not detected — edit this")
+  instead, since the user can always fill that in once the row exists.
+- The new application is permanently flagged `autoTracked: true` and surfaced with an
+  "Auto-detected" badge everywhere it's shown — never presented as equivalent to one built
+  through Analyze Job / Save Application.
+- `email_signals.confirmation_status` gets a fourth value, `AUTO_CREATED`, distinct from
+  `AUTO_APPLIED` (which means an existing application's status changed) specifically so the
+  signal history can tell "we created something new" apart from "we updated something you
+  already knew about."
 
 ## 2. Classification categories
 

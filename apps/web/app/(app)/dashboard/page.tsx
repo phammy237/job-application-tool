@@ -1,5 +1,7 @@
 import {
   listOwnApplications,
+  listOwnApplicationsPendingAutoQueueReview,
+  listOwnMatchScoresForJobCatalogIds,
   listOwnRecentApplicationEvents,
   listOwnRelevantStatusChangeEvents,
 } from '@career-os/database';
@@ -19,6 +21,7 @@ import {
 import { formatFriendlyDateTime } from '../../../lib/format-friendly-date';
 import { createClient } from '../../../lib/supabase/server';
 import { ApplicationActionRow } from './application-action-row';
+import { AutoQueueReviewCard } from './auto-queue-review-card';
 
 /** How many of the user's most recent application_events to pull for the activity feed — one
  * bounded query, not one per application (docs/IMPLEMENTATION_PLAN.md "Phase 5C.2H"). Some may
@@ -38,11 +41,20 @@ export default async function DashboardPage() {
   const user = await requireUser();
   const supabase = await createClient();
 
-  const [applications, recentEvents, relevantStatusChangeEvents] = await Promise.all([
-    listOwnApplications(supabase, user.id),
-    listOwnRecentApplicationEvents(supabase, user.id, RECENT_ACTIVITY_FETCH_LIMIT),
-    listOwnRelevantStatusChangeEvents(supabase, user.id),
-  ]);
+  const [applications, recentEvents, relevantStatusChangeEvents, pendingAutoQueueReview] =
+    await Promise.all([
+      listOwnApplications(supabase, user.id),
+      listOwnRecentApplicationEvents(supabase, user.id, RECENT_ACTIVITY_FETCH_LIMIT),
+      listOwnRelevantStatusChangeEvents(supabase, user.id),
+      listOwnApplicationsPendingAutoQueueReview(supabase, user.id),
+    ]);
+  const pendingAutoQueueMatchScores = await listOwnMatchScoresForJobCatalogIds(
+    supabase,
+    user.id,
+    pendingAutoQueueReview
+      .map((application) => application.jobCatalogId)
+      .filter((id): id is string => id !== null),
+  );
 
   const now = new Date().toISOString();
   const withNextActions = sortApplicationsByAttention(
@@ -116,6 +128,31 @@ export default async function DashboardPage() {
         </Card>
       ) : (
         <>
+          {pendingAutoQueueReview.length > 0 ? (
+            <section className="space-y-3">
+              <h2 className="text-muted-foreground text-sm font-medium">
+                Needs your review
+                <span className="ml-2 text-xs font-normal">
+                  (Auto Mode found these — keep or dismiss each one)
+                </span>
+              </h2>
+              <ul className="space-y-2">
+                {pendingAutoQueueReview.map((application) => (
+                  <li key={application.id}>
+                    <AutoQueueReviewCard
+                      application={application}
+                      matchScore={
+                        application.jobCatalogId
+                          ? pendingAutoQueueMatchScores.get(application.jobCatalogId)
+                          : undefined
+                      }
+                    />
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+
           <section className="space-y-3">
             <div className="grid gap-3 sm:grid-cols-5">
               {(Object.keys(DASHBOARD_STAGE_GROUPS) as DashboardStageGroup[]).map(
@@ -197,6 +234,7 @@ export default async function DashboardPage() {
                     <span className="text-muted-foreground ml-auto text-xs">
                       {formatFriendlyDateTime(item.event.createdAt)}
                       {item.event.source === 'GMAIL_SYNC' ? ' · via Gmail' : ''}
+                      {item.event.source === 'AUTO_QUEUE' ? ' · via Auto Mode' : ''}
                     </span>
                   </li>
                 ))}

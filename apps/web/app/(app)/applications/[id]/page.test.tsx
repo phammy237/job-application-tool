@@ -6,8 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   requireUser: vi.fn(),
   createClient: vi.fn(),
+  deleteOwnPendingResumeTailoringDraft: vi.fn(),
   getOwnApplication: vi.fn(),
   getOwnJobSnapshot: vi.fn(),
+  getOwnPendingResumeTailoringDraft: vi.fn(),
   getOwnResumeVersion: vi.fn(),
   listApplicationEvents: vi.fn(),
   listOwnCompanyResearchSnapshotsForApplication: vi.fn(),
@@ -18,8 +20,10 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@career-os/database', () => ({
+  deleteOwnPendingResumeTailoringDraft: mocks.deleteOwnPendingResumeTailoringDraft,
   getOwnApplication: mocks.getOwnApplication,
   getOwnJobSnapshot: mocks.getOwnJobSnapshot,
+  getOwnPendingResumeTailoringDraft: mocks.getOwnPendingResumeTailoringDraft,
   getOwnResumeVersion: mocks.getOwnResumeVersion,
   listApplicationEvents: mocks.listApplicationEvents,
   listOwnCompanyResearchSnapshotsForApplication: mocks.listOwnCompanyResearchSnapshotsForApplication,
@@ -91,6 +95,8 @@ beforeEach(() => {
   mocks.listOwnRelevantStatusChangeEventsForApplication.mockResolvedValue([]);
   mocks.getOwnResumeVersion.mockResolvedValue(null);
   mocks.listOwnCompanyResearchSnapshotsForApplication.mockResolvedValue([]);
+  mocks.getOwnPendingResumeTailoringDraft.mockResolvedValue(null);
+  mocks.deleteOwnPendingResumeTailoringDraft.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -180,5 +186,81 @@ describe('ApplicationDetailPage — D6 discovery provenance', () => {
     ]);
     await renderPage();
     expect(screen.getByText('Discovered through Career OS Discovery')).toBeInTheDocument();
+  });
+});
+
+describe('ApplicationDetailPage — D9 Phase B pending tailoring draft staleness', () => {
+  it('keeps a draft whose baseResumeVersionId/jobSnapshotId still match the application', async () => {
+    mocks.getOwnApplication.mockResolvedValue({
+      ...BASE_APPLICATION,
+      workingResumeVersionId: 'version-1',
+      jobSnapshotId: 'snapshot-1',
+    });
+    mocks.getOwnPendingResumeTailoringDraft.mockResolvedValue({
+      id: 'draft-1',
+      userId: USER_ID,
+      applicationId: APPLICATION_ID,
+      proposal: { baseResumeVersionId: 'version-1', jobSnapshotId: 'snapshot-1' },
+      createdAt: '2026-01-01T00:00:00.000Z',
+    });
+
+    await renderPage();
+
+    expect(mocks.deleteOwnPendingResumeTailoringDraft).not.toHaveBeenCalled();
+  });
+
+  it('discards and deletes a draft whose baseResumeVersionId no longer matches (résumé changed since drafting)', async () => {
+    mocks.getOwnApplication.mockResolvedValue({
+      ...BASE_APPLICATION,
+      workingResumeVersionId: 'version-2',
+      jobSnapshotId: 'snapshot-1',
+    });
+    mocks.getOwnPendingResumeTailoringDraft.mockResolvedValue({
+      id: 'draft-1',
+      userId: USER_ID,
+      applicationId: APPLICATION_ID,
+      proposal: { baseResumeVersionId: 'version-1', jobSnapshotId: 'snapshot-1' },
+      createdAt: '2026-01-01T00:00:00.000Z',
+    });
+
+    await renderPage();
+
+    expect(mocks.deleteOwnPendingResumeTailoringDraft).toHaveBeenCalledWith(
+      SESSION_CLIENT,
+      USER_ID,
+      APPLICATION_ID,
+    );
+  });
+
+  it('discards and deletes a draft whose jobSnapshotId no longer matches', async () => {
+    mocks.getOwnApplication.mockResolvedValue({
+      ...BASE_APPLICATION,
+      workingResumeVersionId: 'version-1',
+      jobSnapshotId: 'snapshot-2',
+    });
+    mocks.getOwnPendingResumeTailoringDraft.mockResolvedValue({
+      id: 'draft-1',
+      userId: USER_ID,
+      applicationId: APPLICATION_ID,
+      proposal: { baseResumeVersionId: 'version-1', jobSnapshotId: 'snapshot-1' },
+      createdAt: '2026-01-01T00:00:00.000Z',
+    });
+
+    await renderPage();
+
+    expect(mocks.deleteOwnPendingResumeTailoringDraft).toHaveBeenCalledWith(
+      SESSION_CLIENT,
+      USER_ID,
+      APPLICATION_ID,
+    );
+  });
+
+  it('does nothing when there is no stored draft at all', async () => {
+    mocks.getOwnApplication.mockResolvedValue(BASE_APPLICATION);
+    mocks.getOwnPendingResumeTailoringDraft.mockResolvedValue(null);
+
+    await renderPage();
+
+    expect(mocks.deleteOwnPendingResumeTailoringDraft).not.toHaveBeenCalled();
   });
 });

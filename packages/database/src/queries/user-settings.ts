@@ -12,6 +12,8 @@ export interface AiUsageCheck {
 function rowToUserSettings(row: {
   user_id: string;
   gmail_integration_enabled: boolean;
+  background_gmail_tracking_enabled?: boolean;
+  auto_mode_enabled?: boolean;
   ai_requests_this_period: number;
   ai_request_period_started_at: string;
   ai_request_limit: number;
@@ -20,6 +22,12 @@ function rowToUserSettings(row: {
   return userSettingsSchema.parse({
     userId: row.user_id,
     gmailIntegrationEnabled: row.gmail_integration_enabled,
+    // Optional key, not just nullable — same "missing migration degrades gracefully" reasoning
+    // as every other post-0001 column in this codebase (see applications.ts's identical pattern).
+    backgroundGmailTrackingEnabled:
+      'background_gmail_tracking_enabled' in row ? row.background_gmail_tracking_enabled : false,
+    // Added in migration 0047 (D9 Phase A) — same missing-key-on-an-unmigrated-database degrade.
+    autoModeEnabled: 'auto_mode_enabled' in row ? row.auto_mode_enabled : false,
     aiRequestsThisPeriod: row.ai_requests_this_period,
     aiRequestPeriodStartedAt: row.ai_request_period_started_at,
     aiRequestLimit: row.ai_request_limit,
@@ -72,6 +80,47 @@ export async function updateOwnGmailIntegrationEnabled(
     .update({ gmail_integration_enabled: enabled })
     .eq('user_id', userId);
   assertNoError(error, 'updateOwnGmailIntegrationEnabled');
+}
+
+/**
+ * Flips the second, narrower opt-in (migration 0046): whether the scheduled background cron job
+ * may scan this user's inbox with no app open at all. Distinct from
+ * updateOwnGmailIntegrationEnabled above — a user can connect Gmail for manual sync only and
+ * never flip this on. The caller (the new /api/gmail/background-tracking route) is responsible
+ * for refusing to enable this when the user hasn't connected Gmail at all; this function only
+ * writes the one column.
+ */
+export async function updateOwnBackgroundGmailTrackingEnabled(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+  enabled: boolean,
+): Promise<void> {
+  await getOrCreateOwnUserSettings(supabase, userId);
+  const { error } = await supabase
+    .from('user_settings')
+    .update({ background_gmail_tracking_enabled: enabled })
+    .eq('user_id', userId);
+  assertNoError(error, 'updateOwnBackgroundGmailTrackingEnabled');
+}
+
+/**
+ * Flips the Auto Mode opt-in (migration 0047, D9 Phase A): whether the scheduled
+ * /api/cron/auto-queue job may auto-queue this user's own high-Match/high-Coverage/non-CONFLICT
+ * /discover candidates as ordinary SAVED applications for review. Independent of both Gmail
+ * toggles above — no connection prerequisite, no shared opt-in, both enable and disable are
+ * always allowed by the caller.
+ */
+export async function updateOwnAutoModeEnabled(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+  enabled: boolean,
+): Promise<void> {
+  await getOrCreateOwnUserSettings(supabase, userId);
+  const { error } = await supabase
+    .from('user_settings')
+    .update({ auto_mode_enabled: enabled })
+    .eq('user_id', userId);
+  assertNoError(error, 'updateOwnAutoModeEnabled');
 }
 
 /**

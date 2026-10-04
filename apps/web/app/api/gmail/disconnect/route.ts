@@ -3,6 +3,7 @@ import {
   decryptRefreshToken,
   deleteOwnEmailConnection,
   getOwnEmailConnectionWithToken,
+  updateOwnBackgroundGmailTrackingEnabled,
   updateOwnGmailIntegrationEnabled,
 } from '@career-os/database';
 import { revokeToken } from '@career-os/email';
@@ -15,6 +16,10 @@ import { createClient } from '../../../../lib/supabase/server';
  * (docs/SECURITY_AND_PRIVACY.md §5). Revocation is best-effort (revokeToken never throws); local
  * cleanup proceeds either way. Deleting the row cascades to email_signals via the migration's
  * `on delete cascade`.
+ *
+ * Also resets `backgroundGmailTrackingEnabled` (migration 0046) — a reconnect later must require
+ * a fresh, explicit opt back into background tracking specifically, never silently resume it
+ * just because the underlying flag happened to still be true from before.
  */
 export async function POST() {
   const user = await getCurrentUser();
@@ -31,6 +36,7 @@ export async function POST() {
   await revokeToken(decryptRefreshToken(connection.encryptedRefreshToken));
   await deleteOwnEmailConnection(supabase, user.id);
   await updateOwnGmailIntegrationEnabled(supabase, user.id, false);
+  await updateOwnBackgroundGmailTrackingEnabled(supabase, user.id, false);
 
   return NextResponse.json({ status: 'disconnected' });
 }
