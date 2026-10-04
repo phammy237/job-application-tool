@@ -99,6 +99,7 @@ export interface Database {
           user_approved: boolean;
           approved_for_applications: boolean;
           visible_on_public_profile: boolean;
+          visibility?: string;
           display_order: number;
           created_at: string;
           updated_at: string;
@@ -151,6 +152,12 @@ export interface Database {
           user_approved: boolean;
           approved_for_applications: boolean;
           visible_on_public_profile: boolean;
+          status?: string | null;
+          summary?: string | null;
+          collaborators?: string[];
+          talking_points?: string[];
+          origin?: string;
+          visibility?: string;
           created_at: string;
           updated_at: string;
         };
@@ -172,6 +179,7 @@ export interface Database {
           user_approved: boolean;
           approved_for_applications: boolean;
           visible_on_public_profile: boolean;
+          visibility?: string;
           created_at: string;
           updated_at: string;
         };
@@ -990,6 +998,234 @@ export interface Database {
           eligibility_version: string;
         };
         Update: Partial<Database['public']['Tables']['user_job_match_scores']['Row']>;
+        Relationships: [];
+      };
+      myos_evidence: {
+        Row: {
+          id: string;
+          user_id: string;
+          source_type: string;
+          source_ref: string | null;
+          source_url: string | null;
+          title: string;
+          excerpt: string | null;
+          occurred_at: string | null;
+          confidence: number | null;
+          verification_state: string;
+          visibility: string;
+          metadata: Json;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['myos_evidence']['Row']> & {
+          user_id: string;
+          source_type: string;
+          title: string;
+          verification_state: string;
+        };
+        Update: Partial<Database['public']['Tables']['myos_evidence']['Row']>;
+        Relationships: [];
+      };
+      myos_achievements: {
+        Row: {
+          id: string;
+          user_id: string;
+          title: string;
+          description: string | null;
+          kind: string;
+          occurred_on: string | null;
+          metric_text: string | null;
+          project_id: string | null;
+          experience_id: string | null;
+          verification_state: string;
+          user_approved: boolean;
+          visibility: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['myos_achievements']['Row']> & {
+          user_id: string;
+          title: string;
+        };
+        Update: Partial<Database['public']['Tables']['myos_achievements']['Row']>;
+        Relationships: [];
+      };
+      myos_stories: {
+        Row: {
+          id: string;
+          user_id: string;
+          title: string;
+          situation: string | null;
+          task: string | null;
+          action: string | null;
+          result: string | null;
+          competencies: string[];
+          themes: string[];
+          verification_state: string;
+          user_approved: boolean;
+          visibility: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['myos_stories']['Row']> & {
+          user_id: string;
+          title: string;
+        };
+        Update: Partial<Database['public']['Tables']['myos_stories']['Row']>;
+        Relationships: [];
+      };
+      myos_edges: {
+        Row: {
+          id: string;
+          user_id: string;
+          from_type: string;
+          from_id: string;
+          to_type: string;
+          to_id: string;
+          relation: string;
+          verification_state: string;
+          confidence: number | null;
+          note: string | null;
+          created_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['myos_edges']['Row']> & {
+          user_id: string;
+          from_type: string;
+          from_id: string;
+          to_type: string;
+          to_id: string;
+          relation: string;
+          verification_state: string;
+        };
+        Update: Partial<Database['public']['Tables']['myos_edges']['Row']>;
+        Relationships: [];
+      };
+      myos_candidates: {
+        Row: {
+          id: string;
+          user_id: string;
+          kind: string;
+          project_id: string | null;
+          payload: Json;
+          evidence_ids: string[];
+          rationale: string | null;
+          dedupe_key: string;
+          status: string;
+          created_at: string;
+          decided_at: string | null;
+        };
+        Insert: Partial<Database['public']['Tables']['myos_candidates']['Row']> & {
+          user_id: string;
+          kind: string;
+          payload: Json;
+          dedupe_key: string;
+        };
+        Update: Partial<Database['public']['Tables']['myos_candidates']['Row']>;
+        Relationships: [];
+      };
+      github_connections: {
+        Row: {
+          user_id: string;
+          github_login: string;
+          github_user_id: number | null;
+          has_token: boolean;
+          status: string;
+          last_error: string | null;
+          last_synced_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['github_connections']['Row']> & {
+          user_id: string;
+          github_login: string;
+        };
+        Update: Partial<Database['public']['Tables']['github_connections']['Row']>;
+        Relationships: [];
+      };
+      github_credentials: {
+        Row: {
+          user_id: string;
+          encrypted_access_token: string;
+          created_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['github_credentials']['Row']> & {
+          user_id: string;
+          encrypted_access_token: string;
+        };
+        Update: Partial<Database['public']['Tables']['github_credentials']['Row']>;
+        Relationships: [];
+      };
+      github_repositories: {
+        Row: {
+          id: string;
+          user_id: string;
+          github_repo_id: number;
+          full_name: string;
+          description: string | null;
+          html_url: string;
+          is_private: boolean;
+          is_fork: boolean;
+          is_archived: boolean;
+          default_branch: string | null;
+          primary_language: string | null;
+          languages: Json;
+          topics: string[];
+          stars: number;
+          repo_created_at: string | null;
+          pushed_at: string | null;
+          readme_excerpt: string | null;
+          readme_sha: string | null;
+          contributors: Json;
+          pr_count: number;
+          commit_count: number;
+          etag: string | null;
+          selected: boolean;
+          project_id: string | null;
+          sync_status: string;
+          sync_error: string | null;
+          last_synced_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['github_repositories']['Row']> & {
+          user_id: string;
+          github_repo_id: number;
+          full_name: string;
+          html_url: string;
+        };
+        Update: Partial<Database['public']['Tables']['github_repositories']['Row']>;
+        Relationships: [];
+      };
+      github_sync_runs: {
+        Row: {
+          id: string;
+          user_id: string;
+          status: string;
+          stats: Json;
+          error: string | null;
+          started_at: string;
+          finished_at: string | null;
+        };
+        Insert: Partial<Database['public']['Tables']['github_sync_runs']['Row']> & {
+          user_id: string;
+        };
+        Update: Partial<Database['public']['Tables']['github_sync_runs']['Row']>;
+        Relationships: [];
+      };
+      portfolio_settings: {
+        Row: {
+          user_id: string;
+          enabled: boolean;
+          api_key_hash: string | null;
+          display_name: string | null;
+          headline: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['portfolio_settings']['Row']> & {
+          user_id: string;
+        };
+        Update: Partial<Database['public']['Tables']['portfolio_settings']['Row']>;
         Relationships: [];
       };
     };

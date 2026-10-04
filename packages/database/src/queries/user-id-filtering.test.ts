@@ -80,6 +80,8 @@ const EXEMPT_FILES = new Set([
   'job-catalog-features.ts',
   'candidate-competency-codes.ts',
   'discovery-feed.ts',
+  // myOS internal row→domain mappers: no queries at all (callers in myos-*.ts filter by user_id).
+  'myos-mappers.ts',
 ]);
 
 describe('every user-scoped query filters by user_id explicitly', () => {
