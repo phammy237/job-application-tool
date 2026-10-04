@@ -44,6 +44,7 @@ vi.mock('../resume-section', () => ({ ResumeSection: () => null }));
 vi.mock('../resume-tailoring-panel', () => ({ ResumeTailoringPanel: () => null }));
 vi.mock('../revert-event-button', () => ({ RevertEventButton: () => null }));
 vi.mock('../submission-packet-section', () => ({ SubmissionPacketSection: () => null }));
+vi.mock('./myos-sections', () => ({ MyosApplicationSections: () => null }));
 
 const { default: ApplicationDetailPage } = await import('./page');
 

@@ -10,12 +10,14 @@ import {
 import { Button, Input, Label } from '@career-os/ui';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
+import type { BulletGroundingMap } from '../../../../../lib/myos/bullet-grounding';
 import { saveNewStructuredResumeVersion } from './actions';
 import { BulletsEditor } from './bullets-editor';
 import { DateRangeFields } from './date-range-fields';
 import { EntrySectionEditor } from './entry-section-editor';
 import { HeaderEditor } from './header-editor';
 import { LatexCodeEditor } from './latex-code-editor';
+import { MyosBulletGroundingPanel } from './myos-bullet-grounding-panel';
 import { ResumePdfPreview } from './resume-pdf-preview';
 import { SkillsEditor } from './skills-editor';
 import { useResumeCompile } from './use-resume-compile';
@@ -35,12 +37,15 @@ export function ResumeStudio({
   baseVersionLabel,
   initialContent,
   profileImportContent,
+  myosGrounding,
 }: {
   resumeId: string;
   resumeName: string;
   baseVersionLabel: string | null;
   initialContent: StructuredResumeV1;
   profileImportContent: StructuredResumeV1;
+  /** Advisory myOS evidence check per bullet id, computed server-side (optional). */
+  myosGrounding?: BulletGroundingMap | null;
 }) {
   const router = useRouter();
   const [draft, setDraft] = useState<StructuredResumeV1>(initialContent);
@@ -424,6 +429,10 @@ export function ResumeStudio({
                 groups={draft.skills}
                 onChange={(skills) => update((prev) => ({ ...prev, skills }))}
               />
+
+              {myosGrounding ? (
+                <MyosBulletGroundingPanel draft={draft} grounding={myosGrounding} />
+              ) : null}
             </>
           ) : (
             <div className="space-y-3">

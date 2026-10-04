@@ -7,6 +7,7 @@ import {
 import { GithubClient, syncGithubRepositories } from '@career-os/myos';
 import { getCurrentUser } from '../../../../../lib/auth';
 import { createGithubSyncStore } from '../../../../../lib/myos-github-store';
+import { generateCandidatesForSelectedRepos } from '../../../../../lib/myos/extract-after-sync';
 import { createClient } from '../../../../../lib/supabase/server';
 import { createAdminClient } from '../../../../../lib/supabase/admin';
 
@@ -65,6 +66,13 @@ export async function POST() {
       userId: user.id,
       login: connection.githubLogin,
     });
+    // Additive: derive PENDING candidates (deterministic, no LLM) for selected repos. A failure
+    // here must never fail the sync, and nothing but a generic message is logged.
+    try {
+      await generateCandidatesForSelectedRepos(supabase, user.id);
+    } catch {
+      console.warn('[career-os] candidate generation after GitHub sync failed');
+    }
     return NextResponse.json({
       runId: result.runId,
       status: result.status,

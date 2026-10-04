@@ -25,6 +25,7 @@ import { ResumeSection } from '../resume-section';
 import { ResumeTailoringPanel } from '../resume-tailoring-panel';
 import { RevertEventButton } from '../revert-event-button';
 import { SubmissionPacketSection } from '../submission-packet-section';
+import { MyosApplicationSections } from './myos-sections';
 
 export default async function ApplicationDetailPage({
   params,
@@ -275,6 +276,18 @@ export default async function ApplicationDetailPage({
           jobSnapshotId={application.jobSnapshotId}
           contentTruncated={jobSnapshot?.contentTruncated ?? false}
           truncatedFields={jobSnapshot?.truncatedFields ?? []}
+        />
+      ) : null}
+
+      {/* myOS integration — deterministic, AI-free panels computed from the user's own evidence
+          graph (docs/myos/CAREER_INTEGRATION.md). Additive: the AI panels above are unchanged. */}
+      {jobSnapshot ? (
+        <MyosApplicationSections
+          supabase={supabase}
+          userId={user.id}
+          company={application.company}
+          title={application.title}
+          jobSnapshot={jobSnapshot}
         />
       ) : null}
 

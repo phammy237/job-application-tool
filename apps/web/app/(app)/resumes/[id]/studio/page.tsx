@@ -7,6 +7,7 @@ import {
   listOwnProjects,
   listOwnResumeVersionsForResume,
   listOwnSkills,
+  loadOwnEvidenceGraph,
 } from '@career-os/database';
 import {
   buildStructuredResumeFromProfile,
@@ -16,6 +17,10 @@ import { notFound } from 'next/navigation';
 import { requireUser } from '../../../../../lib/auth';
 import { formatFriendlyDateTime } from '../../../../../lib/format-friendly-date';
 import { createClient } from '../../../../../lib/supabase/server';
+import {
+  groundResumeBulletsToMap,
+  type BulletGroundingMap,
+} from '../../../../../lib/myos/bullet-grounding';
 import { ResumeStudio } from './resume-studio';
 
 export default async function ResumeStudioPage({
@@ -70,6 +75,20 @@ export default async function ResumeStudioPage({
       : createEmptyStructuredResume(profileImportContent.header);
 
   const baseVersionLabel = baseVersion ? `version ${baseVersion.versionNumber}` : null;
+
+  // myOS grounding is advisory and deterministic (no AI). A failure to load it must never block
+  // the Studio, so it degrades to "no panel".
+  let myosGrounding: BulletGroundingMap | null = null;
+  if (baseVersion?.snapshotFormat === 'STRUCTURED_V1') {
+    try {
+      myosGrounding = groundResumeBulletsToMap(
+        await loadOwnEvidenceGraph(supabase, user.id),
+        initialContent,
+      );
+    } catch {
+      console.warn('[career-os] myOS bullet grounding could not be loaded');
+    }
+  }
 
   // Header identity — never parsed from `resume.name` (docs/IMPLEMENTATION_PLAN.md's own naming
   // convention already produces long, sometimes-inconsistent strings there, see resume-naming.ts;
@@ -135,6 +154,7 @@ export default async function ResumeStudioPage({
         }
         initialContent={initialContent}
         profileImportContent={profileImportContent}
+        myosGrounding={myosGrounding}
       />
     </div>
   );
