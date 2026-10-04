@@ -2,6 +2,7 @@ import { loadOwnEvidenceGraph } from '@career-os/database';
 import {
   SKILL_STRENGTH_RULES,
   computeAllSkillStrengths,
+  safeHttpHref,
   type RankedSkillStrength,
 } from '@career-os/shared';
 import { Badge, Input, Label, Select, buttonVariants } from '@career-os/ui';
@@ -316,9 +317,9 @@ function SkillRow({
                 {evidence.map((item) => (
                   <li key={item.evidence.id} className="flex flex-wrap items-center gap-2 text-xs">
                     <VerificationBadge state={item.evidence.verificationState} />
-                    {item.evidence.sourceUrl ? (
+                    {safeHttpHref(item.evidence.sourceUrl) ? (
                       <a
-                        href={item.evidence.sourceUrl}
+                        href={safeHttpHref(item.evidence.sourceUrl) ?? undefined}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="underline underline-offset-2"

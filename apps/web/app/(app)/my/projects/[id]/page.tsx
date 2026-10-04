@@ -3,7 +3,7 @@ import {
   listOwnGithubRepositories,
   loadOwnEvidenceGraph,
 } from '@career-os/database';
-import { achievementKindSchema, uuidSchema } from '@career-os/shared';
+import { achievementKindSchema, safeHttpHref, uuidSchema } from '@career-os/shared';
 import { Badge, Input, Label, Select, Textarea, Button } from '@career-os/ui';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
@@ -142,13 +142,13 @@ export default async function ProjectDetailPage({
           </span>
         </div>
         <p className="flex flex-wrap gap-x-4 text-sm">
-          {project.url ? (
-            <a href={project.url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+          {safeHttpHref(project.url) ? (
+            <a href={safeHttpHref(project.url) ?? undefined} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
               Project link
             </a>
           ) : null}
-          {repo ? (
-            <a href={repo.htmlUrl} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+          {repo && safeHttpHref(repo.htmlUrl) ? (
+            <a href={safeHttpHref(repo.htmlUrl) ?? undefined} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
               Repository {repo.fullName}
             </a>
           ) : null}
@@ -397,8 +397,8 @@ export default async function ProjectDetailPage({
                     <span>{SOURCE_LABEL[item.sourceType] ?? item.sourceType}</span>
                     <span>{edge.relation === 'REPRESENTS' ? 'represents this project' : 'supports this project'}</span>
                     <span>{formatDate(item.occurredAt ?? item.createdAt)}</span>
-                    {item.sourceUrl ? (
-                      <a href={item.sourceUrl} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                    {safeHttpHref(item.sourceUrl) ? (
+                      <a href={safeHttpHref(item.sourceUrl) ?? undefined} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
                         Source
                       </a>
                     ) : null}

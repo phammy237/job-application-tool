@@ -1,3 +1,4 @@
+import { inspect } from 'node:util';
 import { describe, expect, it, vi } from 'vitest';
 import { GithubClient } from './client';
 import { AuthError, NotFoundError, RateLimitError } from './errors';
@@ -41,6 +42,44 @@ describe('GithubClient', () => {
     expect(seen[0]!['X-GitHub-Api-Version']).toBe('2022-11-28');
     expect(seen[0]!.Authorization).toBeUndefined();
     expect(seen[1]!.Authorization).toBe(`Bearer ${TOKEN}`);
+  });
+
+  it('does not expose the token via own properties, console.log or JSON.stringify', () => {
+    const { c } = client(async () => json({}), TOKEN);
+    expect(Object.keys(c)).not.toContain('token');
+    expect(JSON.stringify(c)).not.toContain(TOKEN);
+    expect(JSON.stringify(Object.getOwnPropertyNames(c))).not.toContain('token');
+    expect(Object.values(c).some((v) => v === TOKEN)).toBe(false);
+    expect(inspect(c)).not.toContain(TOKEN);
+  });
+
+  it('requests with redirect: manual and refuses redirects off api.github.com', async () => {
+    const seen: (RequestInit | undefined)[] = [];
+    const f = async (_u: string, init?: RequestInit) => {
+      seen.push(init);
+      return new Response(null, { status: 302, headers: { location: 'https://evil.example/x' } });
+    };
+    await expect(client(f, TOKEN).c.getAuthenticatedUser()).rejects.toThrow(/redirect/);
+    expect(seen[0]!.redirect).toBe('manual');
+    expect(seen).toHaveLength(1);
+  });
+
+  it('follows a same-host redirect manually', async () => {
+    const urls: string[] = [];
+    const f = async (u: string) => {
+      urls.push(u);
+      if (urls.length === 1)
+        return new Response(null, {
+          status: 301,
+          headers: { location: 'https://api.github.com/repositories/1' },
+        });
+      return json({ login: 'octo', id: 1 });
+    };
+    await expect(client(f, TOKEN).c.getAuthenticatedUser()).resolves.toEqual({
+      login: 'octo',
+      id: 1,
+    });
+    expect(urls[1]).toBe('https://api.github.com/repositories/1');
   });
 
   it('follows Link pagination and caps pages', async () => {

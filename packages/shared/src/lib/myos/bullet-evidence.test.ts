@@ -157,3 +157,91 @@ describe('checkBulletAgainstEvidence', () => {
     expect(r.unsupportedTechnologies).toContain('Terraform');
   });
 });
+
+describe('checkBulletAgainstEvidence hardening (regressions M2/M3/M4)', () => {
+  const ghGraph = () => {
+    const p = project({ name: 'Open Tool', description: 'Command line tool for renaming files' });
+    const ev = evidence({
+      title: 'acme/open-tool',
+      sourceType: 'GITHUB_REPO',
+      verificationState: 'VERIFIED',
+      excerpt: 'Repo has 340 pull requests',
+      metadata: { prCount: 340, commitCount: 1200, stars: 900, contributors: 14 },
+    });
+    return graphOf({
+      projects: [p],
+      evidence: [ev],
+      edges: [edge('PROJECT', p.id, 'EVIDENCE', ev.id, 'VERIFIED')],
+    });
+  };
+
+  it('M2: repo-wide metadata counts never ground personal numbers', () => {
+    for (const bullet of [
+      'Authored 340 pull requests for the command line tool renaming files',
+      'Made 1200 commits to the command line tool renaming files',
+      'Earned 900 stars on the command line tool renaming files',
+    ]) {
+      const r = checkBulletAgainstEvidence(ghGraph(), bullet);
+      expect(r.unsupportedNumbers.length, bullet).toBeGreaterThan(0);
+      expect(r.ok).toBe(false);
+    }
+  });
+
+  it('M2: achievement metricText numbers still ground', () => {
+    const r = checkBulletAgainstEvidence(
+      base().graph,
+      'Built a scheduling app in React, growing signups 40%',
+    );
+    expect(r.unsupportedNumbers).toEqual([]);
+  });
+
+  it('M3: ok is false when support is only LIMITED (unapproved entity)', () => {
+    const p = project({
+      name: 'Widget Planner',
+      description: 'Widget planner app',
+      userApproved: false,
+    });
+    const r = checkBulletAgainstEvidence(graphOf({ projects: [p] }), 'Built a widget planner app');
+    expect(r.supportLevel).toBe('LIMITED');
+    expect(r.ok).toBe(false);
+  });
+
+  it('M4: spelled-out and unusual quantities are flagged unless grounded', () => {
+    const { graph } = base();
+    for (const b of [
+      'Built a scheduling app in React that doubled signups',
+      'Built a scheduling app in React that tripled signups',
+      'Built a scheduling app in React and cut load by half',
+      'Built a scheduling app in React growing signups fifty percent',
+      'Built a scheduling app in React with a two-fold gain',
+      'Built a scheduling app in React, 10x faster',
+      'Built a scheduling app in React growing signups ５０％',
+      'Built a scheduling app in React used by 2000 users',
+    ]) {
+      const r = checkBulletAgainstEvidence(graph, b);
+      expect(r.unsupportedNumbers.length, b).toBeGreaterThan(0);
+    }
+  });
+
+  it('M4: grounded spelled-out quantities and plain years are not flagged', () => {
+    const p = project({
+      name: 'Signup Funnel',
+      description: 'Signup funnel redesign that doubled signups since 2021',
+    });
+    const r = checkBulletAgainstEvidence(
+      graphOf({ projects: [p] }),
+      'Redesigned the signup funnel, which doubled signups since 2021',
+    );
+    expect(r.unsupportedNumbers).toEqual([]);
+    expect(r.ok).toBe(true);
+  });
+
+  it('M4: any dictionary technology absent from linked entities is flagged', () => {
+    const r = checkBulletAgainstEvidence(
+      base().graph,
+      'Built a scheduling app in React using Elasticsearch and Ansible',
+    );
+    expect(r.unsupportedTechnologies.join(' ')).toMatch(/Elasticsearch/);
+    expect(r.ok).toBe(false);
+  });
+});

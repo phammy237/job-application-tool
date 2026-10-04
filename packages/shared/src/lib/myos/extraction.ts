@@ -29,12 +29,18 @@ export interface RepositoryLike {
   languages: Record<string, number>;
   topics: string[];
   readmeExcerpt: string | null;
+  /**
+   * Repo-wide counts. They describe the repository, never the user, so no candidate is derived
+   * from them (kept on the type so callers can pass a snapshot unchanged).
+   */
   prCount: number;
   contributors: Array<{ login: string; contributions: number }>;
+  /** Forks only receive language-based candidates (the code may not be the user's). */
+  isFork?: boolean;
 }
 
 export const MIN_LANGUAGE_SHARE = 0.05;
-const SUMMARY_MAX_CHARS = 400;
+const SUMMARY_MAX_CHARS = 300;
 const MAX_README_TECH_IN_TALKING_POINT = 5;
 
 const CATEGORY_LABEL: Record<TechCategory, string> = {
@@ -98,6 +104,28 @@ function resolveLanguage(name: string): TechEntry | undefined {
   );
 }
 
+/**
+ * Cues that make a technology mention a non-use ("not using X", "instead of X", "no X",
+ * "alternative to X", "without X", "replaces X"). Everything from the cue to the end of its
+ * clause is ignored.
+ */
+const NEGATION_CUE_RE =
+  /\b(?:not\s+(?:using|use|built|based|on|with)|instead\s+of|rather\s+than|no\s+longer|away\s+from|no|alternatives?\s+to|without|replac(?:e|es|ed|ing)|unlike)\b/i;
+
+/** README text with negated / alternative technology mentions removed, clause by clause. */
+export function stripNegatedMentions(text: string): string {
+  return text
+    .split(/(?<=[.!?;])\s+|\n/)
+    .map((clause) => {
+      const m = NEGATION_CUE_RE.exec(clause);
+      return m ? clause.slice(0, m.index) : clause;
+    })
+    .join('\n');
+}
+
+/** Tools that alone must not imply the Product Management skill area. */
+const PM_WEAK_SOURCES = new Set(['Jira', 'Agile', 'Notion']);
+
 /** First substantive README paragraph with markdown/HTML decoration removed; null if none. */
 export function firstReadmeParagraph(readme: string | null): string | null {
   if (!readme) return null;
@@ -111,6 +139,8 @@ export function firstReadmeParagraph(readme: string | null): string | null {
       .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
       .replace(/\[!\[[^\]]*\]\([^)]*\)\]\([^)]*\)/g, ' ')
       .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+      .replace(/\[([^\]]*)\]\[[^\]]*\]/g, '$1')
+      .replace(/https?:\/\/\S+/g, ' ')
       .replace(/[*_`]+/g, '')
       .replace(/\s+/g, ' ')
       .trim();
@@ -150,7 +180,11 @@ export function extractCandidatesFromRepository(
       projectId,
       payload,
       evidenceIds: [...evidenceIds],
-      rationale: cap(rationale),
+      rationale: cap(
+        repo.isFork
+          ? `${rationale} (fork: the code may not be yours, review before approving)`
+          : rationale,
+      ),
       dedupeKey,
     });
   };
@@ -189,7 +223,7 @@ export function extractCandidatesFromRepository(
   }
 
   // 2. Topics.
-  for (const topic of repo.topics) {
+  for (const topic of repo.isFork ? [] : repo.topics) {
     const normalized = topic.replace(/[-_]+/g, ' ');
     const entry =
       techEntryFor(normalized) ??
@@ -201,8 +235,8 @@ export function extractCandidatesFromRepository(
   }
 
   // 3. README technology mentions.
-  const readme = repo.readmeExcerpt ?? '';
-  const readmeTech = findTechnologies(readme);
+  const readme = stripNegatedMentions(repo.readmeExcerpt ?? '');
+  const readmeTech = repo.isFork ? [] : findTechnologies(readme);
   for (const m of readmeTech) {
     const entry = techEntryFor(m.canonical);
     if (entry)
@@ -225,6 +259,8 @@ export function extractCandidatesFromRepository(
     a[0].localeCompare(b[0]),
   )) {
     if (skillNames.has(area)) continue;
+    if (area === 'Product Management' && sources.every((src) => PM_WEAK_SOURCES.has(src)))
+      continue;
     skillNames.add(area);
     make(
       { kind: 'SKILL', skill: area, category: 'Skill area' },
@@ -258,27 +294,9 @@ export function extractCandidatesFromRepository(
       `talking:primary-language:${scope}`,
     );
   }
-  if (repo.prCount > 0) {
-    make(
-      {
-        kind: 'TALKING_POINT',
-        text: `${repo.prCount} merged pull request${repo.prCount === 1 ? '' : 's'} sampled`,
-      },
-      `Pull request sample count recorded for ${repo.fullName}`,
-      `talking:pr-sample:${scope}`,
-    );
-  }
-  if (repo.contributors.length >= 2) {
-    make(
-      {
-        kind: 'TALKING_POINT',
-        text: `Repository has ${repo.contributors.length} contributors on GitHub`,
-      },
-      `Contributor list returned by GitHub for ${repo.fullName}`,
-      `talking:contributors:${scope}`,
-    );
-  }
-  if (repo.topics.length > 0) {
+  // Repo-wide counts (pull requests, commits, stars, contributors) are deliberately NOT turned
+  // into talking points: they describe the repository, not what this user did.
+  if (!repo.isFork && repo.topics.length > 0) {
     make(
       {
         kind: 'TALKING_POINT',
@@ -290,7 +308,7 @@ export function extractCandidatesFromRepository(
   }
 
   // 6. Project summary: verbatim README paragraph, else the repository description.
-  const paragraph = firstReadmeParagraph(repo.readmeExcerpt);
+  const paragraph = repo.isFork ? null : firstReadmeParagraph(repo.readmeExcerpt);
   const description = repo.description?.trim();
   if (paragraph) {
     make(
@@ -298,7 +316,7 @@ export function extractCandidatesFromRepository(
       `Verbatim excerpt of the first paragraph of the README of ${repo.fullName}`,
       `summary:readme:${scope}`,
     );
-  } else if (description) {
+  } else if (description && !repo.isFork) {
     make(
       { kind: 'PROJECT_SUMMARY', text: excerpt(description) },
       `Verbatim GitHub repository description of ${repo.fullName}`,
@@ -307,7 +325,9 @@ export function extractCandidatesFromRepository(
   }
 
   // 7. Competencies — explicit phrases only.
-  const haystack = `${repo.readmeExcerpt ?? ''}\n${repo.description ?? ''}`.toLowerCase();
+  const haystack = repo.isFork
+    ? ''
+    : `${readme}\n${stripNegatedMentions(repo.description ?? '')}`.toLowerCase();
   for (const { competency, phrases } of COMPETENCY_PHRASES) {
     const hit = phrases.find((p) => haystack.includes(p));
     if (!hit) continue;

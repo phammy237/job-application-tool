@@ -318,7 +318,10 @@ export async function acceptCandidateAction(fd: FormData): Promise<never> {
   return withProject(fd, async (ctx, id) => {
     const { other } = must(parseIdPair(fd, 'candidateId'));
     await ownPendingCandidate(ctx, id, other);
-    await acceptOwnCandidate(ctx.supabase, ctx.userId, other);
+    const result = await acceptOwnCandidate(ctx.supabase, ctx.userId, other);
+    if (result?.status === 'conflict') {
+      throw new ActionError(`${result.message} Reject the suggestion or clear the summary first.`);
+    }
     return 'Suggestion accepted and added to your profile';
   });
 }

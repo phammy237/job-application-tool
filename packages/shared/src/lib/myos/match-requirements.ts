@@ -5,7 +5,7 @@ import type {
   VerificationState,
 } from '../../schemas/myos';
 import type { EvidenceGraphData } from './graph-types';
-import { containsAllTokens, scoreTextMatch } from './text';
+import { matchTokensWithRelated, scoreTextMatch } from './text';
 
 /**
  * Requirement ↔ evidence matching. Pure and deterministic; never invents anything: every
@@ -27,6 +27,10 @@ import { containsAllTokens, scoreTextMatch } from './text';
  *  - NONE     = nothing matched. Nothing is invented: "No meaningful evidence found".
  *  Text-only matches, unapproved entities and INFERRED/AI_GENERATED edges can never lift above
  *  LIMITED.
+ *
+ * RELATED concepts ("LLM" requirement, "ML" skill; "analytics" requirement, "SQL" skill) are
+ * asymmetric and never identical: a support found only through a related skill/concept is flagged
+ * `related: true`, is never firm, and so can never lift the level above LIMITED.
  *
  * VERDICT: requirements without a category are treated as REQUIRED (conservative). REQUIRED weighs 2,
  * PREFERRED weighs 1; level scores STRONG 1 / MODERATE 0.65 / LIMITED 0.3 / NONE 0.
@@ -271,6 +275,8 @@ export interface RequirementSupport {
   via: 'skill-edge' | 'text-match';
   /** True when the entity is not user-approved yet (e.g. just imported from GitHub). */
   unconfirmed?: true;
+  /** True when matched only through a related (not identical) concept; caps the level at LIMITED. */
+  related?: true;
   evidence: {
     evidenceId: string;
     title: string;
@@ -286,6 +292,8 @@ export interface RequirementMatch {
   category: 'REQUIRED' | 'PREFERRED';
   level: RequirementLevel;
   skills: { id: string; name: string }[];
+  /** Skills related to, but not the same as, what the requirement names. */
+  relatedSkills?: { id: string; name: string }[];
   supports: RequirementSupport[];
   explanation: string;
   /** True only when level is NONE. */
@@ -313,6 +321,7 @@ interface Candidate {
   entity: SupportEntity;
   via: 'skill-edge' | 'text-match';
   firm: boolean;
+  related: boolean;
   textScore: number;
 }
 
@@ -371,10 +380,15 @@ export function matchRequirementsToEvidence(
 
 function matchOne(index: SupportIndex, req: RequirementInput): RequirementMatch {
   const category = req.category ?? 'REQUIRED';
-  const matchedSkills = [...index.skillById.values()].filter((s) =>
-    containsAllTokens(req.text, s.name),
-  );
+  const matchedSkills: { id: string; name: string; approved: boolean }[] = [];
+  const relatedSkills: { id: string; name: string; approved: boolean }[] = [];
+  for (const sk of index.skillById.values()) {
+    const kind = matchTokensWithRelated(req.text, sk.name);
+    if (kind === 'exact') matchedSkills.push(sk);
+    else if (kind === 'related') relatedSkills.push(sk);
+  }
   const skillIds = new Set(matchedSkills.map((s) => s.id));
+  const relatedIds = new Set(relatedSkills.map((s) => s.id));
 
   const candidates = new Map<string, Candidate>();
   for (const entity of index.entities) {
@@ -383,18 +397,39 @@ function matchOne(index: SupportIndex, req: RequirementInput): RequirementMatch 
       const firm =
         entity.approved &&
         links.some((l) => isSolidState(l.state) && index.skillById.get(l.skillId)?.approved);
-      candidates.set(entity.key, { entity, via: 'skill-edge', firm, textScore: 0 });
+      candidates.set(entity.key, { entity, via: 'skill-edge', firm, related: false, textScore: 0 });
       continue;
     }
-    const m = scoreTextMatch(req.text, entity.text);
-    if (m.score >= TEXT_MATCH_MIN_SCORE && (m.conceptMatch || m.matchedTerms.length >= 2)) {
-      candidates.set(entity.key, { entity, via: 'text-match', firm: false, textScore: m.score });
+    if (entity.skills.some((l) => relatedIds.has(l.skillId))) {
+      candidates.set(entity.key, {
+        entity,
+        via: 'skill-edge',
+        firm: false,
+        related: true,
+        textScore: 0,
+      });
+      continue;
+    }
+    const m = scoreTextMatch(req.text, entity.text, { allowRelated: true });
+    const relatedOnly = m.relatedConcepts.length > 0 && !m.conceptMatch;
+    if (
+      m.score >= TEXT_MATCH_MIN_SCORE &&
+      (m.conceptMatch || m.matchedTerms.length >= 2 || m.relatedConcepts.length > 0)
+    ) {
+      candidates.set(entity.key, {
+        entity,
+        via: 'text-match',
+        firm: false,
+        related: relatedOnly,
+        textScore: m.score,
+      });
     }
   }
 
   const ranked = [...candidates.values()].sort(
     (a, b) =>
       Number(b.firm) - Number(a.firm) ||
+      Number(a.related) - Number(b.related) ||
       Number(b.entity.approved) - Number(a.entity.approved) ||
       evidenceRank(b.entity) - evidenceRank(a.entity) ||
       b.textScore - a.textScore ||
@@ -418,6 +453,7 @@ function matchOne(index: SupportIndex, req: RequirementInput): RequirementMatch 
     name: c.entity.name,
     via: c.via,
     ...(c.entity.approved ? {} : { unconfirmed: true as const }),
+    ...(c.related ? { related: true as const } : {}),
     evidence: c.entity.evidence.map((e) => ({ ...e })),
   }));
 
@@ -427,8 +463,15 @@ function matchOne(index: SupportIndex, req: RequirementInput): RequirementMatch 
     category,
     level,
     skills: matchedSkills.map((s) => ({ id: s.id, name: s.name })),
+    ...(relatedSkills.length > 0
+      ? { relatedSkills: relatedSkills.map((s) => ({ id: s.id, name: s.name })) }
+      : {}),
     supports,
-    explanation: explain(level, supports, matchedSkills.map((s) => s.name), ranked),
+    explanation:
+      explain(level, supports, matchedSkills.map((s) => s.name), ranked) +
+      (supports.some((x) => x.related)
+        ? ' Related, not identical: some matches rest on a related concept, so they cannot count beyond limited support.'
+        : ''),
     gap: level === 'NONE',
   };
 }

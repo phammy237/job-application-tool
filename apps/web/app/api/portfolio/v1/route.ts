@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import {
   getOwnPortfolioSettings,
   getUserIdForPortfolioApiKey,
-  loadOwnEvidenceGraph,
+  loadPublicEvidenceGraph,
 } from '@career-os/database';
 import { buildPortfolioExport, portfolioExportSchema } from '@career-os/shared';
 import { NextResponse, type NextRequest } from 'next/server';
@@ -36,10 +36,20 @@ function unauthorized(): NextResponse {
   });
 }
 
+/**
+ * Rate-limit bucket key. `x-forwarded-for` is attacker-controlled unless a trusted proxy
+ * overwrites/appends it, so it is only honoured behind Vercel (VERCEL=1), whose edge sets the
+ * header; even then the RIGHTMOST entry (appended by our trusted proxy) is used, never the
+ * leftmost (client-supplied). Anywhere else every caller shares the 'unknown' bucket, which fails
+ * safe (stricter limiting) rather than letting a spoofed header mint unlimited buckets.
+ */
 function clientIp(request: NextRequest): string {
-  const fwd = request.headers.get('x-forwarded-for');
-  const first = fwd?.split(',')[0]?.trim();
-  return first || request.headers.get('x-real-ip') || 'unknown';
+  if (process.env.VERCEL !== '1') return 'unknown';
+  const parts = (request.headers.get('x-forwarded-for') ?? '')
+    .split(',')
+    .map((p) => p.trim())
+    .filter(Boolean);
+  return parts[parts.length - 1] || 'unknown';
 }
 
 function parseBearer(header: string | null): string | null {
@@ -79,9 +89,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const userId = await getUserIdForPortfolioApiKey(admin, key);
     if (!userId) return unauthorized();
 
-    // Both reads are filtered by the key-derived userId (service role bypasses RLS).
+    // Both reads are filtered by the key-derived userId (service role bypasses RLS). The graph
+    // loader restricts to PUBLIC (+ approved) at query level; buildPortfolioExport below
+    // re-applies the same filter in memory as a second line of defence.
     const [graph, settings] = await Promise.all([
-      loadOwnEvidenceGraph(admin, userId),
+      loadPublicEvidenceGraph(admin, userId),
       getOwnPortfolioSettings(admin, userId),
     ]);
     // Re-check at read time: the key lookup already requires enabled=true, but fail closed.

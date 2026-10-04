@@ -19,6 +19,10 @@ import type { NodeType } from '../../schemas/myos';
  * Inputs for one skill:
  *  - Supporting entities: distinct PROJECT / EXPERIENCE / ACHIEVEMENT / STORY nodes joined to the
  *    skill by a DEMONSTRATES or USES edge (either stored direction).
+ *  - Counted entities: only supporting entities that are BOTH approved (userApproved) AND reached by
+ *    a VERIFIED/USER_PROVIDED edge count toward STRONG/MODERATE. Unapproved entities and entities
+ *    reached only by INFERRED/AI_GENERATED edges are listed in `supportingEntities` and called out
+ *    as "unconfirmed" in `reasons`, but never raise the level.
  *  - Evidence: distinct EVIDENCE nodes joined by a SUPPORTS edge to the skill itself or to any
  *    of its supporting entities.
  *  - Verified evidence: evidence whose own state is VERIFIED AND whose SUPPORTS link is
@@ -26,16 +30,18 @@ import type { NodeType } from '../../schemas/myos';
  *    as verified.
  *  - Recency: the latest activity date among supporting entities and linked evidence. A project
  *    or experience with a start date and no end date is ongoing (activity = now) unless the
- *    project status is COMPLETED/ARCHIVED. Stories carry no date.
+ *    project status is COMPLETED/ARCHIVED. When it also has no status (start date only), it is
+ *    treated as ongoing only if it started within the last 36 months; otherwise its activity is
+ *    the start date. Stories carry no date. Only counted entities contribute activity dates.
  *
  * Level rules (first match wins, top to bottom):
  *  - NONE: 0 supporting entities.
- *  - STRONG: >= 3 distinct supporting entities AND >= 1 verified evidence AND latest activity
+ *  - STRONG: >= 3 distinct counted entities AND >= 1 verified evidence AND latest activity
  *    within 36 months.
- *  - MODERATE: >= 2 distinct supporting entities.
- *  - LIMITED: exactly 1 supporting entity.
- *  Cap: when none of the skill's supporting edges is user-confirmed (all INFERRED/AI_GENERATED),
- *  the level is capped at LIMITED, however many entities the edges point at.
+ *  - MODERATE: >= 2 distinct counted entities.
+ *  - LIMITED: otherwise (one counted entity, or only unconfirmed ones).
+ *  Cap: when no counted entity exists the level is LIMITED, however many entities the edges
+ *  point at.
  *
  * Recency: CURRENT <= 6 months, RECENT <= 24 months, DATED older, UNKNOWN when no dated activity.
  * Quality: VERIFIED (all evidence verified), MIXED, UNVERIFIED (evidence but none verified),
@@ -55,12 +61,12 @@ export const SKILL_STRENGTH_RULES = {
     },
     {
       level: 'LIMITED',
-      rule: 'Exactly one linked item, or every link is inferred/AI-suggested and none is confirmed by you.',
+      rule: 'Exactly one confirmed, approved linked item, or every link is inferred/AI-suggested/unapproved and none is confirmed by you.',
     },
-    { level: 'MODERATE', rule: 'Two or more distinct linked items.' },
+    { level: 'MODERATE', rule: 'Two or more distinct confirmed, approved linked items.' },
     {
       level: 'STRONG',
-      rule: 'Three or more distinct linked items, at least one verified piece of evidence, and activity within the last 36 months.',
+      rule: 'Three or more distinct confirmed, approved linked items, at least one verified piece of evidence, and activity within the last 36 months.',
     },
   ],
   notes: [
@@ -111,6 +117,13 @@ function str(v: unknown): string | null {
   return typeof v === 'string' ? v : null;
 }
 
+/** A start-date-only item counts as ongoing only when it started within the last 36 months. */
+function startOnlyActivity(start: Date, now: Date): Date {
+  return monthsBetween(start, now) <= SKILL_STRENGTH_RULES.strongMaxMonthsSinceActivity
+    ? now
+    : start;
+}
+
 /** Latest activity date of a supporting entity or evidence node; `now` for ongoing work. */
 function activityDate(node: IndexedNode, now: Date): Date | null {
   switch (node.type) {
@@ -120,12 +133,15 @@ function activityDate(node: IndexedNode, now: Date): Date | null {
       const start = parseLooseDate(str(node.meta.startDate));
       if (!start) return null;
       const status = str(node.meta.status);
-      return status === 'COMPLETED' || status === 'ARCHIVED' ? start : now;
+      if (status === 'COMPLETED' || status === 'ARCHIVED') return start;
+      if (status === null) return startOnlyActivity(start, now);
+      return now;
     }
     case 'EXPERIENCE': {
       const end = parseLooseDate(str(node.meta.endDate));
       if (end) return end;
-      return parseLooseDate(str(node.meta.startDate)) ? now : null;
+      const start = parseLooseDate(str(node.meta.startDate));
+      return start ? startOnlyActivity(start, now) : null;
     }
     case 'ACHIEVEMENT':
       return parseLooseDate(str(node.meta.occurredOn));
@@ -139,17 +155,26 @@ function activityDate(node: IndexedNode, now: Date): Date | null {
 function strengthFromIndex(index: GraphIndex, skillId: string, now: Date): SkillStrength {
   const skillKey = nodeKey('SKILL', skillId);
   const entities = new Map<string, IndexedNode>();
-  let confirmedSupportingEdge = false;
+  const confirmedEdgeTo = new Set<string>();
   for (const ie of index.adjacency.get(skillKey) ?? []) {
     if (ie.edge.relation !== 'DEMONSTRATES' && ie.edge.relation !== 'USES') continue;
     const other = index.nodes.get(otherEnd(ie, skillKey));
     if (!other || !SUPPORTING_TYPES.has(other.type)) continue;
     entities.set(other.key, other);
-    if (isUserConfirmed(ie.edge.verificationState)) confirmedSupportingEdge = true;
+    if (isUserConfirmed(ie.edge.verificationState)) confirmedEdgeTo.add(other.key);
   }
+  // Counted = approved entity reached by at least one user-confirmed edge.
+  const counted = new Map<string, IndexedNode>();
+  for (const [key, node] of entities) {
+    if (confirmedEdgeTo.has(key) && node.meta.userApproved !== false) counted.set(key, node);
+  }
+  const unconfirmedNames = [...entities.values()]
+    .filter((e) => !counted.has(e.key))
+    .map((e) => e.label)
+    .sort();
 
   const evidence = new Map<string, { node: IndexedNode; verified: boolean }>();
-  for (const anchor of [skillKey, ...entities.keys()]) {
+  for (const anchor of [skillKey, ...counted.keys()]) {
     for (const ie of index.adjacency.get(anchor) ?? []) {
       if (ie.edge.relation !== 'SUPPORTS') continue;
       const ev = index.nodes.get(otherEnd(ie, anchor));
@@ -166,7 +191,7 @@ function strengthFromIndex(index: GraphIndex, skillId: string, now: Date): Skill
 
   let latest: Date | null = null;
   for (const node of [
-    ...entities.values(),
+    ...counted.values(),
     ...[...evidence.values()].map((e) => e.node),
   ]) {
     const d = activityDate(node, now);
@@ -193,10 +218,10 @@ function strengthFromIndex(index: GraphIndex, skillId: string, now: Date): Skill
           ? 'UNVERIFIED'
           : 'MIXED';
 
-  const n = entities.size;
+  const n = counted.size;
   const reasons: string[] = [];
   let level: SkillStrengthLevel;
-  if (n === 0) {
+  if (entities.size === 0) {
     level = 'NONE';
     reasons.push(
       'No project, experience, achievement, or story is linked to this skill.',
@@ -212,10 +237,15 @@ function strengthFromIndex(index: GraphIndex, skillId: string, now: Date): Skill
       : n >= SKILL_STRENGTH_RULES.moderateMinEntities
         ? 'MODERATE'
         : 'LIMITED';
-    reasons.push(`Linked to ${n} distinct item${n === 1 ? '' : 's'}.`);
-    if (!confirmedSupportingEdge) {
+    reasons.push(`Linked to ${n} distinct confirmed item${n === 1 ? '' : 's'}.`);
+    if (unconfirmedNames.length > 0) {
       reasons.push(
-        'Every link is inferred or AI-suggested; confirm one to lift the cap at LIMITED.',
+        `${unconfirmedNames.length} further item${unconfirmedNames.length === 1 ? ' is' : 's are'} unconfirmed (not approved, or only inferred/AI-suggested links) and not counted: ${unconfirmedNames.slice(0, 5).join(', ')}.`,
+      );
+    }
+    if (n === 0) {
+      reasons.push(
+        'Every link is inferred, AI-suggested or to an unapproved item; confirm one to lift the cap at LIMITED.',
       );
       level = 'LIMITED';
     } else if (level !== 'STRONG') {
@@ -325,7 +355,13 @@ const COVERAGE_NOUN = {
   STORY: 'story',
 } as const;
 
-/** Share of projects, achievements, and stories with at least one linked evidence item. */
+/**
+ * Share of projects, achievements, and stories with at least one linked evidence item.
+ *
+ * RULE: an item is evidenced when it has a SUPPORTS or REPRESENTS edge (either stored direction)
+ * to any EVIDENCE node. GitHub repository evidence is linked to its project with REPRESENTS, so
+ * both relations must count.
+ */
 export function evidenceCoverage(
   graph: EvidenceGraphData | GraphIndex,
 ): EvidenceCoverage {
@@ -341,7 +377,7 @@ export function evidenceCoverage(
       continue;
     const has = (index.adjacency.get(node.key) ?? []).some(
       (ie) =>
-        ie.edge.relation === 'SUPPORTS' &&
+        (ie.edge.relation === 'SUPPORTS' || ie.edge.relation === 'REPRESENTS') &&
         index.nodes.get(otherEnd(ie, node.key))?.type === 'EVIDENCE',
     );
     byType[node.type].total++;

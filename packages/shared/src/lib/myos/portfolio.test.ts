@@ -132,6 +132,93 @@ describe('buildPortfolioExport', () => {
     expect(buildPortfolioExport(g, SETTINGS, NOW).projects[0]!.skillIds).toEqual([]);
   });
 
+  it('M10: PUBLIC evidence from a private source is omitted entirely', () => {
+    const p = project({ visibility: 'PUBLIC', name: 'Pub' });
+    const privRepo = evidence({
+      title: 'secret-org/private-repo',
+      sourceType: 'GITHUB_REPO',
+      sourceUrl: 'https://github.com/secret-org/private-repo',
+      visibility: 'PUBLIC',
+      metadata: { isPrivate: true },
+    });
+    const okRepo = evidence({
+      title: 'open/repo',
+      sourceType: 'GITHUB_REPO',
+      sourceUrl: 'https://github.com/open/repo',
+      visibility: 'PUBLIC',
+      metadata: { isPrivate: false },
+    });
+    const g = graphOf({
+      projects: [p],
+      evidence: [privRepo, okRepo],
+      edges: [
+        edge(['EVIDENCE', privRepo.id], ['PROJECT', p.id], 'REPRESENTS'),
+        edge(['EVIDENCE', okRepo.id], ['PROJECT', p.id], 'REPRESENTS'),
+      ],
+    });
+    const out = buildPortfolioExport(g, SETTINGS, NOW);
+    expect(out.projects[0]!.evidence.map((e) => e.title)).toEqual(['open/repo']);
+    const json = JSON.stringify(out);
+    expect(json).not.toContain('private-repo');
+    expect(json).not.toContain('secret-org');
+  });
+
+  it('M10: inferred project-skill links are not exported, confirmed ones are', () => {
+    const p = project({ visibility: 'PUBLIC', startDate: '2025-01-01' });
+    const guess = skill({ name: 'Guess', visibility: 'PUBLIC' });
+    const inferred = skill({ name: 'Inferred', visibility: 'PUBLIC' });
+    const real = skill({ name: 'Real', visibility: 'PUBLIC' });
+    const g = graphOf({
+      projects: [p],
+      skills: [guess, inferred, real],
+      edges: [
+        edge(['PROJECT', p.id], ['SKILL', guess.id], 'USES', 'AI_GENERATED'),
+        edge(['PROJECT', p.id], ['SKILL', inferred.id], 'USES', 'INFERRED'),
+        edge(['PROJECT', p.id], ['SKILL', real.id], 'USES', 'USER_PROVIDED'),
+      ],
+    });
+    const out = buildPortfolioExport(g, SETTINGS, NOW);
+    expect(out.projects[0]!.skillIds).toEqual([real.id]);
+    expect(out.skills.find((s) => s.id === inferred.id)!.projectIds).toEqual([]);
+    expect(out.timeline[0]!.relatedSkillNames).toEqual(['Real']);
+  });
+
+  it('M10: achievement metricText is exported only with confirmed supporting evidence', () => {
+    const a = achievement({
+      title: 'Unbacked',
+      visibility: 'PUBLIC',
+      metricText: 'UNBACKED-METRIC',
+      occurredOn: '2025-01-01',
+    });
+    const b = achievement({
+      title: 'Backed',
+      visibility: 'PUBLIC',
+      metricText: 'BACKED-METRIC',
+      occurredOn: '2025-01-01',
+    });
+    const c = achievement({
+      title: 'Weak',
+      visibility: 'PUBLIC',
+      metricText: 'WEAK-METRIC',
+      occurredOn: '2025-01-01',
+    });
+    const ev = evidence({ title: 'proof', visibility: 'PUBLIC' });
+    const g = graphOf({
+      achievements: [a, b, c],
+      evidence: [ev],
+      edges: [
+        edge(['EVIDENCE', ev.id], ['ACHIEVEMENT', b.id], 'SUPPORTS', 'VERIFIED'),
+        edge(['EVIDENCE', ev.id], ['ACHIEVEMENT', c.id], 'SUPPORTS', 'INFERRED'),
+      ],
+    });
+    const out = buildPortfolioExport(g, SETTINGS, NOW);
+    const m = (t: string) => out.achievements.find((x) => x.title === t)!.metricText;
+    expect(m('Unbacked')).toBeNull();
+    expect(m('Backed')).toBe('BACKED-METRIC');
+    expect(m('Weak')).toBeNull();
+    expect(JSON.stringify(out)).not.toContain('UNBACKED-METRIC');
+  });
+
   it('is deterministic for the same input and clock', () => {
     const g = graphOf({ projects: [project({ visibility: 'PUBLIC' })] });
     expect(buildPortfolioExport(g, SETTINGS, NOW)).toEqual(
@@ -186,7 +273,7 @@ describe('portfolio export leak fuzz', () => {
           title: `EV-${seed}-${i}-TITLE`,
           sourceUrl: `https://example.org/e/${seed}/${i}`,
           excerpt: `EXC-${seed}-${i}`,
-          metadata: { note: `META-${seed}-${i}` },
+          metadata: { note: `META-${seed}-${i}`, isPrivate: rnd() > 0.7 },
           visibility: pick(VIS),
         }),
       );
@@ -285,7 +372,7 @@ describe('portfolio export leak fuzz', () => {
         check(
           e.id,
           [`EV-${seed}-${i}-TITLE`, `/e/${seed}/${i}`],
-          e.visibility === 'PUBLIC',
+          e.visibility === 'PUBLIC' && e.metadata.isPrivate !== true,
         );
         expect(json).not.toContain(`EXC-${seed}-${i}`);
         expect(json).not.toContain(`META-${seed}-${i}`);
@@ -293,6 +380,20 @@ describe('portfolio export leak fuzz', () => {
       }
       for (const [i, s] of stories.entries())
         check(s.id, [`STORY-${seed}-${i}-TITLE`, `SIT-${seed}-${i}`], false);
+      // no inferred/AI skill link may survive, and metrics need confirmed public evidence
+      const confirmedSkillPairs = new Set(
+        edges
+          .filter(
+            (e) =>
+              (e.fromType === 'PROJECT' || e.toType === 'PROJECT') &&
+              (e.fromType === 'SKILL' || e.toType === 'SKILL') &&
+              (e.verificationState === 'VERIFIED' || e.verificationState === 'USER_PROVIDED'),
+          )
+          .map((e) => (e.fromType === 'PROJECT' ? `${e.fromId}|${e.toId}` : `${e.toId}|${e.fromId}`)),
+      );
+      for (const pr of out.projects)
+        for (const sid of pr.skillIds) expect(confirmedSkillPairs.has(`${pr.id}|${sid}`)).toBe(true);
+      for (const a of out.achievements) expect(a.metricText).toBeNull(); // no achievement has an evidence edge in this fuzz
       // public achievement pointing at a non-exported project must not carry that project's id
       for (const a of out.achievements) {
         if (a.projectId)

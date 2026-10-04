@@ -160,10 +160,10 @@ describe('computeSkillStrength levels', () => {
     const r = computeSkillStrength(g, s.id, NOW);
     expect(r.level).toBe('LIMITED');
     expect(r.supportingEntities).toHaveLength(4);
-    expect(r.reasons.join(' ')).toMatch(/inferred or AI-suggested/);
+    expect(r.reasons.join(' ')).toMatch(/unconfirmed/);
   });
 
-  it('lifts the cap once one edge is user-confirmed', () => {
+  it('M6: only confirmed + approved entities count; the rest are listed as unconfirmed', () => {
     const { s, projects, edges } = setup(2, { state: 'INFERRED' });
     const confirmed = [
       edges[0]!,
@@ -174,7 +174,50 @@ describe('computeSkillStrength levels', () => {
       s.id,
       NOW,
     );
+    expect(r.level).toBe('LIMITED'); // one counted entity
+    expect(r.supportingEntities).toHaveLength(2);
+    expect(r.reasons.join(' ')).toMatch(/1 further item is unconfirmed/);
+    const both = [
+      { ...edges[0]!, verificationState: 'USER_PROVIDED' as const },
+      { ...edges[1]!, verificationState: 'VERIFIED' as const },
+    ];
+    expect(
+      computeSkillStrength(graphOf({ skills: [s], projects, edges: both }), s.id, NOW).level,
+    ).toBe('MODERATE');
+  });
+
+  it('M6: STRONG needs 3 approved entities with confirmed edges', () => {
+    const { s, projects, edges } = setup(3);
+    const ev = evidence({ verificationState: 'VERIFIED' });
+    const evEdge = edge(['EVIDENCE', ev.id], ['SKILL', s.id], 'SUPPORTS');
+    const mk = (ps: typeof projects) =>
+      graphOf({ skills: [s], projects: ps, evidence: [ev], edges: [...edges, evEdge] });
+    expect(computeSkillStrength(mk(projects), s.id, NOW).level).toBe('STRONG');
+    const unapproved = projects.map((p, i) => (i === 0 ? { ...p, userApproved: false } : p));
+    const r = computeSkillStrength(mk(unapproved), s.id, NOW);
     expect(r.level).toBe('MODERATE');
+    expect(r.reasons.join(' ')).toContain('unconfirmed');
+  });
+
+  it('M6: a start-date-only item is ongoing only within 36 months of its start', () => {
+    const s = skill({ name: 'Go' });
+    const old = project({ name: 'Old', startDate: '2018-01-01', endDate: null, status: null });
+    const recent = project({ name: 'Recent', startDate: '2025-06-01', endDate: null, status: null });
+    const active = project({ name: 'Active', startDate: '2018-01-01', endDate: null, status: 'ACTIVE' });
+    const run = (p: typeof old) =>
+      computeSkillStrength(
+        graphOf({
+          skills: [s],
+          projects: [p],
+          edges: [edge(['PROJECT', p.id], ['SKILL', s.id], 'USES')],
+        }),
+        s.id,
+        NOW,
+      );
+    expect(run(old).latestActivity).toBe('2018-01-01');
+    expect(run(old).recency).toBe('DATED');
+    expect(run(recent).recency).toBe('CURRENT');
+    expect(run(active).recency).toBe('CURRENT');
   });
 
   it('counts distinct entities once and collects evidence via entities, deduplicated', () => {
@@ -271,5 +314,18 @@ describe('evidenceCoverage', () => {
   });
   it('has a null ratio for an empty graph', () => {
     expect(evidenceCoverage(graphOf({})).ratio).toBeNull();
+  });
+  it('counts a REPRESENTS edge from GitHub repo evidence as evidence', () => {
+    const p = project({ name: 'Imported' });
+    const ev = evidence({ sourceType: 'GITHUB_REPO' });
+    const c = evidenceCoverage(
+      graphOf({
+        projects: [p],
+        evidence: [ev],
+        edges: [edge(['EVIDENCE', ev.id], ['PROJECT', p.id], 'REPRESENTS')],
+      }),
+    );
+    expect(c.byType.PROJECT).toEqual({ total: 1, covered: 1 });
+    expect(c.gaps).toEqual([]);
   });
 });

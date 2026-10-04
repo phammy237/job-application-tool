@@ -13,6 +13,22 @@ type CandidateStatus = 'PENDING' | 'ACCEPTED' | 'REJECTED';
 
 const MAX_TALKING_POINTS = 20;
 
+/**
+ * Returned (instead of silently marking ACCEPTED) when applying a candidate would not do what
+ * the user asked: a PROJECT_SUMMARY when the project already has a summary. The candidate stays
+ * PENDING so the user can reject it or clear the summary first.
+ */
+export interface CandidateConflict {
+  status: 'conflict';
+  reason: 'SUMMARY_EXISTS';
+  message: string;
+}
+export type AcceptCandidateResult = MyosCandidate | CandidateConflict;
+
+export function isCandidateConflict(result: AcceptCandidateResult): result is CandidateConflict {
+  return result.status === 'conflict';
+}
+
 export async function listOwnCandidates(
   supabase: CareerOsSupabaseClient,
   userId: string,
@@ -159,14 +175,15 @@ async function findOrCreateSkill(
  *   (USER_PROVIDED — the user just confirmed it), plus evidence→skill SUPPORTS edges (INFERRED,
  *   since the evidence link itself was machine-derived) for evidence rows that still exist.
  * - TALKING_POINT: appended to the project's talking_points (deduped, capped).
- * - PROJECT_SUMMARY: sets the project summary only when it is currently empty.
+ * - PROJECT_SUMMARY: sets the project summary only when it is currently empty; otherwise returns
+ *   `{ status: 'conflict' }` and leaves the candidate PENDING.
  * - COMPETENCY: acceptance only (no graph write).
  */
 export async function acceptOwnCandidate(
   supabase: CareerOsSupabaseClient,
   userId: string,
   id: string,
-): Promise<MyosCandidate> {
+): Promise<AcceptCandidateResult> {
   const candidate = await getOwnCandidate(supabase, userId, id);
   if (!candidate) throw new DatabaseError('acceptOwnCandidate: candidate not found');
   if (candidate.status === 'ACCEPTED') return candidate;
@@ -231,7 +248,13 @@ export async function acceptOwnCandidate(
           .eq('user_id', userId);
         assertNoError(upError, 'acceptOwnCandidate.talkingPoint');
       }
-    } else if (!project.summary || project.summary.trim() === '') {
+    } else if (project.summary && project.summary.trim() !== '') {
+      return {
+        status: 'conflict',
+        reason: 'SUMMARY_EXISTS',
+        message: 'This project already has a summary; the suggestion was not applied.',
+      };
+    } else {
       const { error: upError } = await supabase
         .from('projects')
         .update({ summary: payload.text })

@@ -155,13 +155,19 @@ function setup(repos: ReturnType<typeof repo>[], gh = fakeGithub(repos), token?:
   return { gh, client };
 }
 
-async function run(m: ReturnType<typeof memStore>, client: GithubClient) {
+async function run(
+  m: ReturnType<typeof memStore>,
+  client: GithubClient,
+  extra: Partial<Parameters<typeof syncGithubRepositories>[0]> = {},
+) {
   return syncGithubRepositories({
     store: m.store,
     client,
     userId: USER,
     login: 'octo',
+    ownershipVerified: true,
     now: () => new Date('2026-07-01T00:00:00Z'),
+    ...extra,
   });
 }
 
@@ -269,7 +275,7 @@ describe('syncGithubRepositories', () => {
     m.select(1);
     m.select(2);
     const limited = setup(repos, fakeGithub(repos, { rateLimitOn: 'alpha' }));
-    const res = await run(m, limited.client);
+    const res = await run(m, limited.client, { concurrency: 1 });
     expect(res.status).toBe('PARTIAL');
     expect(res.stats.rateLimited).toBe(true);
     expect(res.stats.rateLimitResetAt).toBe(new Date(1790000000 * 1000).toISOString());
@@ -312,5 +318,122 @@ describe('syncGithubRepositories', () => {
     expect(m.evidence.get('GITHUB_REPO|octo/secret')!.metadata).toMatchObject({
       isPrivate: true,
     });
+  });
+
+  describe('unproven identity (token-less connection)', () => {
+    it('writes USER_PROVIDED evidence, skips the authored-PR search, and reports ownership unverified', async () => {
+      const repos = [repo(1, 'alpha')];
+      const m = memStore();
+      const { gh, client } = setup(repos);
+      await run(m, client, { ownershipVerified: false });
+      m.select(1);
+      gh.calls.length = 0;
+      const res = await run(m, client, { ownershipVerified: false });
+      expect(res.stats.ownershipVerified).toBe(false);
+      expect(res.stats.ownershipNote).toBe('ownership unverified');
+      expect(m.runs.at(-1)!.stats).toMatchObject({ ownershipNote: 'ownership unverified' });
+      expect(gh.calls.some((c) => c.startsWith('/search'))).toBe(false);
+      expect([...m.evidence.keys()].some((k) => k.startsWith('GITHUB_PR'))).toBe(false);
+      expect(m.evidence.size).toBeGreaterThan(0);
+      for (const e of m.evidence.values()) {
+        expect(e.verificationState).toBe('USER_PROVIDED');
+        expect(e.visibility).toBe('PRIVATE');
+      }
+    });
+
+    it('a verified connection still samples merged PRs authored by the login', async () => {
+      const repos = [repo(1, 'alpha')];
+      const m = memStore();
+      const { gh, client } = setup(repos, undefined, TOKEN);
+      await run(m, client);
+      m.select(1);
+      await run(m, client);
+      const search = gh.calls.filter((c) => c.startsWith('/search'));
+      expect(search).toHaveLength(1);
+      expect(m.evidence.get('GITHUB_PR|octo/alpha#1')!.verificationState).toBe('VERIFIED');
+    });
+  });
+
+  it('sanitizes NUL and lone surrogates and slices by code points before writing', async () => {
+    const emoji = '\u{1F600}';
+    const repos = [
+      repo(1, 'alpha', {
+        description: 'bad\u0000desc\ud800' + emoji.repeat(2100),
+      }),
+    ];
+    const m = memStore();
+    const { client } = setup(repos);
+    await run(m, client);
+    m.select(1);
+    await run(m, client);
+    const e = m.evidence.get('GITHUB_REPO|octo/alpha')!;
+    expect(e.excerpt).not.toContain('\u0000');
+    expect(e.excerpt!.startsWith('baddesc')).toBe(true);
+    expect([...e.excerpt!].length).toBe(2000);
+    expect(/[\ud800-\udbff](?![\udc00-\udfff])/.test(e.excerpt!)).toBe(false);
+    expect(e.excerpt!.endsWith(emoji)).toBe(true);
+  });
+
+  it('migrates evidence refs on repo rename instead of duplicating', async () => {
+    const repos = [repo(1, 'alpha')];
+    const m = memStore();
+    const { client } = setup(repos);
+    await run(m, client);
+    m.select(1);
+    m.repos.set(1, { ...m.repos.get(1)!, fullName: 'octo/old-name' });
+    const renamed: string[][] = [];
+    m.store.renameRepositoryEvidence = async (_u, from, to) => {
+      renamed.push([from, to]);
+    };
+    await run(m, client);
+    expect(renamed).toEqual([['octo/old-name', 'octo/alpha']]);
+  });
+
+  it('stops starting repos after the time budget: PARTIAL with deferred repos', async () => {
+    const repos = [repo(1, 'a'), repo(2, 'b'), repo(3, 'c'), repo(4, 'd')];
+    const m = memStore();
+    const { client } = setup(repos);
+    let t = 0;
+    const res = await run(m, client, {
+      concurrency: 1,
+      maxElapsedMs: 45_000,
+      clock: () => {
+        t += 20_000;
+        return t;
+      },
+    });
+    expect(res.status).toBe('PARTIAL');
+    expect(res.stats.deferred).toBeGreaterThan(0);
+    expect(res.stats.metadataUpserted).toBeLessThan(4);
+  });
+
+  it('processes repos with bounded concurrency', async () => {
+    const repos = [1, 2, 3, 4, 5, 6].map((n) => repo(n, `r${n}`));
+    const m = memStore();
+    let inFlight = 0;
+    let max = 0;
+    const orig = m.store.upsertRepositorySnapshot;
+    m.store.upsertRepositorySnapshot = async (u, s) => {
+      inFlight++;
+      max = Math.max(max, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      await orig(u, s);
+      inFlight--;
+    };
+    const { client } = setup(repos);
+    await run(m, client);
+    expect(max).toBeGreaterThan(1);
+    expect(max).toBeLessThanOrEqual(3);
+  });
+
+  it('always retries ERROR/PENDING unselected repos even when the listing is unchanged', async () => {
+    const repos = [repo(1, 'alpha')];
+    const m = memStore();
+    const { client } = setup(repos);
+    await run(m, client);
+    m.repos.set(1, { ...m.repos.get(1)!, syncStatus: 'ERROR', syncError: 'x' });
+    const res = await run(m, client);
+    expect(res.stats.metadataUpserted).toBe(1);
+    expect(m.repos.get(1)!.syncStatus).toBe('SYNCED');
   });
 });

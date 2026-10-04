@@ -1,5 +1,6 @@
 'use client';
 
+import { safeHttpHref } from '@career-os/shared';
 import { Button, Input, Label } from '@career-os/ui';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -347,7 +348,7 @@ export function GithubPanel({
                   >
                     <div className="min-w-0">
                       <a
-                        href={repo.htmlUrl}
+                        href={safeHttpHref(repo.htmlUrl) ?? undefined}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="font-medium hover:underline focus-visible:underline"

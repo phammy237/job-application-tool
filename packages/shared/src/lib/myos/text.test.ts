@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   containsAllTokens,
   detectCompetencies,
+  matchTokensWithRelated,
   normalizeText,
   scoreTextMatch,
   stemLite,
@@ -23,7 +24,7 @@ describe('myos text helpers', () => {
   it('folds career synonyms into one concept', () => {
     expect(tokenize('PM')).toEqual(tokenize('product manager'));
     expect(tokenize('customer interviews')).toEqual(tokenize('usability'));
-    expect(scoreTextMatch('analytics', 'wrote SQL queries').score).toBe(1);
+    expect(scoreTextMatch('analytics', 'data analysis dashboards').score).toBe(1);
     expect(scoreTextMatch('stakeholder alignment', 'cross-functional alignment').score).toBe(1);
   });
 
@@ -54,5 +55,35 @@ describe('myos text helpers', () => {
     expect(c).toContain('CROSS_FUNCTIONAL_COLLABORATION');
     expect(c).toContain('PRIORITIZATION');
     expect(detectCompetencies('We sell shoes')).toEqual([]);
+  });
+
+  it('M7: ML, AI, LLM and GenAI are distinct concepts; SQL is not analytics', () => {
+    const t = (s: string) => tokenize(s)[0];
+    const toks = new Set([t('ML'), t('AI'), t('LLM'), t('GenAI')]);
+    expect(toks.size).toBe(4);
+    expect(t('machine learning')).toBe(t('ML'));
+    expect(t('large language models')).toBe(t('LLMs'));
+    expect(t('generative ai')).toBe(t('genai'));
+    expect(scoreTextMatch('analytics', 'wrote SQL queries').score).toBe(0);
+    expect(scoreTextMatch('LLM', 'machine learning models').score).toBe(0);
+  });
+
+  it('M7: related concepts are opt-in, half credit, and never an exact concept match', () => {
+    const exact = scoreTextMatch('LLM', 'machine learning models');
+    expect(exact.relatedConcepts).toEqual([]);
+    const rel = scoreTextMatch('LLM', 'machine learning models', { allowRelated: true });
+    expect(rel.score).toBe(0.5);
+    expect(rel.conceptMatch).toBe(false);
+    expect(rel.relatedConcepts).toEqual(['large language models']);
+    // asymmetric: a "wanted ML" query has LLM as related, but "SQL" wanted gets no analytics credit
+    expect(scoreTextMatch('SQL', 'analytics', { allowRelated: true }).score).toBe(0);
+  });
+
+  it('M7: matchTokensWithRelated distinguishes exact from related skill names', () => {
+    expect(matchTokensWithRelated('LLM experience', 'LLMs')).toBe('exact');
+    expect(matchTokensWithRelated('LLM experience', 'ML')).toBe('related');
+    expect(matchTokensWithRelated('ML experience', 'Python')).toBeNull();
+    expect(matchTokensWithRelated('data analysis', 'SQL')).toBe('related');
+    expect(matchTokensWithRelated('SQL', 'data analysis')).toBeNull();
   });
 });

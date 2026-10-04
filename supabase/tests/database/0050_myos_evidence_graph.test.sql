@@ -114,16 +114,21 @@ insert into pgtap_log(line) select is((select count(*)::int from public.github_c
 insert into pgtap_log(line) select ok(pg_temp.raises('insert into public.github_connections (user_id, github_login) values (''a0000000-0000-4000-8000-000000000002'',''forged'')'), 'A cannot insert a github_connections row under B''s user_id');
 update public.github_connections set github_login = 'hacked' where user_id = 'a0000000-0000-4000-8000-000000000002';
 delete from public.github_connections where user_id = 'a0000000-0000-4000-8000-000000000002';
-update public.github_connections set github_login = 'alice-edited' where user_id = 'a0000000-0000-4000-8000-000000000001';
-insert into pgtap_log(line) select is((select count(*)::int from public.github_connections where user_id = 'a0000000-0000-4000-8000-000000000001' and github_login = 'alice-edited'), 1, 'A can update own github_connections row');
+update public.github_connections set last_error = 'A conn edited' where user_id = 'a0000000-0000-4000-8000-000000000001';
+insert into pgtap_log(line) select is((select count(*)::int from public.github_connections where user_id = 'a0000000-0000-4000-8000-000000000001' and last_error = 'A conn edited'), 1, 'A can update non-identity fields of own github_connections row');
+insert into pgtap_log(line) select throws_ok($$update public.github_connections set github_login = 'someone-else' where user_id = 'a0000000-0000-4000-8000-000000000001'$$, '42501', null, 'A cannot rewrite own github_login (server-only identity)');
+insert into pgtap_log(line) select throws_ok($$update public.github_connections set github_user_id = 1 where user_id = 'a0000000-0000-4000-8000-000000000001'$$, '42501', null, 'A cannot rewrite own github_user_id');
 
 insert into pgtap_log(line) select is((select count(*)::int from public.github_repositories where id = 'd8000000-0000-4000-8000-000000000001'), 1, 'A can select own github_repositories row');
 insert into pgtap_log(line) select is((select count(*)::int from public.github_repositories where id = 'd8000000-0000-4000-8000-000000000002'), 0, 'A cannot see B''s github_repositories row');
 insert into pgtap_log(line) select ok(pg_temp.raises('insert into public.github_repositories (user_id, github_repo_id, full_name, html_url) values (''a0000000-0000-4000-8000-000000000002'', 2002, ''f/f'', ''https://github.com/f/f'')'), 'A cannot insert a github_repositories row under B''s user_id');
 update public.github_repositories set full_name = 'hacked' where id = 'd8000000-0000-4000-8000-000000000002';
 delete from public.github_repositories where id = 'd8000000-0000-4000-8000-000000000002';
-update public.github_repositories set full_name = 'alice/edited' where id = 'd8000000-0000-4000-8000-000000000001';
-insert into pgtap_log(line) select is((select count(*)::int from public.github_repositories where id = 'd8000000-0000-4000-8000-000000000001' and full_name = 'alice/edited'), 1, 'A can update own github_repositories row');
+update public.github_repositories set selected = true where id = 'd8000000-0000-4000-8000-000000000001';
+insert into pgtap_log(line) select is((select count(*)::int from public.github_repositories where id = 'd8000000-0000-4000-8000-000000000001' and selected), 1, 'A can toggle selected on own github_repositories row');
+insert into pgtap_log(line) select throws_ok($$update public.github_repositories set full_name = 'alice/edited' where id = 'd8000000-0000-4000-8000-000000000001'$$, '42501', null, 'A cannot edit server-ingested github_repositories columns');
+insert into pgtap_log(line) select throws_ok($$update public.github_repositories set readme_excerpt = 'forged' where id = 'd8000000-0000-4000-8000-000000000001'$$, '42501', null, 'A cannot edit readme_excerpt');
+insert into pgtap_log(line) select ok(pg_temp.raises('insert into public.github_repositories (user_id, github_repo_id, full_name, html_url) values (''a0000000-0000-4000-8000-000000000001'', 3003, ''me/forged'', ''https://github.com/me/forged'')'), 'A cannot insert github_repositories even under own user_id');
 
 insert into pgtap_log(line) select is((select count(*)::int from public.github_sync_runs where id = 'd9000000-0000-4000-8000-000000000001'), 1, 'A can select own github_sync_runs row');
 insert into pgtap_log(line) select is((select count(*)::int from public.github_sync_runs where id = 'd9000000-0000-4000-8000-000000000002'), 0, 'A cannot see B''s github_sync_runs row');
@@ -131,7 +136,8 @@ insert into pgtap_log(line) select ok(pg_temp.raises('insert into public.github_
 update public.github_sync_runs set error = 'hacked' where id = 'd9000000-0000-4000-8000-000000000002';
 delete from public.github_sync_runs where id = 'd9000000-0000-4000-8000-000000000002';
 update public.github_sync_runs set error = 'A run edited' where id = 'd9000000-0000-4000-8000-000000000001';
-insert into pgtap_log(line) select is((select count(*)::int from public.github_sync_runs where id = 'd9000000-0000-4000-8000-000000000001' and error = 'A run edited'), 1, 'A can update own github_sync_runs row');
+insert into pgtap_log(line) select is((select count(*)::int from public.github_sync_runs where id = 'd9000000-0000-4000-8000-000000000001' and error is null), 1, 'A cannot update own github_sync_runs row (server-only)');
+insert into pgtap_log(line) select ok(pg_temp.raises('insert into public.github_sync_runs (user_id) values (''a0000000-0000-4000-8000-000000000001'')'), 'A cannot insert github_sync_runs even under own user_id (server-only)');
 
 insert into pgtap_log(line) select is((select count(*)::int from public.portfolio_settings where user_id = 'a0000000-0000-4000-8000-000000000001'), 1, 'A can select own portfolio_settings row');
 insert into pgtap_log(line) select is((select count(*)::int from public.portfolio_settings where user_id = 'a0000000-0000-4000-8000-000000000002'), 0, 'A cannot see B''s portfolio_settings row');
@@ -223,11 +229,22 @@ insert into pgtap_log(line) select is((select count(*)::int from public.projects
 -- ======================================================================================
 
 insert into pgtap_log(line) select lives_ok($$insert into public.myos_evidence (user_id, source_type, source_ref, title, verification_state)
-  values ('a0000000-0000-4000-8000-000000000002','GITHUB_REPO','bob/repo','Repo','VERIFIED')$$, 'B can insert evidence with a source_ref');
+  values ('a0000000-0000-4000-8000-000000000002','LINK','bob/repo','Repo','USER_PROVIDED')$$, 'B can insert USER_PROVIDED evidence with a source_ref');
 insert into pgtap_log(line) select throws_ok($$insert into public.myos_evidence (user_id, source_type, source_ref, title, verification_state)
-  values ('a0000000-0000-4000-8000-000000000002','GITHUB_REPO','bob/repo','Repo again','VERIFIED')$$, '23505', null, 'same (user, source_type, source_ref) is rejected');
+  values ('a0000000-0000-4000-8000-000000000002','LINK','bob/repo','Repo again','USER_PROVIDED')$$, '23505', null, 'same (user, source_type, source_ref) is rejected');
 insert into pgtap_log(line) select lives_ok($$insert into public.myos_evidence (user_id, source_type, source_ref, title, verification_state)
-  values ('a0000000-0000-4000-8000-000000000002','GITHUB_README','bob/repo','Readme','VERIFIED')$$, 'same source_ref under a different source_type is allowed');
+  values ('a0000000-0000-4000-8000-000000000002','DOCUMENT','bob/repo','Readme','USER_PROVIDED')$$, 'same source_ref under a different source_type is allowed');
+-- Self-forged provenance is rejected for end users (service role / owner may write it).
+insert into pgtap_log(line) select throws_ok($$insert into public.myos_evidence (user_id, source_type, title, verification_state)
+  values ('a0000000-0000-4000-8000-000000000002','USER_NOTE','Forged','VERIFIED')$$, '42501', null, 'authenticated cannot insert VERIFIED evidence');
+insert into pgtap_log(line) select throws_ok($$insert into public.myos_evidence (user_id, source_type, source_ref, title, verification_state)
+  values ('a0000000-0000-4000-8000-000000000002','GITHUB_REPO','bob/forged','Forged','USER_PROVIDED')$$, '42501', null, 'authenticated cannot insert GITHUB_* evidence');
+insert into pgtap_log(line) select throws_ok($$update public.myos_evidence set verification_state = 'VERIFIED' where user_id = 'a0000000-0000-4000-8000-000000000002' and source_ref = 'bob/repo' and source_type = 'LINK'$$, '42501', null, 'authenticated cannot promote evidence to VERIFIED');
+insert into pgtap_log(line) select throws_ok($$update public.myos_evidence set source_type = 'GITHUB_PR' where user_id = 'a0000000-0000-4000-8000-000000000002' and source_ref = 'bob/repo' and source_type = 'LINK'$$, '42501', null, 'authenticated cannot retype evidence as GITHUB_*');
+insert into pgtap_log(line) select throws_ok($$insert into public.myos_edges (user_id, from_type, from_id, to_type, to_id, relation, verification_state)
+  select 'a0000000-0000-4000-8000-000000000002','EVIDENCE', id, 'PROJECT','d1000000-0000-4000-8000-000000000002','SUPPORTS','VERIFIED' from public.myos_evidence where source_ref = 'bob/repo' and source_type = 'LINK'$$, '42501', null, 'authenticated cannot insert a VERIFIED edge');
+insert into pgtap_log(line) select throws_ok($$insert into public.myos_candidates (user_id, kind, payload, dedupe_key, evidence_ids)
+  values ('a0000000-0000-4000-8000-000000000002','SKILL','{"skill":"q"}','b:evidence-owner','{d3000000-0000-4000-8000-000000000001}')$$, '23503', null, 'candidate evidence_ids pointing at FOREIGN evidence is rejected');
 insert into pgtap_log(line) select lives_ok($$insert into public.myos_evidence (user_id, source_type, title, verification_state)
   values ('a0000000-0000-4000-8000-000000000002','USER_NOTE','Note 1','USER_PROVIDED'), ('a0000000-0000-4000-8000-000000000002','USER_NOTE','Note 2','USER_PROVIDED')$$, 'multiple evidence rows with NULL source_ref are allowed');
 

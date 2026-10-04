@@ -108,11 +108,22 @@ export async function updateOwnAchievement(
   const parsed = myosAchievementInputSchema.partial().parse(update);
 
   let verificationState = parsed.verificationState;
-  if (verificationState === 'VERIFIED') {
+  if (verificationState === 'VERIFIED' || parsed.metricText !== undefined) {
     // Same rule as create: VERIFIED needs real supporting evidence when a metric is involved.
+    // It also applies when the metric text of an already-VERIFIED achievement is edited: the
+    // evidence substantiated the OLD claim, so the new wording is downgraded unless an
+    // evidence edge still supports the achievement.
     const existing = await getOwnAchievement(supabase, userId, id);
-    const metric = parsed.metricText !== undefined ? parsed.metricText : existing?.metricText;
-    if (metric && !(await hasSupportingEvidence(supabase, userId, id))) {
+    const nextMetric = parsed.metricText !== undefined ? parsed.metricText?.trim() || null : existing?.metricText;
+    const effectiveState = verificationState ?? existing?.verificationState;
+    const metricChanged =
+      parsed.metricText !== undefined && nextMetric !== (existing?.metricText?.trim() || null);
+    if (
+      effectiveState === 'VERIFIED' &&
+      nextMetric &&
+      (parsed.verificationState === 'VERIFIED' || metricChanged) &&
+      !(await hasSupportingEvidence(supabase, userId, id))
+    ) {
       verificationState = 'USER_PROVIDED';
     }
   }

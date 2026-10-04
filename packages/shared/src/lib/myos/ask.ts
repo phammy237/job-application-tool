@@ -140,16 +140,22 @@ function stateOf(e: SupportEntity, edgeState?: VerificationState): VerificationS
 }
 
 function stateLabel(state: VerificationState | null, e: SupportEntity): string {
+  // An entity's own "VERIFIED" flag (stories/achievements) is only displayed as verified when a
+  // solid evidence row backs it; otherwise it is shown as unverified.
+  const solid = e.evidence.find((v) => isSolidState(v.verificationState));
   switch (state) {
     case 'VERIFIED':
-      return e.evidence[0] ? `verified, evidence: ${e.evidence[0].title}` : 'verified';
+      if (solid) return `verified, evidence: ${solid.title}`;
+      return e.evidence.length === 0
+        ? 'unverified (no linked evidence)'
+        : 'unverified (linked evidence is only inferred)';
     case 'USER_PROVIDED':
-      return e.evidence[0] ? `provided by you, evidence: ${e.evidence[0].title}` : 'provided by you';
+      return solid ? `provided by you, evidence: ${solid.title}` : 'provided by you';
     case 'INFERRED':
     case 'AI_GENERATED':
       return 'inferred — confirm it';
     default:
-      return 'no linked evidence yet';
+      return 'no linked evidence yet — unverified';
   }
 }
 
@@ -170,7 +176,9 @@ function hitClaim(hit: Hit, skillSupport?: AskSupport): AskClaim {
   let lead: string;
   switch (hit.via.kind) {
     case 'skill':
-      lead = `${TYPE_WORD[e.entityType]} "${e.name}" uses ${hit.via.skillName}`;
+      lead = isSolidState(hit.via.edgeState)
+        ? `${TYPE_WORD[e.entityType]} "${e.name}" uses ${hit.via.skillName}`
+        : `${TYPE_WORD[e.entityType]} "${e.name}" may use ${hit.via.skillName}`;
       break;
     case 'competency':
       lead = `${TYPE_WORD[e.entityType]} "${e.name}" is tagged ${competencyLabel(hit.via.competency)}`;
@@ -180,7 +188,11 @@ function hitClaim(hit: Hit, skillSupport?: AskSupport): AskClaim {
   }
   const metric = e.metric;
   const flag = e.approved ? '' : ' [unconfirmed: not yet approved by you]';
-  const text = `${lead}${metric ? ` (metric: ${metric})` : ''} - ${stateLabel(hit.state, e)}.${flag}`;
+  let label = stateLabel(hit.state, e);
+  if (hit.via.kind === 'skill' && !isSolidState(hit.via.edgeState) && !label.includes('inferred')) {
+    label = `${label}; skill link inferred — confirm it`;
+  }
+  const text = `${lead}${metric ? ` (metric: ${metric})` : ''} - ${label}.${flag}`;
   const support = [supportFor(e)];
   if (skillSupport) support.push(skillSupport);
   return makeClaim(text, support);

@@ -52,6 +52,7 @@ beforeEach(() => {
   mocks.createClient.mockResolvedValue({ tag: 'user-client' });
   mocks.createAdminClient.mockReturnValue({ tag: 'admin-client' });
   mocks.getOwnGithubConnection.mockResolvedValue(null);
+  mocks.saveGithubAccessToken.mockResolvedValue(undefined);
   mocks.upsertOwnGithubConnection.mockImplementation(async (_s, userId, input) => ({
     userId,
     githubLogin: input.login,
@@ -95,11 +96,39 @@ describe('POST /api/myos/github/connect', () => {
       USER_ID,
       TOKEN,
     );
+    // has_token is not set by the upsert: only saveGithubAccessToken flips it, after storing.
     expect(mocks.upsertOwnGithubConnection).toHaveBeenCalledWith(
       { tag: 'user-client' },
       USER_ID,
-      expect.objectContaining({ hasToken: true, githubUserId: 99 }),
+      expect.objectContaining({ hasToken: false, githubUserId: 99 }),
     );
+    const order = [
+      mocks.upsertOwnGithubConnection.mock.invocationCallOrder[0]!,
+      mocks.saveGithubAccessToken.mock.invocationCallOrder[0]!,
+    ];
+    expect(order[0]).toBeLessThan(order[1]!);
+  });
+
+  it('rolls back a newly created connection if the token cannot be stored', async () => {
+    mocks.getAuthenticatedUser.mockResolvedValue({ login: 'octo', id: 99 });
+    mocks.saveGithubAccessToken.mockRejectedValue(new Error('db down'));
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await POST(post({ login: 'octo', token: TOKEN }));
+    expect(res.status).toBe(500);
+    expect(mocks.deleteOwnGithubConnection).toHaveBeenCalledWith({ tag: 'user-client' }, USER_ID);
+    expect(JSON.stringify(await res.json())).not.toContain(TOKEN);
+    spy.mockRestore();
+  });
+
+  it('rejects a body over 4096 bytes by content-length before reading it', async () => {
+    const req = new Request('http://localhost/x', {
+      method: 'POST',
+      headers: { 'content-length': '999999' },
+      body: JSON.stringify({ login: 'octo' }),
+    });
+    const textSpy = vi.spyOn(req, 'text');
+    expect((await POST(req)).status).toBe(413);
+    expect(textSpy).not.toHaveBeenCalled();
   });
 
   it('derives user_id from the session, ignoring any body-supplied user id', async () => {

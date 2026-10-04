@@ -6,7 +6,7 @@ const PROJECT_ID = '44444444-4444-4444-8444-444444444444';
 const EVIDENCE_ID = '55555555-5555-4555-8555-555555555555';
 
 const updateChain = vi.hoisted(() => {
-  const eq2 = vi.fn().mockResolvedValue({ error: null });
+  const eq2 = vi.fn().mockResolvedValue({ error: null as unknown });
   const eq1 = vi.fn(() => ({ eq: eq2 }));
   const update = vi.fn(() => ({ eq: eq1 }));
   return { update, eq1, eq2 };
@@ -15,6 +15,8 @@ const updateChain = vi.hoisted(() => {
 const mocks = vi.hoisted(() => ({
   getCurrentUser: vi.fn(),
   createClient: vi.fn(),
+  createAdminClient: vi.fn(),
+  getOwnGithubConnection: vi.fn(),
   getOwnGithubRepository: vi.fn(),
   setOwnGithubRepositorySelected: vi.fn(),
   setOwnGithubRepositoryProject: vi.fn(),
@@ -30,7 +32,11 @@ vi.mock('../../../../../../../lib/auth', () => ({
 vi.mock('../../../../../../../lib/supabase/server', () => ({
   createClient: mocks.createClient,
 }));
+vi.mock('../../../../../../../lib/supabase/admin', () => ({
+  createAdminClient: mocks.createAdminClient,
+}));
 vi.mock('@career-os/database', () => ({
+  getOwnGithubConnection: mocks.getOwnGithubConnection,
   getOwnGithubRepository: mocks.getOwnGithubRepository,
   setOwnGithubRepositorySelected: mocks.setOwnGithubRepositorySelected,
   setOwnGithubRepositoryProject: mocks.setOwnGithubRepositoryProject,
@@ -64,6 +70,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.getCurrentUser.mockResolvedValue({ id: USER_ID });
   mocks.createClient.mockResolvedValue({ from: () => updateChain });
+  mocks.createAdminClient.mockReturnValue({ tag: 'admin' });
+  mocks.getOwnGithubConnection.mockResolvedValue({ hasToken: true });
+  updateChain.eq2.mockResolvedValue({ error: null });
   mocks.getOwnGithubRepository.mockResolvedValue(repo);
   mocks.setOwnGithubRepositorySelected.mockResolvedValue({ ...repo, selected: true });
   mocks.setOwnGithubRepositoryProject.mockResolvedValue({
@@ -114,10 +123,14 @@ describe('POST /api/myos/github/repositories/[id]/select', () => {
       { status: 'ACTIVE', visibility: 'PRIVATE' },
     );
     expect(updateChain.update).toHaveBeenCalledWith({ origin: 'GITHUB' });
+    // evidence creation uses the service-role client with the session user id
+    expect(mocks.upsertOwnEvidenceBySource.mock.calls[0]![0]).toEqual({ tag: 'admin' });
+    expect(mocks.upsertOwnEvidenceBySource.mock.calls[0]![1]).toBe(USER_ID);
     expect(mocks.upsertOwnEvidenceBySource.mock.calls[0]![2]).toMatchObject({
       sourceType: 'GITHUB_REPO',
       sourceRef: 'octo/my-app',
       visibility: 'PRIVATE',
+      verificationState: 'VERIFIED',
     });
     expect(mocks.createOwnEdge).toHaveBeenCalledWith(
       expect.anything(),
@@ -130,6 +143,31 @@ describe('POST /api/myos/github/repositories/[id]/select', () => {
         relation: 'REPRESENTS',
       }),
     );
+  });
+
+  it('writes USER_PROVIDED evidence when the connection has no validated token', async () => {
+    mocks.getOwnGithubConnection.mockResolvedValue({ hasToken: false });
+    await POST(req({ selected: true }), ctx());
+    expect(mocks.upsertOwnEvidenceBySource.mock.calls[0]![2]).toMatchObject({
+      verificationState: 'USER_PROVIDED',
+    });
+  });
+
+  it('surfaces an error from the follow-up origin update', async () => {
+    updateChain.eq2.mockResolvedValue({ error: { message: 'boom' } });
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await POST(req({ selected: true }), ctx());
+    expect(res.status).toBe(500);
+    expect(mocks.upsertOwnEvidenceBySource).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  it('is idempotent: an already-linked repo returns without a new project or evidence', async () => {
+    mocks.getOwnGithubRepository.mockResolvedValue({ ...repo, projectId: PROJECT_ID });
+    const res = await POST(req({ selected: true }), ctx());
+    expect(res.status).toBe(200);
+    expect(mocks.createOwnProject).not.toHaveBeenCalled();
+    expect(mocks.upsertOwnEvidenceBySource).not.toHaveBeenCalled();
   });
 
   it('does not create a second project when one is already linked, or when unselecting', async () => {

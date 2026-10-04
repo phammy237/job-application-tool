@@ -99,6 +99,7 @@ export function buildGraphIndex(graph: EvidenceGraphData): GraphIndex {
       meta: {
         status: p.status,
         origin: p.origin,
+        userApproved: p.userApproved,
         visibility: p.visibility,
         startDate: p.startDate,
         endDate: p.endDate,
@@ -128,6 +129,7 @@ export function buildGraphIndex(graph: EvidenceGraphData): GraphIndex {
       verificationHint: approvedHint(e.userApproved),
       meta: {
         company: e.company,
+        userApproved: e.userApproved,
         visibility: e.visibility,
         startDate: e.startDate,
         endDate: e.endDate,
@@ -155,7 +157,12 @@ export function buildGraphIndex(graph: EvidenceGraphData): GraphIndex {
       label: a.title,
       sublabel: a.kind,
       verificationHint: a.verificationState,
-      meta: { kind: a.kind, visibility: a.visibility, occurredOn: a.occurredOn },
+      meta: {
+        kind: a.kind,
+        visibility: a.visibility,
+        occurredOn: a.occurredOn,
+        userApproved: a.userApproved,
+      },
     });
   }
   for (const s of graph.stories) {
@@ -167,7 +174,7 @@ export function buildGraphIndex(graph: EvidenceGraphData): GraphIndex {
       label: s.title,
       sublabel: s.competencies.length ? s.competencies.join(', ') : null,
       verificationHint: s.verificationState,
-      meta: { visibility: s.visibility },
+      meta: { visibility: s.visibility, userApproved: s.userApproved },
     });
   }
   const evidenceStates = new Map<string, VerificationState>();

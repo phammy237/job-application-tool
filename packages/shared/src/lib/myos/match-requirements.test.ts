@@ -95,13 +95,43 @@ describe('matchRequirementsToEvidence', () => {
     expect(m.supports[0]!.via).toBe('text-match');
   });
 
-  it('skill synonyms connect SQL skill to an analytics requirement', () => {
+  it('M7: an SQL skill is only RELATED to an analytics requirement: LIMITED at most', () => {
     const s = skill({ name: 'SQL' });
     const p = project({ name: 'Dash' });
-    const g = graphOf({ skills: [s], projects: [p], edges: [edge('PROJECT', p.id, 'SKILL', s.id)] });
+    const ev = evidence({ title: 'doc' });
+    const g = graphOf({
+      skills: [s],
+      projects: [p],
+      evidence: [ev],
+      edges: [edge('PROJECT', p.id, 'SKILL', s.id, 'VERIFIED'), edge('PROJECT', p.id, 'EVIDENCE', ev.id, 'VERIFIED')],
+    });
     const m = matchRequirementsToEvidence(g, [{ id: 'r', text: 'Strong data analysis' }], NOW).matches[0]!;
-    expect(m.supports[0]!.via).toBe('skill-edge');
-    expect(m.skills[0]!.name).toBe('SQL');
+    expect(m.level).toBe('LIMITED');
+    expect(m.supports[0]!.related).toBe(true);
+    expect(m.skills).toEqual([]);
+    expect(m.relatedSkills![0]!.name).toBe('SQL');
+    expect(m.explanation).toContain('Related, not identical');
+  });
+
+  it('M7: ML experience supports an LLM requirement at most LIMITED, but exact ML stays STRONG-capable', () => {
+    const ml = skill({ name: 'ML' });
+    const p1 = project({ name: 'Model A' });
+    const p2 = project({ name: 'Model B' });
+    const ev = evidence({ title: 'paper' });
+    const g = graphOf({
+      skills: [ml],
+      projects: [p1, p2],
+      evidence: [ev],
+      edges: [
+        edge('PROJECT', p1.id, 'SKILL', ml.id, 'VERIFIED'),
+        edge('PROJECT', p2.id, 'SKILL', ml.id, 'VERIFIED'),
+        edge('PROJECT', p1.id, 'EVIDENCE', ev.id, 'VERIFIED'),
+      ],
+    });
+    const run = (text: string) =>
+      matchRequirementsToEvidence(g, [{ id: 'r', text }], NOW).matches[0]!;
+    expect(run('LLM or GenAI experience').level).toBe('LIMITED');
+    expect(run('Machine learning experience').level).toBe('STRONG');
   });
 
   it('prompt-injection text in a description is plain data', () => {

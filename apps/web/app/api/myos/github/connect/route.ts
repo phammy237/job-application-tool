@@ -8,10 +8,11 @@ import {
 import { AuthError, GithubClient, RateLimitError } from '@career-os/myos';
 import { githubConnectRequestSchema } from '@career-os/shared';
 import { getCurrentUser } from '../../../../../lib/auth';
+import { readCappedText } from '../../../../../lib/myos/read-body';
 import { createClient } from '../../../../../lib/supabase/server';
 import { createAdminClient } from '../../../../../lib/supabase/admin';
 
-const MAX_BODY_BYTES = 2048;
+const MAX_BODY_BYTES = 4096;
 
 /**
  * Connects (or reconnects) the signed-in user's GitHub account. `token` is optional: without it
@@ -25,8 +26,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const raw = await request.text();
-  if (raw.length > MAX_BODY_BYTES) {
+  const raw = await readCappedText(request, MAX_BODY_BYTES);
+  if (raw === null) {
     return NextResponse.json({ error: 'Request body too large' }, { status: 413 });
   }
   let body: unknown;
@@ -68,7 +69,7 @@ export async function POST(request: Request) {
           { status: 503 },
         );
       }
-      // Log the error class only — never the error object, which could carry request context.
+      // Log the error class only - never the error object, which could carry request context.
       console.error('[career-os] GitHub token validation failed', (error as Error)?.name);
       return NextResponse.json(
         { error: 'Could not validate the token with GitHub' },
@@ -85,13 +86,30 @@ export async function POST(request: Request) {
     await deleteOwnGithubConnection(supabase, user.id);
   }
 
+  // The connection row must exist before the token (FK), but has_token is only set to true by
+  // saveGithubAccessToken after the encrypted token is durably stored - never before.
+  const priorHasToken = Boolean(existing && sameLogin && existing.hasToken);
   const connection = await upsertOwnGithubConnection(supabase, user.id, {
     login,
-    hasToken: token ? true : Boolean(existing && sameLogin && existing.hasToken),
+    hasToken: priorHasToken,
     githubUserId: token ? githubUserId : undefined,
   });
   if (token) {
-    await saveGithubAccessToken(createAdminClient(), user.id, token);
+    try {
+      await saveGithubAccessToken(createAdminClient(), user.id, token);
+    } catch {
+      // Roll back: a connection that claims ownership must not exist without its token.
+      if (!existing || !sameLogin) {
+        try {
+          await deleteOwnGithubConnection(supabase, user.id);
+        } catch {
+          console.error('[career-os] GitHub connect rollback failed');
+        }
+      }
+      console.error('[career-os] GitHub token could not be stored');
+      return NextResponse.json({ error: 'Could not store the access token' }, { status: 500 });
+    }
+    return NextResponse.json({ connection: { ...connection, hasToken: true } });
   }
 
   return NextResponse.json({ connection });

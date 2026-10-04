@@ -1,4 +1,5 @@
 import { loadOwnEvidenceGraph } from '@career-os/database';
+import { safeHttpHref } from '@career-os/shared';
 import { Badge, buttonVariants } from '@career-os/ui';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
@@ -100,9 +101,9 @@ export default async function StoryPage({ params }: { params: Promise<{ id: stri
               <li key={ev.id} className="flex flex-wrap items-center gap-2">
                 <span className="text-muted-foreground">Evidence: </span>
                 <VerificationBadge state={ev.verificationState} />
-                {ev.sourceUrl ? (
+                {safeHttpHref(ev.sourceUrl) ? (
                   <a
-                    href={ev.sourceUrl}
+                    href={safeHttpHref(ev.sourceUrl) ?? undefined}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="underline underline-offset-2"

@@ -9,7 +9,7 @@ const getSettings = vi.fn();
 
 vi.mock('@career-os/database', () => ({
   getUserIdForPortfolioApiKey: (...a: unknown[]) => getUserId(...a),
-  loadOwnEvidenceGraph: (...a: unknown[]) => loadGraph(...a),
+  loadPublicEvidenceGraph: (...a: unknown[]) => loadGraph(...a),
   getOwnPortfolioSettings: (...a: unknown[]) => getSettings(...a),
 }));
 const admin = { __admin: true };
@@ -125,6 +125,28 @@ describe('GET /api/portfolio/v1', () => {
     const res = await GET(req({ authorization: 'Bearer cos_pub_good' }));
     expect(res.status).toBe(500);
     expect(await res.text()).not.toContain('password');
+  });
+
+  it('does not trust x-forwarded-for outside Vercel and uses the rightmost entry on Vercel', async () => {
+    const hit = async (xff: string, n: number) => {
+      let last = 200;
+      for (let i = 0; i < n; i++) {
+        last = (await GET(req({ authorization: 'Bearer cos_pub_good', 'x-forwarded-for': xff }))).status;
+      }
+      return last;
+    };
+    // Not on Vercel: rotating a spoofed header cannot mint fresh rate-limit buckets.
+    vi.stubEnv('VERCEL', '');
+    let last = 200;
+    for (let i = 0; i < 61; i++) last = await hit(`10.0.0.${i}`, 1);
+    expect(last).toBe(429);
+    resetRateLimits();
+    // On Vercel: the leftmost (client-supplied) value is ignored; the rightmost one is the bucket.
+    vi.stubEnv('VERCEL', '1');
+    last = 200;
+    for (let i = 0; i < 61; i++) last = await hit(`10.0.0.${i}, 8.8.8.8`, 1);
+    expect(last).toBe(429);
+    vi.unstubAllEnvs();
   });
 
   it('rate limits repeated requests from the same key and IP', async () => {

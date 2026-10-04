@@ -46,6 +46,24 @@ alter table public.experiences
     check (visibility in ('PRIVATE', 'CAREER_OS_ONLY', 'PUBLIC'));
 
 -- ============================================================================================
+-- Provenance guard helper
+-- ============================================================================================
+-- VERIFIED means "a trusted server-side process confirmed this against its source". An end user
+-- (PostgREST role authenticated/anon) must never be able to self-forge it, so triggers below
+-- reject end-user writes of VERIFIED evidence/edges, GITHUB_* evidence and GitHub ingestion
+-- data. Ingestion (GitHub sync) runs through the service-role client (role service_role, or the
+-- table owner) with an explicit user_id filter in application code. current_user cannot be
+-- spoofed through JWT claims, unlike request.jwt.claims.
+create or replace function public.myos_is_end_user()
+returns boolean
+language sql
+stable
+set search_path = public
+as $$
+  select current_user in ('authenticated', 'anon')
+$$;
+
+-- ============================================================================================
 -- myos_evidence
 -- ============================================================================================
 
@@ -81,6 +99,43 @@ create index myos_evidence_user_id_idx on public.myos_evidence (user_id);
 create trigger myos_evidence_set_updated_at
   before update on public.myos_evidence
   for each row execute function public.set_updated_at();
+
+create or replace function public.myos_evidence_guard_provenance()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  if not public.myos_is_end_user() then
+    return new;
+  end if;
+  if tg_op = 'INSERT' then
+    if new.verification_state = 'VERIFIED' or new.source_type like 'GITHUB\_%' then
+      raise exception 'myos_evidence: VERIFIED / GITHUB_* evidence is written by the server only'
+        using errcode = '42501';
+    end if;
+  else
+    if new.verification_state = 'VERIFIED' and old.verification_state <> 'VERIFIED' then
+      raise exception 'myos_evidence: cannot promote evidence to VERIFIED' using errcode = '42501';
+    end if;
+    if new.source_type like 'GITHUB\_%' and new.source_type is distinct from old.source_type then
+      raise exception 'myos_evidence: cannot change source_type to GITHUB_*' using errcode = '42501';
+    end if;
+    if (old.verification_state = 'VERIFIED' or old.source_type like 'GITHUB\_%')
+       and (new.source_type is distinct from old.source_type
+         or new.source_ref is distinct from old.source_ref
+         or new.source_url is distinct from old.source_url) then
+      raise exception 'myos_evidence: provenance of server-verified evidence is immutable'
+        using errcode = '42501';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+create trigger myos_evidence_guard_provenance
+  before insert or update on public.myos_evidence
+  for each row execute function public.myos_evidence_guard_provenance();
 
 alter table public.myos_evidence enable row level security;
 create policy "select own myos_evidence" on public.myos_evidence
@@ -221,6 +276,7 @@ create or replace function public.myos_node_table(p_type text)
 returns text
 language sql
 immutable
+set search_path = public
 as $$
   select case p_type
     when 'PROJECT' then 'projects'
@@ -238,10 +294,18 @@ $$;
 create or replace function public.myos_edges_validate_endpoints()
 returns trigger
 language plpgsql
+set search_path = public
 as $$
 declare
   v_found boolean;
 begin
+  -- CHECK constraints run after BEFORE triggers, so guard against an unknown type here and
+  -- raise the same clean check_violation instead of format()'s "null identifier" error.
+  if public.myos_node_table(new.from_type) is null or public.myos_node_table(new.to_type) is null then
+    raise exception 'myos_edges: unknown node type (% / %)', new.from_type, new.to_type
+      using errcode = '23514';
+  end if;
+
   execute format('select exists (select 1 from public.%I where id = $1 and user_id = $2)',
                  public.myos_node_table(new.from_type))
     into v_found using new.from_id, new.user_id;
@@ -265,10 +329,29 @@ create trigger myos_edges_validate_endpoints
   before insert or update of from_type, from_id, to_type, to_id, user_id on public.myos_edges
   for each row execute function public.myos_edges_validate_endpoints();
 
+create or replace function public.myos_edges_guard_provenance()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  if public.myos_is_end_user() and new.verification_state = 'VERIFIED'
+     and (tg_op = 'INSERT' or old.verification_state <> 'VERIFIED') then
+    raise exception 'myos_edges: VERIFIED edges are written by the server only' using errcode = '42501';
+  end if;
+  return new;
+end;
+$$;
+
+create trigger myos_edges_guard_provenance
+  before insert or update on public.myos_edges
+  for each row execute function public.myos_edges_guard_provenance();
+
 -- Polymorphic ids have no FK, so deleting a node must remove its edges explicitly.
 create or replace function public.myos_edges_cleanup_on_node_delete()
 returns trigger
 language plpgsql
+set search_path = public
 as $$
 begin
   delete from public.myos_edges
@@ -330,6 +413,28 @@ create table public.myos_candidates (
 
 create index myos_candidates_user_status_idx on public.myos_candidates (user_id, status);
 
+-- evidence_ids is a bare uuid[] (no FK possible): every id must be evidence owned by the same user.
+create or replace function public.myos_candidates_validate_evidence()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  if exists (
+    select 1 from unnest(new.evidence_ids) as e(id)
+     where not exists (select 1 from public.myos_evidence ev where ev.id = e.id and ev.user_id = new.user_id)
+  ) then
+    raise exception 'myos_candidates: evidence_ids must reference evidence owned by the same user'
+      using errcode = '23503';
+  end if;
+  return new;
+end;
+$$;
+
+create trigger myos_candidates_validate_evidence
+  before insert or update of evidence_ids, user_id on public.myos_candidates
+  for each row execute function public.myos_candidates_validate_evidence();
+
 alter table public.myos_candidates enable row level security;
 create policy "select own myos_candidates" on public.myos_candidates
   for select using (auth.uid() = user_id);
@@ -361,11 +466,33 @@ create trigger github_connections_set_updated_at
   before update on public.github_connections
   for each row execute function public.set_updated_at();
 
+create or replace function public.github_connections_guard()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  if public.myos_is_end_user() and (
+       tg_op = 'INSERT'
+    or new.github_login is distinct from old.github_login
+    or new.github_user_id is distinct from old.github_user_id
+    or new.has_token is distinct from old.has_token) then
+    raise exception 'github_connections: identity fields are written by the server only'
+      using errcode = '42501';
+  end if;
+  return new;
+end;
+$$;
+
+create trigger github_connections_guard
+  before insert or update on public.github_connections
+  for each row execute function public.github_connections_guard();
+
 alter table public.github_connections enable row level security;
 create policy "select own github_connections" on public.github_connections
   for select using (auth.uid() = user_id);
-create policy "insert own github_connections" on public.github_connections
-  for insert with check (auth.uid() = user_id);
+-- No end-user INSERT policy: a connection (github_login / github_user_id) is created by the
+-- server (service role, explicit user_id filter), so a user cannot claim another GitHub identity.
 create policy "update own github_connections" on public.github_connections
   for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "delete own github_connections" on public.github_connections
@@ -425,11 +552,32 @@ create trigger github_repositories_set_updated_at
   before update on public.github_repositories
   for each row execute function public.set_updated_at();
 
+-- End users may only toggle `selected` and link `project_id`; every other column is
+-- server-ingested data (service role / owner bypass this check).
+create or replace function public.github_repositories_guard()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  if public.myos_is_end_user() and
+     (to_jsonb(new) - 'selected' - 'project_id' - 'updated_at')
+       is distinct from (to_jsonb(old) - 'selected' - 'project_id' - 'updated_at') then
+    raise exception 'github_repositories: only selected/project_id may be changed by the user'
+      using errcode = '42501';
+  end if;
+  return new;
+end;
+$$;
+
+create trigger github_repositories_guard
+  before update on public.github_repositories
+  for each row execute function public.github_repositories_guard();
+
 alter table public.github_repositories enable row level security;
 create policy "select own github_repositories" on public.github_repositories
   for select using (auth.uid() = user_id);
-create policy "insert own github_repositories" on public.github_repositories
-  for insert with check (auth.uid() = user_id);
+-- No end-user INSERT policy: repository rows come from server-side ingestion only.
 create policy "update own github_repositories" on public.github_repositories
   for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "delete own github_repositories" on public.github_repositories
@@ -450,10 +598,7 @@ create index github_sync_runs_user_started_idx on public.github_sync_runs (user_
 alter table public.github_sync_runs enable row level security;
 create policy "select own github_sync_runs" on public.github_sync_runs
   for select using (auth.uid() = user_id);
-create policy "insert own github_sync_runs" on public.github_sync_runs
-  for insert with check (auth.uid() = user_id);
-create policy "update own github_sync_runs" on public.github_sync_runs
-  for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+-- Sync runs are server-written (service role); end users may read and delete their own only.
 create policy "delete own github_sync_runs" on public.github_sync_runs
   for delete using (auth.uid() = user_id);
 

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   createOwnEdge,
   createOwnProject,
+  getOwnGithubConnection,
   getOwnGithubRepository,
   setOwnGithubRepositoryProject,
   setOwnGithubRepositorySelected,
@@ -12,6 +13,8 @@ import {
 import { createProjectFromRepository } from '@career-os/myos';
 import { uuidSchema } from '@career-os/shared';
 import { getCurrentUser } from '../../../../../../../lib/auth';
+import { readCappedText } from '../../../../../../../lib/myos/read-body';
+import { createAdminClient } from '../../../../../../../lib/supabase/admin';
 import { createClient } from '../../../../../../../lib/supabase/server';
 
 const bodySchema = z.object({ selected: z.boolean() });
@@ -34,8 +37,8 @@ export async function POST(
   if (!uuidSchema.safeParse(id).success) {
     return NextResponse.json({ error: 'Invalid repository id' }, { status: 400 });
   }
-  const raw = await request.text();
-  if (raw.length > 256) {
+  const raw = await readCappedText(request, 256);
+  if (raw === null) {
     return NextResponse.json({ error: 'Request body too large' }, { status: 413 });
   }
   let json: unknown;
@@ -62,6 +65,7 @@ export async function POST(
     body.data.selected,
   );
 
+  // Idempotent: a repo that already has a project is returned as-is, never given a second one.
   if (body.data.selected && !repo.projectId) {
     const mapped = createProjectFromRepository(repo);
     const { origin: _origin, status, visibility, ...projectInput } = mapped;
@@ -69,23 +73,30 @@ export async function POST(
     const project = await createOwnProject(supabase, user.id, projectInput);
     // status + visibility via the myOS detail update; origin is set in the same step below.
     await updateOwnProjectDetail(supabase, user.id, project.id, { status, visibility });
-    await supabase
+    const { error: originError } = await supabase
       .from('projects')
       .update({ origin: 'GITHUB' })
       .eq('id', project.id)
       .eq('user_id', user.id);
+    if (originError) {
+      console.error('[career-os] could not mark imported project origin');
+      return NextResponse.json({ error: 'Could not import repository' }, { status: 500 });
+    }
     updated = await setOwnGithubRepositoryProject(supabase, user.id, id, project.id);
 
     // Ensure the repo evidence exists now (idempotent with the sync's identical upsert) so the
     // REPRESENTS edge can be created before the first deep sync completes.
-    const evidence = await upsertOwnEvidenceBySource(supabase, user.id, {
+    // Evidence creation is service-role only (triggers); user_id is the session user's. Without a
+    // token-validated connection ownership of the login is unproven, so it is USER_PROVIDED.
+    const connection = await getOwnGithubConnection(supabase, user.id);
+    const evidence = await upsertOwnEvidenceBySource(createAdminClient(), user.id, {
       sourceType: 'GITHUB_REPO',
       sourceRef: repo.fullName,
       sourceUrl: repo.htmlUrl,
       title: repo.fullName,
       excerpt: repo.description,
       occurredAt: repo.pushedAt,
-      verificationState: 'VERIFIED',
+      verificationState: connection?.hasToken ? 'VERIFIED' : 'USER_PROVIDED',
       visibility: 'PRIVATE',
       metadata: {
         languages: repo.languages,

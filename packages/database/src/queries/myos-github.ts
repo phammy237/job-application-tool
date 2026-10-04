@@ -7,6 +7,7 @@ import {
   rowToGithubConnection,
   rowToGithubRepository,
   rowToGithubSyncRun,
+  sanitizeDbText,
 } from './myos-mappers';
 
 // --------------------------------------------------------------------------------------------
@@ -136,6 +137,9 @@ export async function getOwnGithubRepository(
 }
 
 /**
+ * SERVER-ONLY write path (migration 0060: end users cannot insert/update ingested columns).
+ * Call with the service-role client and a session-derived userId.
+ *
  * Idempotent on (user_id, github_repo_id). On re-sync only the snapshot-derived columns and
  * sync bookkeeping are written: `selected` and `project_id` are user decisions and are NEVER
  * reset (they are not even present in the update payload).
@@ -146,20 +150,20 @@ export async function upsertGithubRepositorySnapshot(
   snapshot: GithubRepoSnapshot,
 ): Promise<GithubRepository> {
   const columns = {
-    full_name: snapshot.fullName,
-    description: snapshot.description,
+    full_name: sanitizeDbText(snapshot.fullName),
+    description: sanitizeDbText(snapshot.description),
     html_url: snapshot.htmlUrl,
     is_private: snapshot.isPrivate,
     is_fork: snapshot.isFork,
     is_archived: snapshot.isArchived,
     default_branch: snapshot.defaultBranch,
-    primary_language: snapshot.primaryLanguage,
+    primary_language: sanitizeDbText(snapshot.primaryLanguage),
     languages: snapshot.languages as Json,
     topics: snapshot.topics,
     stars: snapshot.stars,
     repo_created_at: snapshot.repoCreatedAt,
     pushed_at: snapshot.pushedAt,
-    readme_excerpt: snapshot.readmeExcerpt,
+    readme_excerpt: sanitizeDbText(snapshot.readmeExcerpt),
     readme_sha: snapshot.readmeSha,
     contributors: snapshot.contributors as Json,
     pr_count: snapshot.prCount,

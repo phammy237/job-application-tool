@@ -23,6 +23,21 @@ import type { Database } from '../types/database.types';
 
 type Tables = Database['public']['Tables'];
 
+/**
+ * Makes free text safe for Postgres `text`/JSON columns: strips NUL (rejected by Postgres) and
+ * drops lone UTF-16 surrogates (rejected when serialised to UTF-8 JSON). Null/undefined pass through.
+ */
+export function sanitizeDbText(value: string): string;
+export function sanitizeDbText(value: string | null): string | null;
+export function sanitizeDbText(value: string | null | undefined): string | null | undefined;
+export function sanitizeDbText(value: string | null | undefined): string | null | undefined {
+  if (typeof value !== 'string') return value;
+  return value
+    .split('\u0000')
+    .join('')
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '');
+}
+
 /** Higher rank = more trusted. Used so a re-sync never downgrades a verification state. */
 export const VERIFICATION_RANK: Record<VerificationState, number> = {
   AI_GENERATED: 0,

@@ -1,3 +1,4 @@
+import { truncateCodePoints } from './text';
 import { AuthError, GithubApiError, NotFoundError, RateLimitError } from './errors';
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
@@ -79,7 +80,8 @@ function parseLink(header: string | null): Record<string, string> {
  * never logged, serialized (toJSON omits it), or included in any error message.
  */
 export class GithubClient {
-  private readonly token: string | null;
+  /** ES private field: not an own enumerable property, so console.log/JSON.stringify can't expose it. */
+  readonly #token: string | null;
   private readonly fetchFn: FetchLike;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly now: () => Date;
@@ -90,7 +92,7 @@ export class GithubClient {
   private readonly maxInlineWaitSeconds: number;
 
   constructor(options: GithubClientOptions = {}) {
-    this.token = options.token ?? null;
+    this.#token = options.token ?? null;
     this.fetchFn = options.fetch ?? ((input, init) => fetch(input, init));
     this.sleep = options.sleep ?? sleepDefault;
     this.now = options.now ?? (() => new Date());
@@ -102,7 +104,7 @@ export class GithubClient {
   }
 
   get hasToken(): boolean {
-    return this.token !== null;
+    return this.#token !== null;
   }
 
   toJSON() {
@@ -115,7 +117,7 @@ export class GithubClient {
       'X-GitHub-Api-Version': '2022-11-28',
       'User-Agent': 'career-os-myos',
     };
-    if (this.token) h.Authorization = `Bearer ${this.token}`;
+    if (this.#token) h.Authorization = `Bearer ${this.#token}`;
     if (etag) h['If-None-Match'] = etag;
     return h;
   }
@@ -133,7 +135,8 @@ export class GithubClient {
 
   /** Single request with retry/backoff and rate-limit classification. 304 is returned as-is. */
   async request(pathOrUrl: string, opts: { etag?: string | null } = {}): Promise<Result> {
-    const url = this.resolveUrl(pathOrUrl);
+    let url = this.resolveUrl(pathOrUrl);
+    let redirects = 0;
     const label = url.replace(this.baseUrl, '').split('?')[0]!;
     let lastError: unknown = null;
     for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
@@ -142,6 +145,7 @@ export class GithubClient {
         res = await this.fetchFn(url, {
           method: 'GET',
           headers: this.headers(opts.etag),
+          redirect: 'manual',
         });
       } catch {
         // Deliberately drop the underlying error: it is not needed and could echo request data.
@@ -151,6 +155,22 @@ export class GithubClient {
         continue;
       }
 
+      if (res.status >= 300 && res.status < 400 && res.status !== 304) {
+        // Never auto-follow: a redirect off api.github.com would carry the bearer token along.
+        const loc = res.headers.get('location');
+        let target: string | null = null;
+        try {
+          if (loc) target = new URL(loc, url).toString();
+        } catch {
+          target = null;
+        }
+        if (!target || !target.startsWith(this.baseUrl + '/') || ++redirects > 3) {
+          throw new GithubApiError(`Unexpected GitHub redirect on ${label}`, res.status);
+        }
+        url = target;
+        attempt--; // a followed redirect does not consume a retry attempt
+        continue;
+      }
       if (res.status === 304) return { status: 304, data: null, headers: res.headers };
       if (res.status >= 200 && res.status < 300) {
         let data: unknown = null;
@@ -252,7 +272,7 @@ export class GithubClient {
    * (includes private), filtered to repos owned by `login`. Capped at maxPages * 100 repos.
    */
   async listRepositories(login: string): Promise<RawRepo[]> {
-    const path = this.token
+    const path = this.#token
       ? '/user/repos?affiliation=owner&sort=pushed&per_page=100'
       : `/users/${encodeURIComponent(login)}/repos?type=owner&sort=pushed&per_page=100`;
     const repos = await this.paginate<RawRepo>(path);
@@ -285,7 +305,7 @@ export class GithubClient {
         d.encoding === 'base64'
           ? Buffer.from(d.content.replace(/\n/g, ''), 'base64').toString('utf8')
           : d.content;
-      return { text: text.slice(0, README_MAX_CHARS), sha: d.sha };
+      return { text: truncateCodePoints(text, README_MAX_CHARS), sha: d.sha };
     } catch (e) {
       if (e instanceof NotFoundError) return null;
       throw e;

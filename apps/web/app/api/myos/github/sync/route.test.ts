@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   clientOptions: vi.fn(),
   createClient: vi.fn(),
   createAdminClient: vi.fn(),
+  recordOutcome: vi.fn(),
 }));
 
 vi.mock('../../../../../lib/auth', () => ({ getCurrentUser: mocks.getCurrentUser }));
@@ -21,7 +22,8 @@ vi.mock('../../../../../lib/supabase/admin', () => ({
   createAdminClient: mocks.createAdminClient,
 }));
 vi.mock('../../../../../lib/myos-github-store', () => ({
-  createGithubSyncStore: () => ({ tag: 'store' }),
+  createGithubSyncStore: (c: unknown) => ({ tag: 'store', client: c }),
+  recordGithubConnectionSyncOutcome: mocks.recordOutcome,
 }));
 vi.mock('@career-os/database', () => ({
   getOwnGithubConnection: mocks.getOwnGithubConnection,
@@ -43,7 +45,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.getCurrentUser.mockResolvedValue({ id: USER_ID });
   mocks.createClient.mockResolvedValue({});
-  mocks.createAdminClient.mockReturnValue({});
+  mocks.createAdminClient.mockReturnValue({ tag: 'admin' });
+  mocks.recordOutcome.mockResolvedValue(undefined);
   mocks.getOwnGithubConnection.mockResolvedValue({ githubLogin: 'octo', hasToken: true });
   mocks.listOwnGithubSyncRuns.mockResolvedValue([]);
   mocks.getGithubAccessToken.mockResolvedValue('ghp_tok');
@@ -95,6 +98,65 @@ describe('POST /api/myos/github/sync', () => {
       expect.objectContaining({ userId: USER_ID, login: 'octo' }),
     );
     expect(mocks.clientOptions).toHaveBeenCalledWith({ token: 'ghp_tok' });
+    // ingestion runs on the service-role client, verified because a token backs the connection
+    expect(mocks.syncGithubRepositories).toHaveBeenCalledWith(
+      expect.objectContaining({
+        store: { tag: 'store', client: { tag: 'admin' } },
+        ownershipVerified: true,
+      }),
+    );
+    expect(mocks.recordOutcome).toHaveBeenCalledWith({ tag: 'admin' }, USER_ID, {
+      status: 'SUCCEEDED',
+      error: null,
+    });
+  });
+
+  it('marks token-less runs as ownership unverified', async () => {
+    mocks.getOwnGithubConnection.mockResolvedValue({ githubLogin: 'octo', hasToken: false });
+    await POST();
+    expect(mocks.syncGithubRepositories).toHaveBeenCalledWith(
+      expect.objectContaining({ ownershipVerified: false }),
+    );
+  });
+
+  it('enforces a 60s cooldown with Retry-After (429)', async () => {
+    mocks.listOwnGithubSyncRuns.mockResolvedValue([
+      { status: 'SUCCEEDED', startedAt: new Date(Date.now() - 20_000).toISOString() },
+    ]);
+    const res = await POST();
+    expect(res.status).toBe(429);
+    const retry = Number(res.headers.get('Retry-After'));
+    expect(retry).toBeGreaterThan(30);
+    expect(retry).toBeLessThanOrEqual(60);
+    expect(mocks.syncGithubRepositories).not.toHaveBeenCalled();
+  });
+
+  it('limits token-less syncs to one per 10 minutes per user', async () => {
+    mocks.getOwnGithubConnection.mockResolvedValue({ githubLogin: 'octo', hasToken: false });
+    mocks.listOwnGithubSyncRuns.mockResolvedValue([
+      { status: 'SUCCEEDED', startedAt: new Date(Date.now() - 5 * 60_000).toISOString() },
+    ]);
+    const res = await POST();
+    expect(res.status).toBe(429);
+    expect(Number(res.headers.get('Retry-After'))).toBeGreaterThan(60);
+    expect(mocks.syncGithubRepositories).not.toHaveBeenCalled();
+  });
+
+  it('caps concurrent token-less syncs per process', async () => {
+    mocks.getOwnGithubConnection.mockResolvedValue({ githubLogin: 'octo', hasToken: false });
+    let release!: () => void;
+    mocks.syncGithubRepositories.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve({ runId: 'r', status: 'SUCCEEDED', stats: {}, error: null });
+        }),
+    );
+    const first = POST();
+    await new Promise((r) => setTimeout(r, 10));
+    const second = await POST();
+    expect(second.status).toBe(429);
+    release();
+    expect((await first).status).toBe(200);
   });
 
   it('uses no token for username-only connections', async () => {

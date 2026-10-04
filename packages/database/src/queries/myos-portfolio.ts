@@ -1,5 +1,9 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { portfolioSettingsSchema, type PortfolioSettings } from '@career-os/shared';
+import {
+  portfolioSettingsInputSchema,
+  portfolioSettingsSchema,
+  type PortfolioSettings,
+} from '@career-os/shared';
 import { assertNoError, unwrapRow } from '../errors';
 import type { Database } from '../types/database.types';
 import type { CareerOsSupabaseClient } from '../types/client';
@@ -42,14 +46,15 @@ export async function upsertOwnPortfolioSettings(
   userId: string,
   input: { enabled: boolean; displayName: string | null; headline: string | null },
 ): Promise<PortfolioSettings> {
+  const parsed = portfolioSettingsInputSchema.parse(input);
   const { data, error } = await supabase
     .from('portfolio_settings')
     .upsert(
       {
         user_id: userId,
-        enabled: input.enabled,
-        display_name: input.displayName,
-        headline: input.headline,
+        enabled: parsed.enabled,
+        display_name: parsed.displayName,
+        headline: parsed.headline,
       },
       { onConflict: 'user_id' },
     )

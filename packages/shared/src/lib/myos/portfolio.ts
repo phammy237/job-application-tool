@@ -23,7 +23,13 @@ import { buildTimeline } from './timeline';
  *  - Excluded entirely: stories, experiences, education, candidates, GitHub repository data,
  *    project collaborators and talking points, evidence excerpts/metadata, and in-app hrefs.
  *  - Evidence: only evidence with visibility PUBLIC, and only {sourceType, title, url,
- *    verificationState}.
+ *    verificationState}. Evidence from a private source (metadata.isPrivate / private /
+ *    repoPrivate === true, e.g. a private GitHub repository) is omitted entirely, title and url
+ *    included, even when its visibility says PUBLIC.
+ *  - Skill links: a project<->skill edge is exported only when the user confirmed it (VERIFIED or
+ *    USER_PROVIDED); INFERRED and AI_GENERATED links are dropped.
+ *  - Achievement metrics: `metricText` is exported only when a user-confirmed public evidence node
+ *    supports the achievement; otherwise it is exported as null.
  *  - Cross-links (project.skillIds, skill.projectIds, achievement.projectId) reference only
  *    exported items; a link to a non-exported node is dropped (achievement.projectId -> null).
  */
@@ -109,6 +115,20 @@ export interface PortfolioSettingsInput {
   headline: string | null;
 }
 
+const CONFIRMED = new Set(['VERIFIED', 'USER_PROVIDED']);
+
+/** True when the evidence points at a private source (e.g. a private GitHub repository). */
+function isPrivateSource(e: { metadata: Record<string, unknown> }): boolean {
+  const m = e.metadata ?? {};
+  return (
+    m.isPrivate === true ||
+    m.private === true ||
+    m.repoPrivate === true ||
+    m.isPrivateRepo === true ||
+    (typeof m.visibility === 'string' && m.visibility.toLowerCase() === 'private')
+  );
+}
+
 const isPublicApproved = (x: { visibility: string; userApproved: boolean }): boolean =>
   x.visibility === 'PUBLIC' && x.userApproved === true;
 
@@ -117,7 +137,9 @@ export function publicSubgraph(graph: EvidenceGraphData): EvidenceGraphData {
   const projects = graph.projects.filter(isPublicApproved);
   const skills = graph.skills.filter(isPublicApproved);
   const achievements = graph.achievements.filter(isPublicApproved);
-  const evidence = graph.evidence.filter((e) => e.visibility === 'PUBLIC');
+  const evidence = graph.evidence.filter(
+    (e) => e.visibility === 'PUBLIC' && !isPrivateSource(e),
+  );
   const keys = new Set<string>([
     ...projects.map((p) => nodeKey('PROJECT', p.id)),
     ...skills.map((s) => nodeKey('SKILL', s.id)),
@@ -128,7 +150,9 @@ export function publicSubgraph(graph: EvidenceGraphData): EvidenceGraphData {
     (e) =>
       keys.has(nodeKey(e.fromType, e.fromId)) &&
       keys.has(nodeKey(e.toType, e.toId)) &&
-      e.verificationState !== 'AI_GENERATED',
+      e.verificationState !== 'AI_GENERATED' &&
+      // a skill link must be confirmed by the user, never merely inferred
+      (!(e.fromType === 'SKILL' || e.toType === 'SKILL') || CONFIRMED.has(e.verificationState)),
   );
   return {
     projects,
@@ -165,7 +189,7 @@ export function buildPortfolioExport(
 
   const projects = pub.projects.map((p) => {
     const key = nodeKey('PROJECT', p.id);
-    const evidence = linked(key, ['SUPPORTS'], 'EVIDENCE')
+    const evidence = linked(key, ['SUPPORTS', 'REPRESENTS'], 'EVIDENCE')
       .map((id) => evidenceById.get(id)!)
       .map((e) => ({
         sourceType: e.sourceType,
@@ -196,13 +220,20 @@ export function buildPortfolioExport(
     projectIds: linked(nodeKey('SKILL', s.id), ['DEMONSTRATES', 'USES'], 'PROJECT'),
   }));
 
+  const supportedAchievementIds = new Set<string>();
+  for (const e of pub.edges) {
+    if (!CONFIRMED.has(e.verificationState)) continue;
+    if (e.relation !== 'SUPPORTS' && e.relation !== 'REPRESENTS') continue;
+    if (e.fromType === 'EVIDENCE' && e.toType === 'ACHIEVEMENT') supportedAchievementIds.add(e.toId);
+    if (e.toType === 'EVIDENCE' && e.fromType === 'ACHIEVEMENT') supportedAchievementIds.add(e.fromId);
+  }
   const achievements = pub.achievements.map((a) => ({
     id: a.id,
     title: a.title,
     description: a.description,
     kind: a.kind,
     occurredOn: a.occurredOn,
-    metricText: a.metricText,
+    metricText: supportedAchievementIds.has(a.id) ? a.metricText : null,
     projectId: a.projectId && publicProjectIds.has(a.projectId) ? a.projectId : null,
     verificationState: a.verificationState,
   }));

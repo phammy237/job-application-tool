@@ -130,3 +130,80 @@ export async function loadOwnEvidenceGraph(
     edges: (edges.data ?? []).map(rowToEdge),
   };
 }
+
+/**
+ * Loads ONLY what the public portfolio export may contain, filtering at QUERY level:
+ * projects/skills/achievements with visibility = 'PUBLIC' and user_approved = true, evidence with
+ * visibility = 'PUBLIC', and edges whose both endpoints are in those loaded id sets. Private
+ * nodes (and experiences, education, stories) are never selected at all. Callers still pass the
+ * result through the pure `buildPortfolioExport` filter as a second line of defence.
+ */
+export async function loadPublicEvidenceGraph(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+): Promise<EvidenceGraphData> {
+  const [projects, skills, achievements, evidence] = await Promise.all([
+    supabase
+      .from('projects')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('visibility', 'PUBLIC')
+      .eq('user_approved', true),
+    supabase
+      .from('skills')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('visibility', 'PUBLIC')
+      .eq('user_approved', true),
+    supabase
+      .from('myos_achievements')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('visibility', 'PUBLIC')
+      .eq('user_approved', true),
+    supabase.from('myos_evidence').select('*').eq('user_id', userId).eq('visibility', 'PUBLIC'),
+  ]);
+  assertNoError(projects.error, 'loadPublicEvidenceGraph.projects');
+  assertNoError(skills.error, 'loadPublicEvidenceGraph.skills');
+  assertNoError(achievements.error, 'loadPublicEvidenceGraph.achievements');
+  assertNoError(evidence.error, 'loadPublicEvidenceGraph.evidence');
+
+  const projectRows = projects.data ?? [];
+  const skillRows = skills.data ?? [];
+  const achievementRows = achievements.data ?? [];
+  const evidenceRows = evidence.data ?? [];
+
+  const keys = new Set<string>([
+    ...projectRows.map((r) => `PROJECT:${r.id}`),
+    ...skillRows.map((r) => `SKILL:${r.id}`),
+    ...achievementRows.map((r) => `ACHIEVEMENT:${r.id}`),
+    ...evidenceRows.map((r) => `EVIDENCE:${r.id}`),
+  ]);
+  const ids = [...new Set([...keys].map((k) => k.slice(k.indexOf(':') + 1)))];
+
+  let edgeRows: Tables['myos_edges']['Row'][] = [];
+  if (ids.length > 0) {
+    const edges = await supabase
+      .from('myos_edges')
+      .select('*')
+      .eq('user_id', userId)
+      .in('from_id', ids)
+      .in('to_id', ids);
+    assertNoError(edges.error, 'loadPublicEvidenceGraph.edges');
+    // Type-aware endpoint check (ids alone could in theory collide across node types).
+    edgeRows = (edges.data ?? []).filter(
+      (e) => keys.has(`${e.from_type}:${e.from_id}`) && keys.has(`${e.to_type}:${e.to_id}`),
+    );
+  }
+
+  return {
+    projects: projectRows.map(toProject),
+    skills: skillRows.map(toSkill),
+    experiences: [],
+    education: [],
+    achievements: achievementRows.map(rowToAchievement),
+    stories: [],
+    evidence: evidenceRows.map(rowToEvidence),
+    edges: edgeRows.map(rowToEdge),
+  };
+}

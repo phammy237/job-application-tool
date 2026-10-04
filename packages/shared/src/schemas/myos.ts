@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { safeHttpHref } from '../lib/myos/safe-href';
 import { isoDateSchema, isoDateTimeSchema, uuidSchema } from './common';
 
 /**
@@ -20,6 +21,21 @@ export const visibilitySchema = z.enum(['PRIVATE', 'CAREER_OS_ONLY', 'PUBLIC']);
 export type Visibility = z.infer<typeof visibilitySchema>;
 
 export const confidenceSchema = z.number().min(0).max(1);
+
+/** A well-formed http(s) URL. `z.string().url()` alone also accepts javascript:/data: schemes. */
+export const httpUrlSchema = z
+  .string()
+  .max(2048)
+  .refine((value) => safeHttpHref(value) !== null, { message: 'Must be an http(s) URL' });
+
+/**
+ * Read-side tolerance: a stored non-http(s) URL (written before validation existed) is exposed
+ * as null instead of making the whole row unparseable.
+ */
+const storedUrlSchema = z
+  .string()
+  .nullable()
+  .transform((value) => safeHttpHref(value));
 
 // --------------------------------------------------------------------------------------------
 // Nodes & edges
@@ -90,7 +106,7 @@ export const myosEvidenceSchema = z.object({
   userId: uuidSchema,
   sourceType: evidenceSourceTypeSchema,
   sourceRef: z.string().nullable(),
-  sourceUrl: z.string().url().nullable(),
+  sourceUrl: storedUrlSchema,
   title: z.string().min(1),
   excerpt: z.string().max(2000).nullable(),
   occurredAt: isoDateTimeSchema.nullable(),
@@ -106,7 +122,7 @@ export type MyosEvidence = z.infer<typeof myosEvidenceSchema>;
 export const myosEvidenceInputSchema = z.object({
   sourceType: evidenceSourceTypeSchema,
   sourceRef: z.string().min(1).nullish(),
-  sourceUrl: z.string().url().nullish(),
+  sourceUrl: httpUrlSchema.nullish(),
   title: z.string().trim().min(1).max(300),
   excerpt: z.string().max(2000).nullish(),
   occurredAt: isoDateTimeSchema.nullish(),
@@ -330,7 +346,7 @@ export const githubRepositorySchema = z.object({
   githubRepoId: z.number().int(),
   fullName: z.string().min(1),
   description: z.string().nullable(),
-  htmlUrl: z.string().url(),
+  htmlUrl: httpUrlSchema,
   isPrivate: z.boolean(),
   isFork: z.boolean(),
   isArchived: z.boolean(),
@@ -405,3 +421,23 @@ export const portfolioSettingsSchema = z.object({
   headline: z.string().nullable(),
 });
 export type PortfolioSettings = z.infer<typeof portfolioSettingsSchema>;
+
+/** Strips control characters (incl. NUL/newlines), trims, and maps empty to null. */
+const publicTextSchema = (max: number) =>
+  z
+    .string()
+    .nullable()
+    .transform((value) => {
+      // eslint-disable-next-line no-control-regex
+      const cleaned = (value ?? '').replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ').replace(/\s+/g, ' ').trim();
+      return cleaned === '' ? null : cleaned;
+    })
+    .refine((value) => value === null || value.length <= max, { message: `Must be at most ${max} characters` });
+
+/** Input to upsertOwnPortfolioSettings. These two strings are published on the public API. */
+export const portfolioSettingsInputSchema = z.object({
+  enabled: z.boolean(),
+  displayName: publicTextSchema(80),
+  headline: publicTextSchema(160),
+});
+export type PortfolioSettingsUpdate = z.infer<typeof portfolioSettingsInputSchema>;

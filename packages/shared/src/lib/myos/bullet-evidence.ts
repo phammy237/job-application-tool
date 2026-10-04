@@ -9,6 +9,7 @@ import {
   type SupportEntity,
   type SupportEntityType,
 } from './match-requirements';
+import { findTechnologies } from './tech-dictionary';
 import { normalizeText, scoreTextMatch } from './text';
 
 /**
@@ -21,6 +22,17 @@ import { normalizeText, scoreTextMatch } from './text';
  * VERIFIED/USER_PROVIDED. Entities directly related to a matched entity (an achievement of a matched
  * project, via `projectId`/graph edges) are part of the same grounding set. Anything else is
  * unsupported: numbers and technologies are flagged, never silently accepted.
+ *
+ * NUMBER GROUNDING: a number in a bullet is grounded only by text the user authored or approved:
+ * achievement metricText/description, project/experience/story text, user-authored evidence
+ * title/excerpt. Repo-wide GitHub metadata (prCount, commitCount, stars, contributors) and GitHub
+ * README/PR excerpts describe the repository, not the user, so they never ground a personal
+ * number ("Authored 340 pull requests"). Beyond digits, spelled-out quantities ("doubled",
+ * "fifty percent", "two-fold"), fullwidth digits and years used as counts ("2000 users") are
+ * checked too.
+ *
+ * `ok` requires supportLevel STRONG or MODERATE: LIMITED (only unapproved / inferred / weakly
+ * overlapping candidates) or NONE is never "ok", whatever the numbers look like.
  *
  * supportLevel (how well the bullet's *wording* is backed, independent of numbers):
  *  - STRONG   a grounding entity overlaps the bullet (score >= 0.5) and has solid evidence
@@ -171,13 +183,64 @@ export interface BulletCheckResult {
   supportLevel: BulletSupportLevel;
 }
 
-function flattenMetadata(value: unknown, out: string[], depth = 0): void {
-  if (depth > 3 || value === null || value === undefined) return;
-  if (typeof value === 'string' || typeof value === 'number') out.push(String(value));
-  else if (Array.isArray(value)) value.forEach((v) => flattenMetadata(v, out, depth + 1));
-  else if (typeof value === 'object') {
-    Object.values(value as Record<string, unknown>).forEach((v) => flattenMetadata(v, out, depth + 1));
+const NUMBER_WORDS: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+  eleven: 11, twelve: 12, fifteen: 15, twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60,
+  seventy: 70, eighty: 80, ninety: 90, hundred: 100,
+};
+const NUMBER_WORD_RE = Object.keys(NUMBER_WORDS).join('|');
+const QUANTITY_NOUNS =
+  'users|customers|clients|people|engineers|employees|students|teams|requests|downloads|visitors|stars|sales|orders|accounts|developers|members|repos|repositories|pull requests|commits|contributors';
+
+/** Spelled-out quantity claims: [claim text, acceptable equivalents in grounding text]. */
+function spelledQuantityClaims(text: string): { claim: string; accepts: string[] }[] {
+  const out: { claim: string; accepts: string[] }[] = [];
+  const t = text.toLowerCase();
+  const simple: [RegExp, string[]][] = [
+    [/\b(doubl(?:ed|ing)|double)\b/g, ['doubl', '2x', 'two-fold', 'twofold', 'two fold', '100% increase']],
+    [/\b(tripl(?:ed|ing)|triple)\b/g, ['tripl', '3x', 'three-fold', 'threefold', 'three fold']],
+    [/\b(quadrupl(?:ed|ing)|quadruple)\b/g, ['quadrupl', '4x', 'four-fold', 'fourfold']],
+    [/\b(halved|halving|half)\b/g, ['half', 'halv', '50%', 'fifty percent', '50 percent']],
+  ];
+  for (const [re, accepts] of simple) {
+    for (const m of t.matchAll(re)) out.push({ claim: m[1]!, accepts });
   }
+  const fold = new RegExp(`\\b(${NUMBER_WORD_RE}|\\d+)[\\s-]?(?:fold|times)\\b`, 'g');
+  for (const m of t.matchAll(fold)) {
+    const n = NUMBER_WORDS[m[1]!] ?? Number(m[1]);
+    out.push({ claim: m[0], accepts: [m[0], `${n}x`, `${n}-fold`, `${n} fold`, `${n} times`, `${m[1]}-fold`, `${m[1]} fold`, `${m[1]} times`] });
+  }
+  const pct = new RegExp(`\\b(${NUMBER_WORD_RE})[\\s-]?(?:percent|per cent|percentage points?)`, 'g');
+  for (const m of t.matchAll(pct)) {
+    const n = NUMBER_WORDS[m[1]!]!;
+    out.push({ claim: m[0], accepts: [m[0], `${n}%`, `${n} percent`, `${m[1]} percent`, `${m[1]} per cent`] });
+  }
+  const counted = new RegExp(`\\b(${NUMBER_WORD_RE})\\s+(?:${QUANTITY_NOUNS})\\b`, 'g');
+  for (const m of t.matchAll(counted)) {
+    const n = NUMBER_WORDS[m[1]!]!;
+    const noun = m[0].slice(m[1]!.length).trim();
+    out.push({ claim: m[0], accepts: [m[0], `${n} ${noun}`] });
+  }
+  // Years used as counts: "2000 users", "over 2024 requests".
+  const yearCount = new RegExp(`\\b((?:19|20)\\d{2})\\s+(?:${QUANTITY_NOUNS})\\b`, 'g');
+  for (const m of t.matchAll(yearCount)) out.push({ claim: m[0], accepts: [m[0]] });
+  const yearAfter = /\b(?:over|under|about|around|approximately|nearly|more than|up to|~)\s*((?:19|20)\d{2})\b/g;
+  for (const m of t.matchAll(yearAfter)) out.push({ claim: m[0], accepts: [m[0], m[1]!] });
+  return out;
+}
+
+function ungroundedSpelled(bullet: string, corpusText: string): string[] {
+  const hay = corpusText.toLowerCase();
+  return spelledQuantityClaims(bullet)
+    .filter((c) => !c.accepts.some((a) => hay.includes(a)))
+    .map((c) => c.claim.trim());
+}
+
+/** Evidence text a user authored (never repo-wide GitHub metadata or fetched README/PR text). */
+function userAuthoredEvidenceText(ev: { sourceType: string; title: string; excerpt: string | null }): string[] {
+  const out = [ev.title];
+  if (!ev.sourceType.startsWith('GITHUB_') && ev.excerpt) out.push(ev.excerpt);
+  return out;
 }
 
 export function checkBulletAgainstEvidence(
@@ -210,25 +273,43 @@ export function checkBulletAgainstEvidence(
     for (const ref of solidEvidence(entity)) {
       const ev = evidenceById.get(ref.evidenceId);
       if (!ev) continue;
-      corpus.push(ev.title);
-      if (ev.excerpt) corpus.push(ev.excerpt);
-      const meta: string[] = [];
-      flattenMetadata(ev.metadata, meta);
-      corpus.push(...meta);
+      // Metadata (prCount, commitCount, stars, contributors, ...) is deliberately not a source.
+      corpus.push(...userAuthoredEvidenceText(ev));
     }
   }
 
-  const unsupportedNumbers = findUngroundedNumericClaims(bulletText, corpus).map((c) => c.raw.trim());
-  const hay = ` ${normalizeTech(corpus.join(' . '))} `;
-  const unsupportedTechnologies = findTechNames(bulletText).filter(
-    (t) => !hay.includes(` ${normalizeTech(t)} `),
-  );
+  const nfkc = (v: string): string => v.normalize('NFKC');
+  const bullet = nfkc(bulletText);
+  const corpusN = corpus.map(nfkc);
+  const unsupportedNumbers = [
+    ...findUngroundedNumericClaims(bullet, corpusN).map((c) => c.raw.trim()),
+    ...ungroundedSpelled(bullet, corpusN.join(' . ')),
+  ];
+
+  const corpusJoined = corpusN.join(' . ');
+  const hay = ` ${normalizeTech(corpusJoined)} `;
+  const corpusCanon = new Set(findTechnologies(corpusJoined).map((m) => m.canonical));
+  const unsupportedTechnologies: string[] = [];
+  const flaggedCanon = new Set<string>();
+  for (const t of findTechNames(bullet)) {
+    const canon = findTechnologies(t)[0]?.canonical;
+    if (hay.includes(` ${normalizeTech(t)} `) || (canon && corpusCanon.has(canon))) continue;
+    unsupportedTechnologies.push(t);
+    if (canon) flaggedCanon.add(canon);
+  }
+  // Anything else in the technology dictionary that the grounding entities never mention.
+  for (const m of findTechnologies(bullet)) {
+    if (corpusCanon.has(m.canonical) || flaggedCanon.has(m.canonical)) continue;
+    if (hay.includes(` ${normalizeTech(m.canonical)} `)) continue;
+    if (unsupportedTechnologies.some((u) => normalizeTech(u) === normalizeTech(m.canonical))) continue;
+    unsupportedTechnologies.push(m.canonical);
+  }
 
   return {
     ok:
       unsupportedNumbers.length === 0 &&
       unsupportedTechnologies.length === 0 &&
-      found.supportLevel !== 'NONE',
+      (found.supportLevel === 'STRONG' || found.supportLevel === 'MODERATE'),
     unsupportedNumbers,
     unsupportedTechnologies,
     supportLevel: found.supportLevel,
