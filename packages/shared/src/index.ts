@@ -119,3 +119,5 @@ export * from './schemas/discovery-feed-query';
 export * from './schemas/discovery-feed-result';
 export * from './schemas/discovery-settings-request';
 export * from './lib/discovery-settings-diff';
+export * from './schemas/myos';
+export * from './lib/myos/graph-types';
