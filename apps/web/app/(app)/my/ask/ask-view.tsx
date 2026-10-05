@@ -6,7 +6,7 @@ import { Button, Input } from '@career-os/ui';
 import type { AskAnswer, AskClaim, AskSupport } from '@career-os/shared';
 import { VerificationBadge } from '../_components/badges';
 import { nodeHref, safeExternalUrl } from '../graph/node-links';
-import { askMyEvidence } from './actions';
+import { askMyEvidence, type AskResult } from './actions';
 import { EXAMPLE_QUESTIONS, MAX_QUESTION_LENGTH, askQuestionSchema } from './ask-schema';
 
 const SOURCE_LABEL: Record<string, string> = {
@@ -183,7 +183,10 @@ const AnswerCard = memo(function AnswerCard({
   );
 });
 
-export function AskView() {
+/** `ask` defaults to the session-scoped server action; the dev-only preview injects a local one. */
+export function AskView({
+  ask = askMyEvidence,
+}: { ask?: (question: string) => Promise<AskResult> } = {}) {
   const [question, setQuestion] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
@@ -200,7 +203,7 @@ export function AskView() {
     }
     setError(null);
     startTransition(async () => {
-      const result = await askMyEvidence(parsed.data);
+      const result = await ask(parsed.data);
       if (result.ok) {
         counter.current += 1;
         setHistory((h) => [{ id: counter.current, answer: result.answer }, ...h]);
