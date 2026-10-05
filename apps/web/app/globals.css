@@ -3,36 +3,38 @@
 @tailwind utilities;
 
 /**
- * Career OS design tokens — docs/PRODUCT_SPEC.md "Design direction": clean neutral surfaces,
- * a purple accent connecting visually to mypham.space, and distinct application-status
- * colors. Consumed via packages/ui/tailwind-preset.ts.
+ * Career OS design tokens — docs/PRODUCT_SPEC.md "Design direction": warm paper surfaces and a
+ * slate-blue accent matching mypham.space's palette (colors only; no code is shared with that
+ * site), plus distinct application-status colors. Consumed via packages/ui/tailwind-preset.ts.
  */
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 240 10% 10%;
+    /* Palette matches mypham.space: paper #faf7ef, ink #20201e, card #fffdf8, soft #e8ddc7,
+       blue #416788, note #fbe7a1 (all text pairs ≥ 4.5:1). */
+    --background: 44 52% 96%;
+    --foreground: 60 3% 12%;
 
-    --card: 0 0% 100%;
-    --card-foreground: 240 10% 10%;
+    --card: 43 100% 99%;
+    --card-foreground: 60 3% 12%;
 
-    --primary: 262 83% 58%;
-    --primary-foreground: 0 0% 100%;
+    --primary: 208 35% 39%;
+    --primary-foreground: 43 100% 99%;
 
-    --secondary: 240 5% 96%;
-    --secondary-foreground: 240 10% 10%;
+    --secondary: 40 42% 85%;
+    --secondary-foreground: 60 3% 12%;
 
-    --muted: 240 5% 96%;
-    --muted-foreground: 240 4% 46%;
+    --muted: 40 45% 91%;
+    --muted-foreground: 43 7% 40%;
 
-    --accent: 262 83% 96%;
-    --accent-foreground: 262 83% 30%;
+    --accent: 47 92% 81%;
+    --accent-foreground: 60 3% 12%;
 
-    --destructive: 0 72% 51%;
-    --destructive-foreground: 0 0% 100%;
+    --destructive: 4 64% 46%;
+    --destructive-foreground: 43 100% 99%;
 
-    --border: 240 6% 90%;
-    --input: 240 6% 90%;
-    --ring: 262 83% 58%;
+    --border: 42 14% 86%;
+    --input: 42 14% 86%;
+    --ring: 208 35% 39%;
 
     --radius: 0.75rem;
     --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
@@ -49,34 +51,44 @@
     --status-rejected: 0 72% 51%;
     --status-withdrawn: 240 4% 46%;
     --status-unknown: 240 4% 60%;
+
+    /* Semantic tones (myOS provenance / strength / warnings), harmonized with the paper/ink/
+       blue palette. Used only as borders, tints and dots behind ink text (app/(app)/my/_components/tones.ts),
+       so text contrast stays that of foreground on background. */
+    --tone-success: 152 28% 36%; /* sage */
+    --tone-warning: 44 76% 45%; /* gold #c99a1b */
+    --tone-info: 206 56% 72%; /* sky #8dbce0 */
+    --tone-danger: 4 64% 46%;
   }
 
   :root[data-theme='dark'],
   .dark {
-    --background: 240 10% 6%;
-    --foreground: 0 0% 98%;
+    /* mypham.space dark: navy paper #0f1b33, ink #f4efe3, card #19284a, soft #22345c,
+       blue #9cc3e3, note #e8cf73. */
+    --background: 220 55% 13%;
+    --foreground: 42 44% 92%;
 
-    --card: 240 8% 9%;
-    --card-foreground: 0 0% 98%;
+    --card: 222 49% 19%;
+    --card-foreground: 42 44% 92%;
 
-    --primary: 262 83% 68%;
-    --primary-foreground: 240 10% 6%;
+    --primary: 207 56% 75%;
+    --primary-foreground: 220 55% 13%;
 
-    --secondary: 240 6% 14%;
-    --secondary-foreground: 0 0% 98%;
+    --secondary: 221 46% 25%;
+    --secondary-foreground: 42 44% 92%;
 
-    --muted: 240 6% 14%;
-    --muted-foreground: 240 5% 65%;
+    --muted: 221 46% 25%;
+    --muted-foreground: 42 11% 63%;
 
-    --accent: 262 50% 20%;
-    --accent-foreground: 262 83% 85%;
+    --accent: 221 46% 25%;
+    --accent-foreground: 47 72% 68%;
 
-    --destructive: 0 63% 42%;
-    --destructive-foreground: 0 0% 98%;
+    --destructive: 4 70% 62%;
+    --destructive-foreground: 220 55% 13%;
 
-    --border: 240 6% 18%;
-    --input: 240 6% 18%;
-    --ring: 262 83% 68%;
+    --border: 219 23% 24%;
+    --input: 219 23% 24%;
+    --ring: 207 56% 75%;
 
     --status-saved: 220 9% 65%;
     --status-progress: 217 91% 70%;
@@ -89,6 +101,11 @@
     --status-rejected: 0 72% 65%;
     --status-withdrawn: 240 4% 65%;
     --status-unknown: 240 4% 55%;
+
+    --tone-success: 150 32% 62%;
+    --tone-warning: 47 72% 68%; /* butter #e8cf73 */
+    --tone-info: 206 56% 72%;
+    --tone-danger: 4 70% 62%;
   }
 
   * {
