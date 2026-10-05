@@ -91,6 +91,27 @@ if (typeof manifest.key !== 'string' || manifest.key.length === 0) {
   errors.push('manifest.json is missing the pinned "key" — the extension ID would not be stable.');
 }
 
+// 3. web_accessible_resources must carry use_dynamic_url: true on every entry — asserted here
+//    (rather than only in harden-web-accessible-resources.mjs, which runs immediately before
+//    this script) so a future reordering of the build script, or a CRXJS upgrade that changes
+//    how it generates this section, fails the build loudly instead of silently shipping a
+//    statically-fetchable bundle again. See that script's own doc comment for why.
+const webAccessibleResources = manifest.web_accessible_resources ?? [];
+if (webAccessibleResources.length === 0) {
+  errors.push(
+    'manifest.json has no web_accessible_resources entries — expected at least one for the ' +
+      'dynamically-injected content/autofill script chunks.',
+  );
+}
+for (const [index, entry] of webAccessibleResources.entries()) {
+  if (entry.use_dynamic_url !== true) {
+    errors.push(
+      `manifest.json web_accessible_resources[${index}] has use_dynamic_url=${JSON.stringify(entry.use_dynamic_url)}, ` +
+        `expected true — run harden-web-accessible-resources.mjs before this script, or it did not run.`,
+    );
+  }
+}
+
 if (errors.length > 0) {
   console.error('\n❌ Production build verification failed:\n');
   for (const error of errors) console.error(`  - ${error}`);
@@ -98,4 +119,4 @@ if (errors.length > 0) {
   process.exit(1);
 }
 
-console.log(`✅ Production build verified: API base is ${EXPECTED_PRODUCTION_ORIGIN}, manifest host_permissions/externally_connectable/key all correct.`);
+console.log(`✅ Production build verified: API base is ${EXPECTED_PRODUCTION_ORIGIN}, manifest host_permissions/externally_connectable/key/web_accessible_resources all correct.`);

@@ -50,6 +50,10 @@ export function actionAssistanceFor(
 export const followUpDraftModelContractSchema = z.object({
   subject: z.string().trim().min(1).max(200).nullable(),
   body: z.string().trim().min(1).max(4000),
+  /** The model's self-report of any claim in `body` not supported by the given context — same
+   * gate every other generation pipeline has (CLAUDE.md). Must be empty for the draft to be shown;
+   * never surfaced to the user (stripped in generate-follow-up-draft.ts). */
+  unsupportedClaims: z.array(z.string().trim().max(500)).max(20),
 });
 export type FollowUpDraftModelContract = z.infer<typeof followUpDraftModelContractSchema>;
 
@@ -68,9 +72,11 @@ export type FollowUpDraftUsedContextTag = z.infer<
   typeof followUpDraftUsedContextTagSchema
 >;
 
-export const followUpDraftResultSchema = followUpDraftModelContractSchema.extend({
-  usedContext: z.array(followUpDraftUsedContextTagSchema),
-});
+export const followUpDraftResultSchema = followUpDraftModelContractSchema
+  .omit({ unsupportedClaims: true })
+  .extend({
+    usedContext: z.array(followUpDraftUsedContextTagSchema),
+  });
 export type FollowUpDraftResult = z.infer<typeof followUpDraftResultSchema>;
 
 // ================================================================================================

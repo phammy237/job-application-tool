@@ -1,6 +1,6 @@
 import type { DetectedField } from '@career-os/shared';
 import { describe, expect, it } from 'vitest';
-import { fingerprintField, fingerprintMatches } from './field-fingerprint';
+import { fingerprintField, fingerprintKey, fingerprintMatches } from './field-fingerprint';
 
 function field(overrides: Partial<DetectedField> = {}): DetectedField {
   return {
@@ -88,5 +88,19 @@ describe('fingerprintMatches', () => {
     expect(fingerprintMatches(fingerprintField(oldFieldOnOldPage), newFieldSamePosition)).toBe(
       false,
     );
+  });
+});
+
+describe('fingerprintKey', () => {
+  it('produces the same key for two fields with identical signals (duplicate repeater rows)', () => {
+    const row1 = field({ fieldId: 'field-0', htmlName: null, htmlId: null, label: 'Company name' });
+    const row2 = field({ fieldId: 'field-1', htmlName: null, htmlId: null, label: 'Company name' });
+    expect(fingerprintKey(fingerprintField(row1))).toBe(fingerprintKey(fingerprintField(row2)));
+  });
+
+  it('produces a different key when any signal differs', () => {
+    const a = field({ label: 'Company name' });
+    const b = field({ label: 'Job title' });
+    expect(fingerprintKey(fingerprintField(a))).not.toBe(fingerprintKey(fingerprintField(b)));
   });
 });

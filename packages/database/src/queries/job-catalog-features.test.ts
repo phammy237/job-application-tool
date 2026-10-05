@@ -53,6 +53,12 @@ class FakeQuery {
   range(_from: number, _to: number): this {
     return this;
   }
+  // No-op for the same reason as range() above — the real client requires a deterministic
+  // `.order()` before `.range()` for safe paging (see job-catalog-features.ts), but this fake's
+  // single-page fixtures don't need real ordering to behave correctly.
+  order(_col: string, _opts?: { ascending?: boolean }): this {
+    return this;
+  }
   upsert(rows: Record<string, unknown>[], opts: { onConflict: string }): this {
     this.op = 'upsert';
     this.payload = rows;

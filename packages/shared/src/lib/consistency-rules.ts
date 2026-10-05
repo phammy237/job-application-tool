@@ -3,6 +3,7 @@ import type {
   ConsistencyFieldSource,
   ConsistencyFinding,
 } from '../schemas/consistency-finding';
+import { containsPhrase } from './phrase-matcher';
 
 /**
  * Deterministic consistency-firewall rule engine (docs/IMPLEMENTATION_PLAN.md Phase 5B.2A/B/C).
@@ -43,13 +44,17 @@ export function normalizeTitle(value: string): string {
   return normalizeForComparison(value).replace(/[.,]/g, '');
 }
 
-/** True when the two normalized strings are identical or one contains the other — deliberately
- * loose in the "equivalent" direction (never a false mismatch from a legal-suffix or abbreviation
- * difference), never loose in a way that would manufacture a false *match* between genuinely
- * different names (no fuzzy edit-distance, no token-overlap scoring). */
+/** True when the two normalized strings are identical, or one appears in the other as a whole
+ * word/phrase boundary — deliberately loose in the "equivalent" direction (never a false mismatch
+ * from a legal-suffix or abbreviation difference, e.g. "Deloitte" vs "Deloitte Consulting"), but
+ * never loose in a way that would manufacture a false *match* between genuinely different names: a
+ * raw substring test here would equate "Square" with "Squarespace" or "Block" with "Blockchain" —
+ * two distinct real companies — since one name's letters happen to prefix the other's. Uses the
+ * same word-boundary matcher the discovery extractors use (phrase-matcher.ts) rather than a plain
+ * `.includes()`, so a match requires an actual word/phrase boundary, not merely a shared prefix. */
 export function namesAreEquivalent(a: string, b: string): boolean {
   if (!a || !b) return false;
-  return a === b || a.includes(b) || b.includes(a);
+  return a === b || containsPhrase(a, b) || containsPhrase(b, a);
 }
 
 const MONTH_NAMES: Record<string, number> = {

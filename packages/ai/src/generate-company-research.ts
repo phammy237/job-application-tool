@@ -17,8 +17,8 @@ import {
   type CompanyResearchSnapshot,
   type CompanyResearchSourceType,
 } from '@career-os/shared';
-import { callClaudeForCompanyResearch } from './claude/call-claude';
-import { COMPANY_RESEARCH_PROMPT_VERSION, MODEL_ID } from './config';
+import { callClaudeForCompanyResearch, type ClaudeCallUsage } from './claude/call-claude';
+import { COMPANY_RESEARCH_PROMPT_VERSION, estimateCostUsd, MODEL_ID } from './config';
 import { validateCompanyResearchContract } from './contract/validate-company-research-contract';
 import { buildCompanyResearchSystemPrompt } from './prompt/build-company-research-system-prompt';
 import { buildCompanyResearchUserPrompt } from './prompt/build-company-research-user-prompt';
@@ -163,7 +163,7 @@ export async function generateCompanyResearch(
       return { kind: 'provider_error' as const, message: callResult.message, latencyMs };
     }
     if (callResult.status === 'refusal') {
-      return { kind: 'rejected' as const, reason: 'refusal' as const, latencyMs };
+      return { kind: 'rejected' as const, reason: 'refusal' as const, latencyMs, usage: callResult.usage };
     }
 
     const shapeResult = validateCompanyResearchContract(callResult.rawText);
@@ -172,6 +172,7 @@ export async function generateCompanyResearch(
         kind: 'rejected' as const,
         reason: 'validation_failed' as const,
         latencyMs,
+        usage: callResult.usage,
       };
     }
 
@@ -180,10 +181,15 @@ export async function generateCompanyResearch(
       requirementIds: allowedRequirementIds,
     });
     if (deepResult.status !== 'ok') {
-      return { kind: 'rejected' as const, reason: deepResult.reason, latencyMs };
+      return { kind: 'rejected' as const, reason: deepResult.reason, latencyMs, usage: callResult.usage };
     }
 
-    return { kind: 'accepted' as const, findings: deepResult.findings, latencyMs };
+    return {
+      kind: 'accepted' as const,
+      findings: deepResult.findings,
+      latencyMs,
+      usage: callResult.usage,
+    };
   };
 
   // Step 5 — attempt 1, then exactly one retry on rejection only (§38).
@@ -204,7 +210,9 @@ export async function generateCompanyResearch(
     outcome = await runAttempt(retryReasonText);
   }
 
-  // Best-effort usage telemetry — never fails the user's actual request.
+  // Best-effort usage telemetry — never fails the user's actual request. No usage exists for a
+  // provider_error attempt (the provider was never meaningfully reached).
+  const claudeUsage: ClaudeCallUsage | null = outcome.kind === 'provider_error' ? null : outcome.usage;
   await recordAiUsageEvent(supabase, userId, {
     applicationId: application.id,
     generationRunId,
@@ -232,10 +240,10 @@ export async function generateCompanyResearch(
             : 'unknown_source_fact_id'
         : null,
     escalationReason: null,
-    inputTokens: 0,
+    inputTokens: claudeUsage?.inputTokens ?? 0,
     cachedInputTokens: 0,
-    outputTokens: 0,
-    estimatedCost: null,
+    outputTokens: claudeUsage?.outputTokens ?? 0,
+    estimatedCost: claudeUsage ? estimateCostUsd(claudeUsage) : null,
     latencyMs: outcome.latencyMs,
     promptVersion: COMPANY_RESEARCH_PROMPT_VERSION,
   }).catch(() => {

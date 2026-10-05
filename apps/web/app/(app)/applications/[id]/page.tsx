@@ -1,13 +1,15 @@
 import {
+  deleteOwnPendingResumeTailoringDraft,
   getOwnApplication,
   getOwnJobSnapshot,
+  getOwnPendingResumeTailoringDraft,
   getOwnResumeVersion,
   listApplicationEvents,
   listOwnCompanyResearchSnapshotsForApplication,
   listOwnRelevantStatusChangeEventsForApplication,
 } from '@career-os/database';
 import { CREATABLE_APPLICATION_STATUSES, formatNextAction, isSafeExternalUrl, selectJobApplyActions } from '@career-os/shared';
-import { Button, Label, Select, StatusBadge, Textarea } from '@career-os/ui';
+import { Badge, Button, Label, Select, StatusBadge, Textarea } from '@career-os/ui';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { requireUser } from '../../../../lib/auth';
@@ -53,6 +55,7 @@ export default async function ApplicationDetailPage({
     relevantStatusChangeEvents,
     workingResumeVersion,
     companyResearchSnapshots,
+    storedTailoringDraft,
   ] = await Promise.all([
     listApplicationEvents(supabase, user.id, id),
     application.jobSnapshotId
@@ -63,7 +66,24 @@ export default async function ApplicationDetailPage({
       ? getOwnResumeVersion(supabase, user.id, application.workingResumeVersionId)
       : Promise.resolve(null),
     listOwnCompanyResearchSnapshotsForApplication(supabase, user.id, id),
+    getOwnPendingResumeTailoringDraft(supabase, user.id, id),
   ]);
+
+  // D9 Phase B — a stored draft is only ever shown when it still matches this application's
+  // CURRENT working résumé/job snapshot, the exact same two anchors
+  // /resume-tailoring/save itself re-checks before persisting anything. A stale draft (the
+  // working résumé or job snapshot changed since the cron job generated it) is deleted here —
+  // self-healing cleanup, so the next cron tick generates a fresh one instead of the stale row
+  // lingering forever — and simply never passed to the panel, exactly as if none existed.
+  let pendingTailoringDraft = storedTailoringDraft?.proposal ?? null;
+  if (
+    storedTailoringDraft &&
+    (storedTailoringDraft.proposal.baseResumeVersionId !== application.workingResumeVersionId ||
+      storedTailoringDraft.proposal.jobSnapshotId !== (application.jobSnapshotId ?? null))
+  ) {
+    await deleteOwnPendingResumeTailoringDraft(supabase, user.id, id);
+    pendingTailoringDraft = null;
+  }
   // Phase 7H — purely informational for the tailoring panel's mode selector (§35): the panel's
   // own API route independently re-resolves and re-validates any snapshot id server-side before
   // ever using it (§6/§7), so this is never treated as authoritative on its own.
@@ -95,11 +115,23 @@ export default async function ApplicationDetailPage({
     <div className="max-w-2xl space-y-8">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">{application.title}</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-semibold tracking-tight">{application.title}</h1>
+            {application.autoTracked ? (
+              <Badge variant="outline">Auto-detected from email</Badge>
+            ) : null}
+          </div>
           <p className="text-muted-foreground mt-1">
             {application.company}
             {application.location ? ` · ${application.location}` : ''}
           </p>
+          {application.autoTracked ? (
+            <p className="text-muted-foreground mt-1 text-xs">
+              Career OS created this automatically from a Gmail confirmation it couldn&apos;t
+              match to anything you&apos;d already added — double-check the company and title
+              above, and edit them if they&apos;re not quite right.
+            </p>
+          ) : null}
         </div>
         <StatusBadge status={application.status} />
       </div>
@@ -215,6 +247,7 @@ export default async function ApplicationDetailPage({
         workingResumeVersionId={application.workingResumeVersionId}
         company={application.company}
         title={application.title}
+        isAutoQueuedAndKept={application.autoQueued && application.autoQueueStatus === 'KEPT'}
       />
 
       {/* Phase 7E — shown only when there is a working résumé with real structured content to
@@ -227,6 +260,7 @@ export default async function ApplicationDetailPage({
         <ResumeTailoringPanel
           applicationId={application.id}
           latestCompanyResearch={latestCompanyResearch}
+          pendingDraft={pendingTailoringDraft}
         />
       ) : null}
 

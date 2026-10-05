@@ -9,8 +9,8 @@ import {
   type CareerOsSupabaseClient,
 } from '@career-os/database';
 import { computeFindingId, type ConsistencyFinding } from '@career-os/shared';
-import { callClaudeForUnsupportedClaimCheck } from './claude/call-claude';
-import { MODEL_ID, UNSUPPORTED_CLAIM_CHECK_PROMPT_VERSION } from './config';
+import { callClaudeForUnsupportedClaimCheck, type ClaudeCallUsage } from './claude/call-claude';
+import { estimateCostUsd, MODEL_ID, UNSUPPORTED_CLAIM_CHECK_PROMPT_VERSION } from './config';
 import { validateUnsupportedClaimContract } from './contract/validate-unsupported-claim-contract';
 import { buildUnsupportedClaimSystemPrompt } from './prompt/build-unsupported-claim-system-prompt';
 import { buildUnsupportedClaimUserPrompt } from './prompt/build-unsupported-claim-user-prompt';
@@ -103,7 +103,7 @@ export async function generateUnsupportedClaimsCheck(
       return { kind: 'provider_error' as const, message: callResult.message, latencyMs };
     }
     if (callResult.status === 'refusal') {
-      return { kind: 'rejected' as const, reason: 'refusal' as const, latencyMs };
+      return { kind: 'rejected' as const, reason: 'refusal' as const, latencyMs, usage: callResult.usage };
     }
     const validated = validateUnsupportedClaimContract(
       callResult.rawText,
@@ -111,9 +111,9 @@ export async function generateUnsupportedClaimsCheck(
       answers.length,
     );
     if (validated.status === 'ok') {
-      return { kind: 'accepted' as const, entries: validated.entries, latencyMs };
+      return { kind: 'accepted' as const, entries: validated.entries, latencyMs, usage: callResult.usage };
     }
-    return { kind: 'rejected' as const, reason: validated.reason, latencyMs };
+    return { kind: 'rejected' as const, reason: validated.reason, latencyMs, usage: callResult.usage };
   };
 
   // Step 3 — attempt 1, then exactly one retry — but only on a rejection, never on a hard
@@ -134,6 +134,7 @@ export async function generateUnsupportedClaimsCheck(
   }
 
   // Best-effort usage telemetry — never fails the user's actual request.
+  const claudeUsage: ClaudeCallUsage | null = outcome.kind === 'provider_error' ? null : outcome.usage;
   await recordAiUsageEvent(supabase, userId, {
     applicationId: params.applicationId,
     generationRunId,
@@ -165,10 +166,10 @@ export async function generateUnsupportedClaimsCheck(
           : outcome.reason
         : null,
     escalationReason: null,
-    inputTokens: 0,
+    inputTokens: claudeUsage?.inputTokens ?? 0,
     cachedInputTokens: 0,
-    outputTokens: 0,
-    estimatedCost: null,
+    outputTokens: claudeUsage?.outputTokens ?? 0,
+    estimatedCost: claudeUsage ? estimateCostUsd(claudeUsage) : null,
     latencyMs: outcome.latencyMs,
     promptVersion: UNSUPPORTED_CLAIM_CHECK_PROMPT_VERSION,
   }).catch(() => {

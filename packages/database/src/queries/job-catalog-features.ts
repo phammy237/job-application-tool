@@ -106,6 +106,11 @@ export async function listJobCatalogRowsNeedingFeatureRecompute(
     const { data: page, error: catalogError } = await supabase
       .from('job_catalog')
       .select('id, title, description, location_text, employment_type, workplace_type, content_hash')
+      // Deterministic order is required for `.range()` paging to be safe — without it, Postgres
+      // gives no guarantee of stable row order across separate queries, so a row can be silently
+      // skipped or returned twice across pages if a concurrent write (e.g. `discovery:sync`
+      // running alongside this batch job) touches job_catalog mid-scan.
+      .order('id', { ascending: true })
       .range(offset, offset + PAGE_SIZE - 1);
     assertNoError(catalogError, 'listJobCatalogRowsNeedingFeatureRecompute (job_catalog)');
     catalogRows.push(...(page ?? []));
@@ -173,6 +178,9 @@ export async function listActiveJobsWithFeatures(
       .from('job_catalog')
       .select('id, company_name, first_seen_at')
       .eq('status', 'ACTIVE')
+      // See listJobCatalogRowsNeedingFeatureRecompute's identical comment — deterministic order
+      // is required for safe `.range()` paging against a table that can be concurrently written.
+      .order('id', { ascending: true })
       .range(offset, offset + PAGE_SIZE - 1);
     assertNoError(catalogError, 'listActiveJobsWithFeatures (job_catalog)');
     catalogRows.push(...(page ?? []));

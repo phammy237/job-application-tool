@@ -95,7 +95,7 @@ export function matchApplication(
     const learnedDomains = learnedDomainsByApplication.get(app.id);
     const domainMatches =
       messageDomain !== null &&
-      ((domainGuess.length > 0 && messageDomain.includes(domainGuess)) ||
+      ((domainGuess.length > 0 && messageDomain.split('.').includes(domainGuess)) ||
         (learnedDomains?.has(messageDomain) ?? false));
 
     const companyScore = overlapRatio(companyTokens, senderTokens) * COMPANY_TOKEN_WEIGHT;

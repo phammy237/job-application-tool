@@ -231,14 +231,29 @@ function fillSelect(fieldId: string, element: HTMLSelectElement, text: string): 
   const normalize = (value: string) => value.trim().toLowerCase();
   const target = normalize(text);
   const options = [...element.options];
-  const match =
-    options.find((option) => normalize(option.textContent ?? '') === target) ??
-    options.find((option) => normalize(option.textContent ?? '').includes(target));
 
-  if (!match) {
+  const exactMatches = options.filter((option) => normalize(option.textContent ?? '') === target);
+  // Fuzzy fallback only when no exact match exists. An ambiguous *fuzzy* match — more than one
+  // option's text contains the answer, e.g. "US Citizen" matching both "US Citizen" and "US
+  // Citizen or Green Card Holder" — must never be resolved by silently picking whichever happens
+  // to come first in the DOM; that fills the wrong option with no signal anything went wrong.
+  const candidates =
+    exactMatches.length > 0
+      ? exactMatches
+      : options.filter((option) => normalize(option.textContent ?? '').includes(target));
+
+  if (candidates.length === 0) {
     return { fieldId, status: 'unsupported', reason: 'No matching option found for the approved answer.' };
   }
+  if (exactMatches.length === 0 && candidates.length > 1) {
+    return {
+      fieldId,
+      status: 'unsupported',
+      reason: 'Multiple options ambiguously matched the approved answer — skipped rather than guessing.',
+    };
+  }
 
+  const match = candidates[0]!;
   setNativeValue(element, match.value);
   element.dispatchEvent(new Event('change', { bubbles: true }));
   element.dispatchEvent(new Event('blur', { bubbles: true }));

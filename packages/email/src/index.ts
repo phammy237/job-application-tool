@@ -9,5 +9,13 @@
  */
 export { buildAuthUrl, exchangeCodeForTokens, revokeToken } from './oauth';
 export type { ExchangedTokens } from './oauth';
+export { MAX_CONCURRENT_BACKGROUND_SYNC_USERS, MAX_USERS_PER_BACKGROUND_SYNC_RUN } from './config';
 export { runGmailSync } from './sync';
-export type { RunGmailSyncResult } from './sync';
+export type { RunGmailSyncOptions, RunGmailSyncResult } from './sync';
+export {
+  extractApplicationIdentity,
+  extractCompanyName,
+  extractJobTitle,
+  UNDETECTED_TITLE_PLACEHOLDER,
+} from './extract-application-identity';
+export type { ExtractedApplicationIdentity } from './extract-application-identity';

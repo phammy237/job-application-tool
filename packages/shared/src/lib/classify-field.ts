@@ -61,7 +61,10 @@ const PATTERNS: [Exclude<FieldClassification, 'AUTHENTICATION' | 'UNKNOWN' | 'FI
 const FREE_RESPONSE_PATTERN =
   /why (do you want|are you interested)|cover letter|tell us about|describe a time/i;
 
-function combinedSignalText(signals: FieldSignals): string {
+/** Everything that actually belongs to this field — deliberately excludes `sectionHeading`, which
+ * belongs to a whole group of fields, not this one specifically. See `classifyField`'s doc
+ * comment for why heading text is never mixed into this blob. */
+function directSignalText(signals: FieldSignals): string {
   return [
     signals.label,
     signals.name,
@@ -69,7 +72,6 @@ function combinedSignalText(signals: FieldSignals): string {
     signals.ariaLabel,
     signals.placeholder,
     signals.nearbyText,
-    signals.sectionHeading,
     ...(signals.selectOptions ?? []),
   ]
     .filter(Boolean)
@@ -90,15 +92,33 @@ export function classifyField(signals: FieldSignals): {
     return { classification: 'FILE_UPLOAD', confidence: 0.95 };
   }
 
-  const text = combinedSignalText(signals).toLowerCase();
+  const directText = directSignalText(signals).toLowerCase();
 
   for (const [classification, pattern] of PATTERNS) {
-    if (pattern.test(text)) {
+    if (pattern.test(directText)) {
       return { classification, confidence: 0.8 };
     }
   }
 
-  if (signals.inputType === 'textarea' || FREE_RESPONSE_PATTERN.test(text)) {
+  // sectionHeading is a lower-confidence tiebreaker only, consulted *after* every direct signal
+  // has already failed to match anything — never allowed to override what the field's own
+  // label/name/id/placeholder/nearby-text actually say. A section heading describes a whole group
+  // of fields (e.g. "Relocation & Work Authorization"), not this field specifically; mixing it
+  // into the same blob as direct signals let an unrelated field sitting under that heading (e.g. a
+  // plain "Current City" input) get misclassified as RELOCATION purely from the heading text,
+  // which then silently blocked it from ever receiving a suggestion for its real, answerable
+  // field. A lower confidence score here also means a direct re-scan match always wins a future
+  // fingerprint comparison over a heading-only guess (field-fingerprint.ts).
+  if (signals.sectionHeading) {
+    const headingText = signals.sectionHeading.toLowerCase();
+    for (const [classification, pattern] of PATTERNS) {
+      if (pattern.test(headingText)) {
+        return { classification, confidence: 0.5 };
+      }
+    }
+  }
+
+  if (signals.inputType === 'textarea' || FREE_RESPONSE_PATTERN.test(directText)) {
     return { classification: 'FREE_RESPONSE', confidence: 0.6 };
   }
 

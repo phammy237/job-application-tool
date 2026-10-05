@@ -101,9 +101,9 @@ describe('DiscoverPage', () => {
       hasNextPage: false,
     });
     await renderPage();
-    const primary = screen.getByRole('link', { name: 'Apply on employer site →' });
+    const primary = screen.getByRole('link', { name: 'Apply on employer site' });
     expect(primary).toHaveAttribute('href', 'https://boards.greenhouse.io/acme/jobs/1234');
-    expect(screen.queryByRole('link', { name: 'Find official posting →' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Find official posting' })).not.toBeInTheDocument();
   });
 
   it('D7.1 (25, 26): an unresolved job shows "Find official posting" as primary and keeps "View source" available', async () => {
@@ -118,12 +118,12 @@ describe('DiscoverPage', () => {
       hasNextPage: false,
     });
     await renderPage();
-    expect(screen.getByRole('link', { name: 'Find official posting →' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Find official posting' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'View source' })).toHaveAttribute(
       'href',
       'https://jobright.ai/jobs/info/abc123',
     );
-    expect(screen.queryByRole('link', { name: 'Apply on employer site →' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Apply on employer site' })).not.toBeInTheDocument();
   });
 
   it('a canonically-classified internship shows "Internship" even when its normalizedEmploymentType is FULL_TIME, never a contradicting raw label', async () => {

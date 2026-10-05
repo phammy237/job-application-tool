@@ -1,4 +1,4 @@
-import { containsPhrase } from './phrase-matcher';
+import { containsPhraseOutsideNegation } from './phrase-matcher';
 
 export type CitizenshipRequirement = 'US_CITIZEN_ONLY' | 'UNKNOWN';
 
@@ -41,7 +41,7 @@ function boundedEvidence(sentence: string): string {
 
 export function extractCitizenshipRequirement(plainText: string): CitizenshipExtraction {
   for (const sentence of splitSentences(plainText)) {
-    if (US_CITIZEN_ONLY_PHRASES.some((phrase) => containsPhrase(sentence, phrase))) {
+    if (US_CITIZEN_ONLY_PHRASES.some((phrase) => containsPhraseOutsideNegation(sentence, phrase))) {
       return { requirement: 'US_CITIZEN_ONLY', evidence: boundedEvidence(sentence) };
     }
   }

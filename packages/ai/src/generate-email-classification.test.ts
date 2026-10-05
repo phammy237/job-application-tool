@@ -155,4 +155,40 @@ describe('classifyEmail — usage telemetry', () => {
       expect.objectContaining({ taskType: 'email_classification', fieldClassification: null }),
     );
   });
+
+  it('records the real token counts and a computed cost off the Claude response — the fix for the hardcoded-zero telemetry bug', async () => {
+    mocks.callClaudeForEmailClassification.mockResolvedValueOnce({
+      status: 'ok',
+      rawText: validClassificationJson(),
+      usage: { inputTokens: 1000, outputTokens: 200 },
+    });
+
+    await classifyEmail(FAKE_SUPABASE, USER_ID, PARAMS);
+
+    expect(mocks.recordAiUsageEvent).toHaveBeenCalledWith(
+      FAKE_SUPABASE,
+      USER_ID,
+      expect.objectContaining({
+        inputTokens: 1000,
+        outputTokens: 200,
+        // claude-sonnet-5: $2/MTok input, $10/MTok output -> 1000*2/1e6 + 200*10/1e6 = 0.002 + 0.002
+        estimatedCost: 0.004,
+      }),
+    );
+  });
+
+  it('records zero tokens and a null cost for a provider_error attempt — no response was ever received', async () => {
+    mocks.callClaudeForEmailClassification.mockResolvedValueOnce({
+      status: 'provider_error',
+      message: 'network timeout',
+    });
+
+    await classifyEmail(FAKE_SUPABASE, USER_ID, PARAMS);
+
+    expect(mocks.recordAiUsageEvent).toHaveBeenCalledWith(
+      FAKE_SUPABASE,
+      USER_ID,
+      expect.objectContaining({ inputTokens: 0, outputTokens: 0, estimatedCost: null }),
+    );
+  });
 });

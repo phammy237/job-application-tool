@@ -19,7 +19,15 @@ export const applicationEventTypeSchema = z.enum([
 ]);
 export type ApplicationEventType = z.infer<typeof applicationEventTypeSchema>;
 
-export const applicationEventSourceSchema = z.enum(['USER', 'GMAIL_SYNC', 'SYSTEM']);
+/**
+ * AUTO_QUEUE added in migration 0047 (D9 Phase A) — deliberately NOT SYSTEM: SYSTEM is reserved
+ * for exactly one call site (revertApplicationEvent's own bookkeeping event) and is specifically
+ * excluded from `listOwnRelevantStatusChangeEvents`'s follow-up-anchor query, so the Auto Mode
+ * cron job's own application-creation STATUS_CHANGE event (null -> SAVED) needs its own value to
+ * stay "relevant" — the same reasoning that already justified GMAIL_SYNC existing instead of
+ * every background-sourced status change overloading SYSTEM.
+ */
+export const applicationEventSourceSchema = z.enum(['USER', 'GMAIL_SYNC', 'SYSTEM', 'AUTO_QUEUE']);
 export type ApplicationEventSource = z.infer<typeof applicationEventSourceSchema>;
 
 /**

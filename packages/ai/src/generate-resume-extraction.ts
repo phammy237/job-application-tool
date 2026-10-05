@@ -7,8 +7,8 @@ import {
   type CareerOsSupabaseClient,
 } from '@career-os/database';
 import type { ResumeExtractionContract } from '@career-os/shared';
-import { callClaudeForResumeExtraction } from './claude/call-claude';
-import { MODEL_ID, RESUME_EXTRACTION_PROMPT_VERSION } from './config';
+import { callClaudeForResumeExtraction, type ClaudeCallUsage } from './claude/call-claude';
+import { estimateCostUsd, MODEL_ID, RESUME_EXTRACTION_PROMPT_VERSION } from './config';
 import { validateResumeExtractionContract } from './contract/validate-resume-extraction-contract';
 import { buildResumeExtractionSystemPrompt } from './prompt/build-resume-extraction-system-prompt';
 import { buildResumeExtractionUserPrompt } from './prompt/build-resume-extraction-user-prompt';
@@ -56,17 +56,18 @@ export async function generateResumeExtraction(
       return { kind: 'provider_error' as const, message: callResult.message, latencyMs };
     }
     if (callResult.status === 'refusal') {
-      return { kind: 'rejected' as const, reason: 'refusal' as const, latencyMs };
+      return { kind: 'rejected' as const, reason: 'refusal' as const, latencyMs, usage: callResult.usage };
     }
     const validated = validateResumeExtractionContract(callResult.rawText, resumeText);
     if (validated.status === 'rejected') {
-      return { kind: 'rejected' as const, reason: validated.reason, latencyMs };
+      return { kind: 'rejected' as const, reason: validated.reason, latencyMs, usage: callResult.usage };
     }
     return {
       kind: 'accepted' as const,
       result: validated.result,
       droppedCount: validated.droppedCount,
       latencyMs,
+      usage: callResult.usage,
     };
   };
 
@@ -80,6 +81,7 @@ export async function generateResumeExtraction(
 
   // Best-effort usage telemetry — never fails the user's actual request, and never includes the
   // résumé's own text (docs/SECURITY_AND_PRIVACY.md "no raw resume text logging").
+  const claudeUsage: ClaudeCallUsage | null = outcome.kind === 'provider_error' ? null : outcome.usage;
   await recordAiUsageEvent(supabase, userId, {
     applicationId: null,
     generationRunId,
@@ -101,10 +103,10 @@ export async function generateResumeExtraction(
     rejectionReason:
       outcome.kind === 'rejected' && outcome.reason !== 'refusal' ? outcome.reason : null,
     escalationReason: null,
-    inputTokens: 0,
+    inputTokens: claudeUsage?.inputTokens ?? 0,
     cachedInputTokens: 0,
-    outputTokens: 0,
-    estimatedCost: null,
+    outputTokens: claudeUsage?.outputTokens ?? 0,
+    estimatedCost: claudeUsage ? estimateCostUsd(claudeUsage) : null,
     latencyMs: outcome.latencyMs,
     promptVersion: RESUME_EXTRACTION_PROMPT_VERSION,
   }).catch(() => {

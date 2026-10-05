@@ -324,6 +324,50 @@ describe('runFillEngine — control-type behavior', () => {
     expect((dom.getElementById('school') as HTMLSelectElement).value).toBe('');
   });
 
+  it('refuses to guess when an answer ambiguously fuzzy-matches more than one option, instead of silently picking the first one — the bug this guards against', () => {
+    const dom = loadDom(`
+      <form>
+        <label for="citizenship">Citizenship status</label>
+        <select id="citizenship" name="citizenship">
+          <option value="">Select one</option>
+          <option value="citizen">US Citizen</option>
+          <option value="citizen_gc">US Citizen or Green Card Holder</option>
+        </select>
+      </form>
+    `);
+    const results = runFillEngine(dom, [
+      reviewableField(dom, 'citizenship', {
+        detected: findDetected(dom, 'citizenship'),
+        suggestion: answer({ answer: 'US Citizen' }),
+      }),
+    ]);
+    // "US Citizen" is an EXACT match for the first option, so it must still resolve cleanly —
+    // exact matches are never ambiguous even when a different option's text also contains them.
+    expect(resultFor(results, 'field-0').status).toBe('success');
+    expect((dom.getElementById('citizenship') as HTMLSelectElement).value).toBe('citizen');
+  });
+
+  it('refuses to guess when NO option exactly matches and more than one option fuzzy-matches', () => {
+    const dom = loadDom(`
+      <form>
+        <label for="citizenship">Citizenship status</label>
+        <select id="citizenship" name="citizenship">
+          <option value="">Select one</option>
+          <option value="citizen_only">US Citizen only</option>
+          <option value="citizen_gc">US Citizen or Green Card Holder</option>
+        </select>
+      </form>
+    `);
+    const results = runFillEngine(dom, [
+      reviewableField(dom, 'citizenship', {
+        detected: findDetected(dom, 'citizenship'),
+        suggestion: answer({ answer: 'US Citizen' }),
+      }),
+    ]);
+    expect(resultFor(results, 'field-0').status).toBe('unsupported');
+    expect((dom.getElementById('citizenship') as HTMLSelectElement).value).toBe('');
+  });
+
   it('checks the approved radio option', () => {
     const dom = loadDom(BASIC_FORM);
     const yesField = reviewableField(dom, 'work_auth', {

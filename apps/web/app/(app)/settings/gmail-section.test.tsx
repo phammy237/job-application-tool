@@ -101,6 +101,7 @@ describe('GmailSection auto-sync-on-page-load', () => {
         <GmailSection
           connection={connectionFixture({ lastSyncedAt: null })}
           pendingSignals={[]}
+          backgroundTrackingEnabled={false}
           applications={[]}
         />
       </StrictMode>,
@@ -119,6 +120,7 @@ describe('GmailSection auto-sync-on-page-load', () => {
         <GmailSection
           connection={connectionFixture({ lastSyncedAt: sixMinutesAgo })}
           pendingSignals={[]}
+          backgroundTrackingEnabled={false}
           applications={[]}
         />
       </StrictMode>,
@@ -135,6 +137,7 @@ describe('GmailSection auto-sync-on-page-load', () => {
       <GmailSection
         connection={connectionFixture({ lastSyncedAt: oneMinuteAgo })}
         pendingSignals={[]}
+        backgroundTrackingEnabled={false}
         applications={[]}
       />,
     );
@@ -149,6 +152,7 @@ describe('GmailSection auto-sync-on-page-load', () => {
       <GmailSection
         connection={connectionFixture({ lastSyncedAt: null })}
         pendingSignals={[]}
+        backgroundTrackingEnabled={false}
         applications={[]}
       />,
     );
@@ -173,6 +177,7 @@ describe('GmailSection reconnect-required state', () => {
       <GmailSection
         connection={connectionFixture({ status: 'ERROR', lastSyncedAt: '2026-01-01T00:00:00.000Z' })}
         pendingSignals={[]}
+        backgroundTrackingEnabled={false}
         applications={[]}
       />,
     );
@@ -186,6 +191,7 @@ describe('GmailSection reconnect-required state', () => {
       <GmailSection
         connection={connectionFixture({ status: 'DISCONNECTED' })}
         pendingSignals={[]}
+        backgroundTrackingEnabled={false}
         applications={[]}
       />,
     );
@@ -207,6 +213,7 @@ describe('GmailSection reconnect-required state', () => {
       <GmailSection
         connection={connectionFixture({ status: 'ACTIVE', lastSyncedAt: oneMinuteAgo })}
         pendingSignals={[]}
+        backgroundTrackingEnabled={false}
         applications={[]}
       />,
     );

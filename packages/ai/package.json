@@ -5,10 +5,14 @@
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": "./src/index.ts"
+  },
   "scripts": {
     "lint": "eslint src --ext .ts,.tsx",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run && node scripts/check-generation-contract-coverage.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",

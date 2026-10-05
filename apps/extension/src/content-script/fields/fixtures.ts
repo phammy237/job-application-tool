@@ -138,4 +138,24 @@ export const classificationFixtures: {
     signals: signals({ label: 'Favorite color', name: 'favorite_color' }),
     expected: 'UNKNOWN',
   },
+  {
+    description:
+      'a field\'s own direct match must win over an unrelated section heading\'s pattern, even one checked earlier in PATTERNS order — the bug this guards against: a plain "Current Address" input under a "Relocation & Work Authorization" heading previously misclassified as WORK_AUTHORIZATION because the heading text got mixed into the same blob as the field\'s own "address" match',
+    signals: signals({
+      label: 'Current Address',
+      name: 'address',
+      sectionHeading: 'Relocation & Work Authorization',
+    }),
+    expected: 'BASIC_PROFILE',
+  },
+  {
+    description:
+      'section heading is still used as a tiebreaker when the field itself has no recognizable direct signal at all',
+    signals: signals({
+      label: 'Please specify',
+      name: 'field_3',
+      sectionHeading: 'Relocation',
+    }),
+    expected: 'RELOCATION',
+  },
 ];

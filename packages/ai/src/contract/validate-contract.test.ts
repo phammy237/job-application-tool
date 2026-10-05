@@ -75,4 +75,37 @@ describe('validateContract — this is the "rejection gate actually rejects" pro
     const result = validateContract(validContract({ sourceFactIds: [FACT_A, FACT_B] }), ALLOWED);
     expect(result.status).toBe('ok');
   });
+
+  describe('reasoningSummary leaked-reasoning heuristic', () => {
+    const leakedPhrases = [
+      'Let me think about this for a moment.',
+      'I need to check the facts before answering.',
+      'My reasoning is based on the role description.',
+      "As an AI, I can't verify this directly.",
+      'Wait, this fact might not apply here.',
+      'Step by step, this role matches your background.',
+    ];
+
+    for (const reasoningSummary of leakedPhrases) {
+      it(`rejects a reasoningSummary that reads as leaked reasoning: "${reasoningSummary}"`, () => {
+        const result = validateContract(validContract({ reasoningSummary }), ALLOWED);
+        expect(result.status).toBe('rejected');
+        if (result.status === 'rejected' && result.reason === 'reasoning_leak') {
+          expect(result.answer.reasoningSummary).toBe(reasoningSummary);
+        } else {
+          throw new Error(`expected reasoning_leak rejection, got ${JSON.stringify(result)}`);
+        }
+      });
+    }
+
+    it('accepts a normal, fact-naming reasoningSummary unaffected by the heuristic', () => {
+      const result = validateContract(
+        validContract({
+          reasoningSummary: 'Based on your Acme Corp backend role and the Django project.',
+        }),
+        ALLOWED,
+      );
+      expect(result.status).toBe('ok');
+    });
+  });
 });

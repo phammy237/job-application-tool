@@ -33,4 +33,18 @@ describe('extractClearanceRequirement', () => {
     expect(result.requirement).toBe('UNKNOWN');
     expect(result.evidence).toBeNull();
   });
+
+  it('does not report ACTIVE_CLEARANCE_REQUIRED when the posting explicitly negates it — the bug this guards against', () => {
+    const result = extractClearanceRequirement(
+      'No active clearance required, but you must be willing to obtain one.',
+    );
+    expect(result.requirement).not.toBe('ACTIVE_CLEARANCE_REQUIRED');
+  });
+
+  it('still detects a real requirement elsewhere even when an earlier sentence negates it', () => {
+    const result = extractClearanceRequirement(
+      'No active clearance is needed to apply. An active clearance will be required before the start date.',
+    );
+    expect(result.requirement).toBe('ACTIVE_CLEARANCE_REQUIRED');
+  });
 });

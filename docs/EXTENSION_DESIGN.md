@@ -174,6 +174,14 @@ COMPENSATION, FREE_RESPONSE, FILE_UPLOAD, DEMOGRAPHIC, LEGAL, AUTHENTICATION, UN
 | `AUTHENTICATION`                                          | **Never touched.** Password/login fields are excluded from extraction entirely                                                             |
 | `UNKNOWN`                                                 | Shown to the user as unclassified; never auto-filled                                                                                       |
 
+What counts as `AUTHENTICATION` (`isAuthenticationField` in
+`apps/extension/src/content-script/fields/detect-fields.ts`, checked before a field's value is
+read): `type="password"`; an `autocomplete` of `current-password`/`new-password`/
+`one-time-code`/`username`; password/OTP/2FA/MFA/verification-code wording in the field's own
+name, id, aria-label, placeholder, or label (this catches a password revealed by a "show
+password" toggle); and every field of a sign-in form — a form with a password input and at most
+two other data fields.
+
 This table is the enforcement point referenced throughout `docs/PRODUCT_SPEC.md` and
 `docs/USER_FLOWS.md`: "requires explicit approval" and "never suggested" are implemented as
 different code paths in the popup, not just a UI convention — a field with no proposed value
@@ -191,7 +199,11 @@ Sections, top to bottom:
    unsupported — see `packages/shared`'s `field-review.ts`), each with edit / approve / skip
    controls per §6, plus bulk "Suggest all eligible" and "Approve all ready" actions
    (READY-confidence fields only — never a bulk approval for a lower-confidence draft or a
-   sensitive/unsupported field). A standalone ranked "job-match summary" /
+   sensitive/unsupported field. Confidence alone is also not sufficient: EXPERIENCE,
+   FREE_RESPONSE, WORK_AUTHORIZATION, RELOCATION, and COMPENSATION fields are excluded from
+   "Approve all ready" even at READY confidence, and always require an individual approve click
+   — see `EXPLICIT_APPROVAL_ONLY_CLASSIFICATIONS` in `packages/shared`'s `detected-field.ts`).
+   A standalone ranked "job-match summary" /
    "suggested candidate experiences" section, distinct from the per-field list, is not
    currently implemented — deferred, not a documentation error going forward.
 5. **Autofill Approved Fields** button — writes only approved values to the page; per-field

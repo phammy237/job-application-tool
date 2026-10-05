@@ -23,8 +23,8 @@ import {
   type ResumeTailoringRejectionReason,
   type ResumeTailoringResearchMode,
 } from '@career-os/shared';
-import { callClaudeForResumeTailoring } from './claude/call-claude';
-import { MODEL_ID, RESUME_TAILORING_PROMPT_VERSION } from './config';
+import { callClaudeForResumeTailoring, type ClaudeCallUsage } from './claude/call-claude';
+import { estimateCostUsd, MODEL_ID, RESUME_TAILORING_PROMPT_VERSION } from './config';
 import { validateResumeTailoringContract } from './contract/validate-resume-tailoring-contract';
 import { buildResumeTailoringSystemPrompt } from './prompt/build-resume-tailoring-system-prompt';
 import { buildResumeTailoringUserPrompt } from './prompt/build-resume-tailoring-user-prompt';
@@ -254,12 +254,17 @@ export async function generateResumeTailoringPlan(
       return { kind: 'provider_error' as const, message: callResult.message, latencyMs };
     }
     if (callResult.status === 'refusal') {
-      return { kind: 'rejected' as const, reason: 'refusal' as const, latencyMs };
+      return { kind: 'rejected' as const, reason: 'refusal' as const, latencyMs, usage: callResult.usage };
     }
 
     const shapeResult = validateResumeTailoringContract(callResult.rawText);
     if (shapeResult.status !== 'ok') {
-      return { kind: 'rejected' as const, reason: 'validation_failed' as const, latencyMs };
+      return {
+        kind: 'rejected' as const,
+        reason: 'validation_failed' as const,
+        latencyMs,
+        usage: callResult.usage,
+      };
     }
 
     const deepResult = validateResumeTailoringPlan(shapeResult.plan, baseResume, {
@@ -269,10 +274,15 @@ export async function generateResumeTailoringPlan(
       researchFindingIds: allowedResearchFindingIds,
     });
     if (deepResult.status !== 'ok') {
-      return { kind: 'rejected' as const, reason: deepResult.reason, latencyMs };
+      return { kind: 'rejected' as const, reason: deepResult.reason, latencyMs, usage: callResult.usage };
     }
 
-    return { kind: 'accepted' as const, operations: deepResult.operations, latencyMs };
+    return {
+      kind: 'accepted' as const,
+      operations: deepResult.operations,
+      latencyMs,
+      usage: callResult.usage,
+    };
   };
 
   // Step 4 — attempt 1, then exactly one retry on rejection only, matching every other pipeline's
@@ -292,7 +302,9 @@ export async function generateResumeTailoringPlan(
     outcome = await runAttempt(retryReasonText);
   }
 
-  // Best-effort usage telemetry — never fails the user's actual request.
+  // Best-effort usage telemetry — never fails the user's actual request. No usage exists for a
+  // provider_error attempt (the provider was never meaningfully reached).
+  const claudeUsage: ClaudeCallUsage | null = outcome.kind === 'provider_error' ? null : outcome.usage;
   await recordAiUsageEvent(supabase, userId, {
     applicationId: application.id,
     generationRunId,
@@ -316,10 +328,10 @@ export async function generateResumeTailoringPlan(
         ? mapRejectionReason(outcome.reason)
         : null,
     escalationReason: null,
-    inputTokens: 0,
+    inputTokens: claudeUsage?.inputTokens ?? 0,
     cachedInputTokens: 0,
-    outputTokens: 0,
-    estimatedCost: null,
+    outputTokens: claudeUsage?.outputTokens ?? 0,
+    estimatedCost: claudeUsage ? estimateCostUsd(claudeUsage) : null,
     latencyMs: outcome.latencyMs,
     promptVersion: RESUME_TAILORING_PROMPT_VERSION,
   }).catch(() => {

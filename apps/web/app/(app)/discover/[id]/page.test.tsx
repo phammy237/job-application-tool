@@ -259,7 +259,7 @@ describe('DiscoverJobDetailPage', () => {
       matchScore: BASE_MATCH_SCORE,
     });
     await renderPage();
-    const primary = screen.getByRole('link', { name: 'Find official posting →' });
+    const primary = screen.getByRole('link', { name: 'Find official posting' });
     expect(primary).toHaveAttribute('target', '_blank');
     expect(primary).toHaveAttribute('rel', 'noopener noreferrer');
     const sourceLink = screen.getByRole('link', { name: 'View source' });
@@ -273,9 +273,9 @@ describe('DiscoverJobDetailPage', () => {
       matchScore: BASE_MATCH_SCORE,
     });
     await renderPage();
-    const primary = screen.getByRole('link', { name: 'Apply on employer site →' });
+    const primary = screen.getByRole('link', { name: 'Apply on employer site' });
     expect(primary).toHaveAttribute('href', 'https://boards.greenhouse.io/acme/jobs/1234');
-    expect(screen.queryByRole('link', { name: 'Find official posting →' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Find official posting' })).not.toBeInTheDocument();
   });
 
   it('View source falls back to the apply URL and never renders an unsafe source URL', async () => {
@@ -339,7 +339,7 @@ describe('DiscoverJobDetailPage', () => {
       // The link is a plain <a target="_blank"> to the external posting/search — no onClick
       // handler, no fetch call wired to it at all; rendering the page (including this link) never
       // itself calls the handoff endpoint.
-      const link = screen.getByRole('link', { name: 'Find official posting →' });
+      const link = screen.getByRole('link', { name: 'Find official posting' });
       expect(link.getAttribute('href')).not.toContain('/api/discovery');
       expect(screen.getByRole('button', { name: 'Start application' })).toBeInTheDocument();
     });

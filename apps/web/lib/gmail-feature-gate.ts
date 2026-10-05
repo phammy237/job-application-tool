@@ -32,3 +32,22 @@ export async function isGmailSyncEnabledForUser(
   ]);
   return globallyEnabled && settings.gmailIntegrationEnabled;
 }
+
+/**
+ * Three-tier gate (migration 0046) for the background Gmail cron job and the settings toggle
+ * that controls it: everything isGmailSyncEnabledForUser already requires (global flag + the
+ * base per-user Gmail opt-in), AND the user's own separate backgroundGmailTrackingEnabled
+ * opt-in. A user can satisfy the first two by simply connecting Gmail and still have this return
+ * false — background tracking is never implied by connecting Gmail, only by this additional,
+ * explicitly-flipped toggle.
+ */
+export async function isBackgroundGmailTrackingEnabledForUser(
+  supabase: CareerOsSupabaseClient,
+  userId: string,
+): Promise<boolean> {
+  const [syncEnabled, settings] = await Promise.all([
+    isGmailSyncEnabledForUser(supabase, userId),
+    getOrCreateOwnUserSettings(supabase, userId),
+  ]);
+  return syncEnabled && settings.backgroundGmailTrackingEnabled;
+}

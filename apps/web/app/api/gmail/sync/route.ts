@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { runGmailSync } from '@career-os/email';
 import { getCurrentUser } from '../../../../lib/auth';
 import { isGmailSyncEnabledForUser } from '../../../../lib/gmail-feature-gate';
+import { createAdminClient } from '../../../../lib/supabase/admin';
 import { createClient } from '../../../../lib/supabase/server';
 
 /** Bounds worst-case request duration — see docs/IMPLEMENTATION_PLAN.md's sync-route design
@@ -31,7 +32,7 @@ export async function POST() {
   }
 
   try {
-    const result = await runGmailSync(supabase, user.id);
+    const result = await runGmailSync(supabase, user.id, createAdminClient());
     if (result.status === 'no_connection') {
       return NextResponse.json({ error: 'No Gmail connection found' }, { status: 404 });
     }

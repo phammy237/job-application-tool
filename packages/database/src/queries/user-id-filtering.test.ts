@@ -59,6 +59,15 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
  * `getOwnMatchScore` (already covered by this same test), the same "pure composer" shape as
  * consistency.ts.
  *
+ * background-gmail-sync.ts (migration 0046) is exempt for the same reason discovery-scoring-
+ * profiles.ts's `listAllScoringProfiles` doesn't need its own entry here: it is a deliberate
+ * cross-user admin listing (every user eligible for the next background Gmail sync cron run),
+ * intended to be called only by /api/cron/gmail-background-sync with the service-role client —
+ * there is no single user's rows to scope by, by design. Unlike listAllScoringProfiles, this
+ * function lives alone in its own file rather than alongside other, ordinarily-scoped functions
+ * that would otherwise satisfy this scan on the file's behalf, so the file itself needs the
+ * exemption.
+ *
  * A whole-file exemption is a wider trust boundary than any other entry above (resume-tailoring-
  * save.ts and consistency.ts each have exactly one function to reason about; this file has three,
  * and two different bypass shapes — an unsafe `.rpc()` call, or a reintroduced direct `.from()`
@@ -80,6 +89,11 @@ const EXEMPT_FILES = new Set([
   'job-catalog-features.ts',
   'candidate-competency-codes.ts',
   'discovery-feed.ts',
+  'background-gmail-sync.ts',
+  // Same reasoning as background-gmail-sync.ts above, one entry up — auto-queue.ts (migration
+  // 0047, D9 Phase A) is `listUsersEligibleForAutoQueue`, a deliberate cross-user admin listing
+  // (every user eligible for the next Auto Mode cron run) with no single user's rows to scope by.
+  'auto-queue.ts',
 ]);
 
 describe('every user-scoped query filters by user_id explicitly', () => {

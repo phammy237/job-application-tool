@@ -25,6 +25,9 @@ function makeApplication(
     submissionPacketId: null,
     workingResumeVersionId: null,
     jobCatalogId: null,
+    autoTracked: false,
+    autoQueued: false,
+    autoQueueStatus: 'NOT_APPLICABLE',
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
     ...overrides,
@@ -78,6 +81,58 @@ describe('matchApplication — clean single match', () => {
     expect(result.applicationId).toBe('app-acme');
     expect(result.ambiguous).toBe(false);
     expect(result.score).toBeGreaterThan(0.5);
+  });
+});
+
+describe('matchApplication — domain-guess false positives (substring collisions)', () => {
+  it('does not match a short company name against an unrelated domain that merely contains it as a substring', () => {
+    // "On" (the running-shoe company) must not match an Amazon email just because
+    // "amazon.com" contains the substring "on".
+    const on = makeApplication({ id: 'app-on', company: 'On', title: 'Backend Engineer' });
+
+    const result = matchApplication(
+      {
+        sender: 'shipment@amazon.com',
+        senderDomain: 'amazon.com',
+        subject: 'Your package has shipped',
+      },
+      [on],
+      [],
+    );
+
+    expect(result.applicationId).toBeNull();
+  });
+
+  it('does not match "Box" against "dropbox.com" purely by substring', () => {
+    const box = makeApplication({ id: 'app-box', company: 'Box', title: 'Backend Engineer' });
+
+    const result = matchApplication(
+      {
+        sender: 'no-reply@dropbox.com',
+        senderDomain: 'dropbox.com',
+        subject: 'Your Dropbox storage is almost full',
+      },
+      [box],
+      [],
+    );
+
+    expect(result.applicationId).toBeNull();
+  });
+
+  it('still matches a company name against its own subdomain (whole-label match)', () => {
+    const dropbox = makeApplication({ id: 'app-dropbox', company: 'Dropbox', title: 'Backend Engineer' });
+
+    const result = matchApplication(
+      {
+        sender: 'careers@mail.dropbox.com',
+        senderDomain: 'mail.dropbox.com',
+        subject: 'Your application to Dropbox — Backend Engineer',
+      },
+      [dropbox],
+      [],
+    );
+
+    expect(result.applicationId).toBe('app-dropbox');
   });
 });
 

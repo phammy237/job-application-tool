@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   getOwnJob: vi.fn(),
   listOwnApprovedFactsForGeneration: vi.fn(),
   createOwnGeneratedAnswer: vi.fn(),
+  recordAiUsageEvent: vi.fn(),
   callClaudeForSuggestion: vi.fn(),
 }));
 
@@ -17,6 +18,7 @@ vi.mock('@career-os/database', () => ({
   getOwnJob: mocks.getOwnJob,
   listOwnApprovedFactsForGeneration: mocks.listOwnApprovedFactsForGeneration,
   createOwnGeneratedAnswer: mocks.createOwnGeneratedAnswer,
+  recordAiUsageEvent: mocks.recordAiUsageEvent,
 }));
 
 vi.mock('./claude/call-claude', () => ({
@@ -98,6 +100,7 @@ beforeEach(() => {
     updatedAt: '2026-01-01T00:00:00.000Z',
     ...input,
   }));
+  mocks.recordAiUsageEvent.mockResolvedValue({});
 });
 
 describe('generateSuggestion — structural refusal (CLAUDE.md enforcement, not labeling)', () => {
@@ -196,7 +199,41 @@ describe('generateSuggestion — rejection gate and retry-once', () => {
 
     expect(result.status).toBe('generated');
     expect(mocks.callClaudeForSuggestion).toHaveBeenCalledTimes(2);
-    expect(mocks.createOwnGeneratedAnswer).toHaveBeenCalledTimes(1);
+    // Two persisted rows: attempt 1's rejected-but-structurally-valid answer (audit trail — the
+    // bug this guards against, see the next test's comment) and attempt 2's accepted answer.
+    expect(mocks.createOwnGeneratedAnswer).toHaveBeenCalledTimes(2);
+    const calls = mocks.createOwnGeneratedAnswer.mock.calls as [
+      unknown,
+      unknown,
+      { attemptNumber: number },
+    ][];
+    expect(calls.map(([, , input]) => input.attemptNumber).sort()).toEqual([1, 2]);
+  });
+
+  it('rejects a reasoningSummary that reads as leaked reasoning, retries, and persists the DB-valid rejection reason (never the literal "reasoning_leak")', async () => {
+    const leakedJson = validContractJson({ reasoningSummary: 'Let me think about this carefully.' });
+    mocks.callClaudeForSuggestion
+      .mockResolvedValueOnce({ status: 'ok', rawText: leakedJson })
+      .mockResolvedValueOnce({ status: 'ok', rawText: leakedJson });
+
+    const result = await generateSuggestion(FAKE_SUPABASE, USER_ID, BASE_PARAMS);
+
+    expect(result).toEqual({ status: 'no_suggestion' });
+    expect(mocks.callClaudeForSuggestion).toHaveBeenCalledTimes(2);
+    const calls = mocks.createOwnGeneratedAnswer.mock.calls as [
+      unknown,
+      unknown,
+      { rejectionReason: string | null },
+    ][];
+    expect(calls.length).toBeGreaterThan(0);
+    for (const [, , input] of calls) {
+      expect(input.rejectionReason).toBe('validation_failed');
+    }
+    expect(mocks.recordAiUsageEvent).toHaveBeenCalledWith(
+      FAKE_SUPABASE,
+      USER_ID,
+      expect.objectContaining({ rejectionReason: 'validation_failed' }),
+    );
   });
 
   it('returns no_suggestion and persists nothing when both attempts fail schema validation', async () => {
@@ -220,13 +257,35 @@ describe('generateSuggestion — rejection gate and retry-once', () => {
     const result = await generateSuggestion(FAKE_SUPABASE, USER_ID, BASE_PARAMS);
 
     expect(result).toEqual({ status: 'no_suggestion' });
-    expect(mocks.createOwnGeneratedAnswer).toHaveBeenCalledTimes(1);
-    const [, , persistedInput] = mocks.createOwnGeneratedAnswer.mock.calls[0] as [
+    // Both attempts' rejected answers are persisted independently — attempt 1's audit record is
+    // never dropped just because attempt 2 also ran (the bug this guards against).
+    expect(mocks.createOwnGeneratedAnswer).toHaveBeenCalledTimes(2);
+    for (const [, , persistedInput] of mocks.createOwnGeneratedAnswer.mock.calls as [
       unknown,
       unknown,
       { unsupportedClaims: string[] },
-    ];
-    expect(persistedInput.unsupportedClaims.length).toBeGreaterThan(0);
+    ][]) {
+      expect(persistedInput.unsupportedClaims.length).toBeGreaterThan(0);
+    }
+    const attemptNumberCalls = mocks.createOwnGeneratedAnswer.mock.calls as [
+      unknown,
+      unknown,
+      { attemptNumber: number },
+    ][];
+    expect(attemptNumberCalls.map(([, , input]) => input.attemptNumber).sort()).toEqual([1, 2]);
+  });
+
+  it('does not double-persist attempt 1 when it is NOT retried (accepted or rejected-with-no-answer on the first try)', async () => {
+    mocks.callClaudeForSuggestion.mockResolvedValueOnce({
+      status: 'ok',
+      rawText: validContractJson(),
+    });
+
+    const result = await generateSuggestion(FAKE_SUPABASE, USER_ID, BASE_PARAMS);
+
+    expect(result.status).toBe('generated');
+    expect(mocks.callClaudeForSuggestion).toHaveBeenCalledTimes(1);
+    expect(mocks.createOwnGeneratedAnswer).toHaveBeenCalledTimes(1);
   });
 
   it('retries once on a refusal and succeeds if the retry passes', async () => {
@@ -275,5 +334,62 @@ describe('generateSuggestion — rejection gate and retry-once', () => {
 
     expect(result.status).toBe('generated');
     expect(mocks.decrementOwnAiRequestUsage).not.toHaveBeenCalled();
+  });
+});
+
+describe('generateSuggestion — usage telemetry (previously missing entirely — the bug this guards against)', () => {
+  it('records an ai_usage_events row with real token counts and a computed cost for the final attempt', async () => {
+    mocks.callClaudeForSuggestion.mockResolvedValueOnce({
+      status: 'ok',
+      rawText: validContractJson(),
+      usage: { inputTokens: 500, outputTokens: 100 },
+    });
+
+    const result = await generateSuggestion(FAKE_SUPABASE, USER_ID, BASE_PARAMS);
+
+    expect(result.status).toBe('generated');
+    expect(mocks.recordAiUsageEvent).toHaveBeenCalledTimes(1);
+    expect(mocks.recordAiUsageEvent).toHaveBeenCalledWith(
+      FAKE_SUPABASE,
+      USER_ID,
+      expect.objectContaining({
+        taskType: 'field_suggestion',
+        fieldClassification: BASE_PARAMS.fieldClassification,
+        attemptNumber: 1,
+        outcome: 'accepted',
+        inputTokens: 500,
+        outputTokens: 100,
+        // claude-sonnet-5: $2/MTok input, $10/MTok output -> 500*2/1e6 + 100*10/1e6 = 0.001 + 0.001
+        estimatedCost: 0.002,
+      }),
+    );
+  });
+
+  it('records zero tokens and a null cost for a provider_error attempt', async () => {
+    mocks.callClaudeForSuggestion.mockResolvedValueOnce({
+      status: 'provider_error',
+      message: 'network timeout',
+    });
+
+    await generateSuggestion(FAKE_SUPABASE, USER_ID, BASE_PARAMS);
+
+    expect(mocks.recordAiUsageEvent).toHaveBeenCalledWith(
+      FAKE_SUPABASE,
+      USER_ID,
+      expect.objectContaining({ inputTokens: 0, outputTokens: 0, estimatedCost: null }),
+    );
+  });
+
+  it('never fails the request when telemetry recording itself throws', async () => {
+    mocks.callClaudeForSuggestion.mockResolvedValueOnce({
+      status: 'ok',
+      rawText: validContractJson(),
+      usage: { inputTokens: 500, outputTokens: 100 },
+    });
+    mocks.recordAiUsageEvent.mockRejectedValueOnce(new Error('telemetry insert failed'));
+
+    const result = await generateSuggestion(FAKE_SUPABASE, USER_ID, BASE_PARAMS);
+
+    expect(result.status).toBe('generated');
   });
 });

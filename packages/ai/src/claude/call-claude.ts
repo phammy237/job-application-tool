@@ -40,9 +40,18 @@ const GENERATED_ANSWER_JSON_SCHEMA = {
   additionalProperties: false,
 } as const;
 
+/** Real token counts off the Anthropic response — never estimated, never hardcoded — so callers
+ * can record accurate `ai_usage_events` telemetry (cost, token volume) for every attempt,
+ * including a refused one (the provider still billed for processing the input). Absent only on
+ * `provider_error`, where no response was ever received to read usage from. */
+export interface ClaudeCallUsage {
+  inputTokens: number;
+  outputTokens: number;
+}
+
 export type CallClaudeResult =
-  | { status: 'ok'; rawText: string }
-  | { status: 'refusal'; category: string | null }
+  | { status: 'ok'; rawText: string; usage: ClaudeCallUsage }
+  | { status: 'refusal'; category: string | null; usage: ClaudeCallUsage }
   | { status: 'provider_error'; message: string };
 
 /**
@@ -70,15 +79,20 @@ export async function callClaudeForSuggestion(
       },
     });
 
+    const usage: ClaudeCallUsage = {
+      inputTokens: response.usage.input_tokens,
+      outputTokens: response.usage.output_tokens,
+    };
+
     if (response.stop_reason === 'refusal') {
-      return { status: 'refusal', category: response.stop_details?.category ?? null };
+      return { status: 'refusal', category: response.stop_details?.category ?? null, usage };
     }
 
     const textBlock = response.content.find((block) => block.type === 'text');
     if (!textBlock || textBlock.type !== 'text') {
       return { status: 'provider_error', message: 'No text content in Claude response' };
     }
-    return { status: 'ok', rawText: textBlock.text };
+    return { status: 'ok', rawText: textBlock.text, usage };
   } catch (error) {
     return {
       status: 'provider_error',
@@ -161,15 +175,20 @@ export async function callClaudeForRequirementMapping(
       },
     });
 
+    const usage: ClaudeCallUsage = {
+      inputTokens: response.usage.input_tokens,
+      outputTokens: response.usage.output_tokens,
+    };
+
     if (response.stop_reason === 'refusal') {
-      return { status: 'refusal', category: response.stop_details?.category ?? null };
+      return { status: 'refusal', category: response.stop_details?.category ?? null, usage };
     }
 
     const textBlock = response.content.find((block) => block.type === 'text');
     if (!textBlock || textBlock.type !== 'text') {
       return { status: 'provider_error', message: 'No text content in Claude response' };
     }
-    return { status: 'ok', rawText: textBlock.text };
+    return { status: 'ok', rawText: textBlock.text, usage };
   } catch (error) {
     return {
       status: 'provider_error',
@@ -253,15 +272,20 @@ export async function callClaudeForUnsupportedClaimCheck(
       },
     });
 
+    const usage: ClaudeCallUsage = {
+      inputTokens: response.usage.input_tokens,
+      outputTokens: response.usage.output_tokens,
+    };
+
     if (response.stop_reason === 'refusal') {
-      return { status: 'refusal', category: response.stop_details?.category ?? null };
+      return { status: 'refusal', category: response.stop_details?.category ?? null, usage };
     }
 
     const textBlock = response.content.find((block) => block.type === 'text');
     if (!textBlock || textBlock.type !== 'text') {
       return { status: 'provider_error', message: 'No text content in Claude response' };
     }
-    return { status: 'ok', rawText: textBlock.text };
+    return { status: 'ok', rawText: textBlock.text, usage };
   } catch (error) {
     return {
       status: 'provider_error',
@@ -271,8 +295,8 @@ export async function callClaudeForUnsupportedClaimCheck(
 }
 
 /**
- * Mirrors `followUpDraftModelContractSchema` (packages/shared) — deliberately just
- * `subject`/`body`, no `groundingNotes`/`usedContext` field for the model to fill in (see that
+ * Mirrors `followUpDraftModelContractSchema` (packages/shared) — `subject`/`body` plus the
+ * `unsupportedClaims` self-report every pipeline requires, no `groundingNotes`/`usedContext` field for the model to fill in (see that
  * schema's own doc comment for why: provenance here is always server-derived, never a model
  * claim).
  */
@@ -281,8 +305,9 @@ const FOLLOW_UP_DRAFT_JSON_SCHEMA = {
   properties: {
     subject: { type: ['string', 'null'] },
     body: { type: 'string' },
+    unsupportedClaims: { type: 'array', items: { type: 'string' } },
   },
-  required: ['subject', 'body'],
+  required: ['subject', 'body', 'unsupportedClaims'],
   additionalProperties: false,
 } as const;
 
@@ -307,15 +332,20 @@ export async function callClaudeForFollowUpDraft(
       },
     });
 
+    const usage: ClaudeCallUsage = {
+      inputTokens: response.usage.input_tokens,
+      outputTokens: response.usage.output_tokens,
+    };
+
     if (response.stop_reason === 'refusal') {
-      return { status: 'refusal', category: response.stop_details?.category ?? null };
+      return { status: 'refusal', category: response.stop_details?.category ?? null, usage };
     }
 
     const textBlock = response.content.find((block) => block.type === 'text');
     if (!textBlock || textBlock.type !== 'text') {
       return { status: 'provider_error', message: 'No text content in Claude response' };
     }
-    return { status: 'ok', rawText: textBlock.text };
+    return { status: 'ok', rawText: textBlock.text, usage };
   } catch (error) {
     return {
       status: 'provider_error',
@@ -446,15 +476,20 @@ export async function callClaudeForInterviewPrep(
       },
     });
 
+    const usage: ClaudeCallUsage = {
+      inputTokens: response.usage.input_tokens,
+      outputTokens: response.usage.output_tokens,
+    };
+
     if (response.stop_reason === 'refusal') {
-      return { status: 'refusal', category: response.stop_details?.category ?? null };
+      return { status: 'refusal', category: response.stop_details?.category ?? null, usage };
     }
 
     const textBlock = response.content.find((block) => block.type === 'text');
     if (!textBlock || textBlock.type !== 'text') {
       return { status: 'provider_error', message: 'No text content in Claude response' };
     }
-    return { status: 'ok', rawText: textBlock.text };
+    return { status: 'ok', rawText: textBlock.text, usage };
   } catch (error) {
     return {
       status: 'provider_error',
@@ -538,15 +573,20 @@ export async function callClaudeForResumeTailoring(
       },
     });
 
+    const usage: ClaudeCallUsage = {
+      inputTokens: response.usage.input_tokens,
+      outputTokens: response.usage.output_tokens,
+    };
+
     if (response.stop_reason === 'refusal') {
-      return { status: 'refusal', category: response.stop_details?.category ?? null };
+      return { status: 'refusal', category: response.stop_details?.category ?? null, usage };
     }
 
     const textBlock = response.content.find((block) => block.type === 'text');
     if (!textBlock || textBlock.type !== 'text') {
       return { status: 'provider_error', message: 'No text content in Claude response' };
     }
-    return { status: 'ok', rawText: textBlock.text };
+    return { status: 'ok', rawText: textBlock.text, usage };
   } catch (error) {
     return {
       status: 'provider_error',
@@ -618,15 +658,20 @@ export async function callClaudeForCompanyResearch(
       },
     });
 
+    const usage: ClaudeCallUsage = {
+      inputTokens: response.usage.input_tokens,
+      outputTokens: response.usage.output_tokens,
+    };
+
     if (response.stop_reason === 'refusal') {
-      return { status: 'refusal', category: response.stop_details?.category ?? null };
+      return { status: 'refusal', category: response.stop_details?.category ?? null, usage };
     }
 
     const textBlock = response.content.find((block) => block.type === 'text');
     if (!textBlock || textBlock.type !== 'text') {
       return { status: 'provider_error', message: 'No text content in Claude response' };
     }
-    return { status: 'ok', rawText: textBlock.text };
+    return { status: 'ok', rawText: textBlock.text, usage };
   } catch (error) {
     return {
       status: 'provider_error',
@@ -651,15 +696,20 @@ export async function callClaudeForEmailClassification(
       },
     });
 
+    const usage: ClaudeCallUsage = {
+      inputTokens: response.usage.input_tokens,
+      outputTokens: response.usage.output_tokens,
+    };
+
     if (response.stop_reason === 'refusal') {
-      return { status: 'refusal', category: response.stop_details?.category ?? null };
+      return { status: 'refusal', category: response.stop_details?.category ?? null, usage };
     }
 
     const textBlock = response.content.find((block) => block.type === 'text');
     if (!textBlock || textBlock.type !== 'text') {
       return { status: 'provider_error', message: 'No text content in Claude response' };
     }
-    return { status: 'ok', rawText: textBlock.text };
+    return { status: 'ok', rawText: textBlock.text, usage };
   } catch (error) {
     return {
       status: 'provider_error',
@@ -754,15 +804,20 @@ export async function callClaudeForResumeExtraction(
       },
     });
 
+    const usage: ClaudeCallUsage = {
+      inputTokens: response.usage.input_tokens,
+      outputTokens: response.usage.output_tokens,
+    };
+
     if (response.stop_reason === 'refusal') {
-      return { status: 'refusal', category: response.stop_details?.category ?? null };
+      return { status: 'refusal', category: response.stop_details?.category ?? null, usage };
     }
 
     const textBlock = response.content.find((block) => block.type === 'text');
     if (!textBlock || textBlock.type !== 'text') {
       return { status: 'provider_error', message: 'No text content in Claude response' };
     }
-    return { status: 'ok', rawText: textBlock.text };
+    return { status: 'ok', rawText: textBlock.text, usage };
   } catch (error) {
     return {
       status: 'provider_error',

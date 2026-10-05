@@ -7,8 +7,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const user = await requireUser();
 
   return (
-    <div className="flex min-h-screen">
-      <aside className="border-border bg-card flex w-56 shrink-0 flex-col border-r">
+    <div className="flex min-h-screen flex-col md:flex-row">
+      <aside className="border-border bg-card flex w-full shrink-0 flex-col border-b md:w-56 md:border-r md:border-b-0">
         <div className="px-4 py-5">
           <Link href="/dashboard" className="text-lg font-semibold tracking-tight">
             Career OS

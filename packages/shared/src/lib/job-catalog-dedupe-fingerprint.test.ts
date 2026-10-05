@@ -61,4 +61,23 @@ describe('computeJobCatalogDedupeFingerprint', () => {
     });
     expect(a).not.toBe(b);
   });
+
+  it('does not collide when a literal "|" in one field lands exactly where a "|"-joined fingerprint would place the delimiter — the bug this guards against', () => {
+    // Under the old `parts.join('|')` delimiter, these two genuinely different (company, title)
+    // pairs produced the byte-identical fingerprint "acme|co|x||": "Acme" + "|" + "Co|X" and
+    // "Acme|Co" + "|" + "X" both concatenate to the same string once joined with "|".
+    const a = computeJobCatalogDedupeFingerprint({
+      companyName: 'Acme',
+      title: 'Co|X',
+      locationText: null,
+      canonicalApplyUrl: null,
+    });
+    const b = computeJobCatalogDedupeFingerprint({
+      companyName: 'Acme|Co',
+      title: 'X',
+      locationText: null,
+      canonicalApplyUrl: null,
+    });
+    expect(a).not.toBe(b);
+  });
 });

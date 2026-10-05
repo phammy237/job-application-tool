@@ -6,14 +6,8 @@ import {
   getOwnMatchScore,
   startApplicationFromCatalogJob,
 } from '@career-os/database';
-import {
-  computeJobSnapshotFingerprint,
-  discoveryHandoffEventMetadataSchema,
-  sanitizeJobSnapshotInput,
-  selectCanonicalHandoffUrl,
-  uuidSchema,
-  type JobSnapshotSanitizableInput,
-} from '@career-os/shared';
+import { buildCatalogJobHandoffPayload } from '@career-os/discovery';
+import { uuidSchema } from '@career-os/shared';
 import { getCurrentUser } from '../../../../../lib/auth';
 import { createAdminClient } from '../../../../../lib/supabase/admin';
 import { createClient } from '../../../../../lib/supabase/server';
@@ -75,77 +69,17 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     getOwnMatchScore(supabase, user.id, jobCatalogId),
   ]);
 
-  // Snapshot content comes only from canonical catalog/feature data — never from Match/Coverage/
-  // Eligibility, which are historical provenance (captured separately, below) and never part of
-  // the application's own snapshot record (docs/JOB_DISCOVERY.md "Match/Coverage/Eligibility
-  // treatment"). `skills` stays empty: job_catalog_features' extractedCompetencyCodes are internal
-  // matching codes, not human-readable skill strings the way this field is used elsewhere.
-  const sanitizable: JobSnapshotSanitizableInput = {
-    company: job.companyName,
-    title: job.title,
-    location: job.locationText,
-    employmentType: job.employmentType,
-    sourceUrl: job.sourceUrl ?? job.applyUrl,
-    externalId: null,
-    description: job.description,
-    requiredQualifications: job.qualifications ? [job.qualifications] : [],
-    preferredQualifications: [],
-    responsibilities: job.responsibilities ? [job.responsibilities] : [],
-    skills: [],
-    salaryMin: job.salaryMin,
-    salaryMax: job.salaryMax,
-    salaryCurrency: job.salaryCurrency,
-    locations: job.locationText ? [job.locationText] : [],
-    workMode:
-      features && features.normalizedWorkplaceType !== 'UNKNOWN'
-        ? features.normalizedWorkplaceType
-        : null,
-    remoteLocationRestrictions: null,
-    workAuthorizationLanguage: null,
-    sourceType: jobSource?.sourceType ?? null,
-  };
-
-  const { sanitized, contentTruncated, truncatedFields } = sanitizeJobSnapshotInput(sanitizable);
-  const contentFingerprint = await computeJobSnapshotFingerprint(sanitized, {
-    contentTruncated,
-    truncatedFields,
-  });
-
-  // Historical Match/Coverage/Eligibility provenance — a snapshot of what discovery showed at the
-  // moment of handoff, stored only as DISCOVERY_HANDOFF event metadata (never on the application
-  // row itself, never anything a later read treats as live/authoritative). Null when the job
-  // hasn't been scored for this user yet, never fabricated.
-  const eventMetadata = discoveryHandoffEventMetadataSchema.parse({
-    jobCatalogId,
-    sourceType: jobSource?.sourceType ?? null,
-    matchScore: matchScore?.matchScore ?? null,
-    coverage: matchScore?.coverage ?? null,
-    eligibilityStatus: matchScore?.eligibilityStatus ?? null,
-    rankingVersion: matchScore?.rankingVersion ?? null,
-    featureVersion: matchScore?.featureVersion ?? null,
-    eligibilityVersion: matchScore?.eligibilityVersion ?? null,
-  });
-
-  // Bug fix (post-D7.1) — `job.canonicalApplyUrl` is raw catalog data, not a confirmed apply
-  // destination. Without this, an unresolved/REVIEW/UNRESOLVED Jobright row whose
-  // canonical_apply_url still (or again) holds the Jobright detail URL would get snapshotted onto
-  // the application as its "canonical employer posting" — exactly the bug this endpoint must not
-  // reproduce. `selectCanonicalHandoffUrl` (packages/shared, next to the Discover UI's own
-  // `selectJobApplyActions`) is the one named place this handoff-specific precedence decision
-  // lives, so this route and the Discover UI can never silently drift apart on what counts as a
-  // confirmed-bad URL — see that function's own doc comment for why it's deliberately narrower
-  // than `selectJobApplyActions`'s stricter EMPLOYER_DOMAIN/ACCEPTED_ATS allowlist.
-  const canonicalUrl = selectCanonicalHandoffUrl(job.canonicalApplyUrl);
+  // Snapshot/fingerprint/metadata/canonical-url building lives in packages/discovery's
+  // buildCatalogJobHandoffPayload (extracted for D9 Phase A so the Auto Mode cron orchestrator
+  // builds the identical payload a manual click would, never a second, drifting copy) — see that
+  // function's own doc comment for why each field is derived the way it is, including the
+  // post-D7.1 `selectCanonicalHandoffUrl` fix for Jobright's unresolved detail-page URLs.
+  const payload = await buildCatalogJobHandoffPayload({ job, features, jobSource, matchScore });
 
   try {
     const result = await startApplicationFromCatalogJob(admin, user.id, {
       jobCatalogId,
-      snapshot: sanitized,
-      snapshotContentFingerprint: contentFingerprint,
-      snapshotContentTruncated: contentTruncated,
-      snapshotTruncatedFields: truncatedFields,
-      canonicalUrl,
-      eventMetadata,
+      ...payload,
     });
 
     return NextResponse.json({

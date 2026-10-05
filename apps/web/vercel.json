@@ -1,0 +1,16 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/gmail-background-sync",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/auto-queue",
+      "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/cron/auto-tailor-drafts",
+      "schedule": "0 * * * *"
+    }
+  ]
+}

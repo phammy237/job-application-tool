@@ -16,15 +16,22 @@ export type EmailClassification = z.infer<typeof emailClassificationSchema>;
 /**
  * Tracks whether a below-threshold match has been reviewed — see
  * docs/DATA_MODEL.md "email_signals" for the full rationale (same role as
- * `generated_answers.user_decision`). `AUTO_APPLIED` and `NOT_APPLICABLE` are set at insert
- * time by the sync pipeline; `PENDING` moves to `CONFIRMED`/`DECLINED` only via
+ * `generated_answers.user_decision`). `AUTO_APPLIED`, `AUTO_CREATED`, and `NOT_APPLICABLE` are
+ * set at insert time by the sync pipeline; `PENDING` moves to `CONFIRMED`/`DECLINED` only via
  * POST /api/email-signals/:id/confirm.
+ *
+ * `AUTO_CREATED` (migration 0046) is distinct from `AUTO_APPLIED`: the latter means an
+ * *existing* tracked application's status changed; the former means this message itself caused
+ * a brand-new application to appear, with no prior tracking and no prior user action — only ever
+ * produced by the background Gmail cron job (never the manual "Sync Gmail" route, which never
+ * creates applications at all).
  */
 export const emailSignalConfirmationStatusSchema = z.enum([
   'PENDING',
   'CONFIRMED',
   'DECLINED',
   'AUTO_APPLIED',
+  'AUTO_CREATED',
   'NOT_APPLICABLE',
 ]);
 export type EmailSignalConfirmationStatus = z.infer<typeof emailSignalConfirmationStatusSchema>;

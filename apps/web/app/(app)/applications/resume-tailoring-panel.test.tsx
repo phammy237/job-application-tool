@@ -109,6 +109,44 @@ describe('ResumeTailoringPanel', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it('D9 Phase B: shows the review session immediately from a pendingDraft, with no fetch and no click', () => {
+    render(
+      <ResumeTailoringPanel
+        applicationId={APPLICATION_ID}
+        latestCompanyResearch={null}
+        pendingDraft={FULL_PROPOSAL as never}
+      />,
+    );
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(screen.getByText('Built the referral workflow')).toBeInTheDocument();
+    expect(screen.getByText(/Auto Mode already tailored this for you/)).toBeInTheDocument();
+  });
+
+  it('D9 Phase B: clicking Regenerate replaces the pendingDraft banner with a fresh live generation', async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockReturnValue(
+      jsonResponse({ status: 'ok', proposal: FULL_PROPOSAL }),
+    );
+    render(
+      <ResumeTailoringPanel
+        applicationId={APPLICATION_ID}
+        latestCompanyResearch={null}
+        pendingDraft={FULL_PROPOSAL as never}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }));
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText(/Auto Mode already tailored this for you/)).not.toBeInTheDocument();
+  });
+
+  it('with no pendingDraft, starts idle and requires a click, exactly as before D9 Phase B', () => {
+    render(<ResumeTailoringPanel applicationId={APPLICATION_ID} latestCompanyResearch={null} />);
+    expect(screen.queryByText(/Auto Mode already tailored this for you/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Tailor resume for this job' })).toBeInTheDocument();
+  });
+
   it('POSTs to the resume-tailoring endpoint exactly once, only after the button is clicked', async () => {
     (fetch as ReturnType<typeof vi.fn>).mockReturnValue(
       jsonResponse({ status: 'ok', proposal: FULL_PROPOSAL }),

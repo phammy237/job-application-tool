@@ -233,9 +233,9 @@ describe('reviewReducer APPROVE_ALL_ELIGIBLE', () => {
     let state = reviewReducer(initialReviewState, {
       type: 'INIT',
       fields: [
-        field({ fieldId: 'ready-1', classification: 'EXPERIENCE' }),
-        field({ fieldId: 'ready-2-already-skipped', classification: 'EXPERIENCE' }),
-        field({ fieldId: 'suggested', classification: 'FREE_RESPONSE' }),
+        field({ fieldId: 'ready-1', classification: 'BASIC_PROFILE' }),
+        field({ fieldId: 'ready-2-already-skipped', classification: 'BASIC_PROFILE' }),
+        field({ fieldId: 'suggested', classification: 'SKILLS' }),
       ],
     });
     state = reviewReducer(state, {
@@ -262,6 +262,36 @@ describe('reviewReducer APPROVE_ALL_ELIGIBLE', () => {
     expect(getField(state, 'ready-2-already-skipped').approvalState).toBe('SKIPPED');
     // SUGGESTED (below-threshold) is never bulk-approved, even though it has a suggestion.
     expect(getField(state, 'suggested').approvalState).toBe('PENDING');
+  });
+
+  it('never bulk-approves EXPERIENCE/FREE_RESPONSE/WORK_AUTHORIZATION/RELOCATION/COMPENSATION, even at READY confidence', () => {
+    const classifications = [
+      'EXPERIENCE',
+      'FREE_RESPONSE',
+      'WORK_AUTHORIZATION',
+      'RELOCATION',
+      'COMPENSATION',
+    ] as const;
+    let state = reviewReducer(initialReviewState, {
+      type: 'INIT',
+      fields: classifications.map((classification) =>
+        field({ fieldId: classification, classification }),
+      ),
+    });
+    for (const classification of classifications) {
+      state = reviewReducer(state, {
+        type: 'SUGGESTION_SUCCEEDED',
+        fieldId: classification,
+        suggestion: answer({ confidence: 0.99, fieldClassification: classification }),
+      });
+    }
+
+    state = reviewReducer(state, { type: 'APPROVE_ALL_ELIGIBLE' });
+
+    for (const classification of classifications) {
+      expect(getField(state, classification).reviewState).toBe('READY');
+      expect(getField(state, classification).approvalState).toBe('PENDING');
+    }
   });
 
   it('never approves a PENDING_SUGGESTION field — a field with no proposed answer at all must stay PENDING regardless of "approve all"', () => {
@@ -356,6 +386,42 @@ describe('reviewReducer HYDRATE', () => {
       freshFields: [field({ fieldId: 'a', currentValue: 'Now filled in by hand' })],
     });
     expect(getField(state, 'a').approvalState).toBe('PENDING');
+  });
+
+  it('does not reattach a stored decision across two fields that share an identical fingerprint (duplicate repeater rows) — the fix for the fingerprint-collision bug', () => {
+    // Two indistinguishable "Company name" rows from an Experience repeater (no name/id, same
+    // label/type, both empty) — previously, field-0's approved answer could land on field-1 (or
+    // vice versa) purely because fieldId lookup was positional. Now neither is reused.
+    const duplicateRow = () => field({ classification: 'EXPERIENCE', label: 'Company name', htmlName: null, htmlId: null });
+    const stored: PersistedReview = {
+      'field-0': persistedEntry({ fingerprint: fingerprintField(duplicateRow()) }),
+    };
+    const state = reviewReducer(initialReviewState, {
+      type: 'HYDRATE',
+      stored,
+      freshFields: [
+        { ...duplicateRow(), fieldId: 'field-0' },
+        { ...duplicateRow(), fieldId: 'field-1' },
+      ],
+    });
+    expect(getField(state, 'field-0').approvalState).toBe('PENDING');
+    expect(getField(state, 'field-0').suggestion).toBeNull();
+    expect(getField(state, 'field-1').approvalState).toBe('PENDING');
+    expect(getField(state, 'field-1').suggestion).toBeNull();
+  });
+
+  it('still restores a stored decision when exactly one stored entry and exactly one fresh field share a fingerprint, even under a different fieldId than before (page reordered)', () => {
+    const stored: PersistedReview = {
+      'field-5': persistedEntry(),
+    };
+    const state = reviewReducer(initialReviewState, {
+      type: 'HYDRATE',
+      stored,
+      // Same field, now at a different position/fieldId after an earlier field was removed.
+      freshFields: [field({ fieldId: 'field-2' })],
+    });
+    expect(getField(state, 'field-2').approvalState).toBe('APPROVED');
+    expect(getField(state, 'field-2').reviewState).toBe('READY');
   });
 
   it('classifies a field with no stored entry fresh, same as INIT', () => {

@@ -20,8 +20,9 @@ import {
   type InterviewPrepSubmittedAnswer,
   type NextActionType,
 } from '@career-os/shared';
-import { callClaudeForInterviewPrep } from './claude/call-claude';
+import { callClaudeForInterviewPrep, type ClaudeCallUsage } from './claude/call-claude';
 import {
+  estimateCostUsd,
   INTERVIEW_PREP_PROMPT_VERSION,
   MODEL_ID,
   RESEARCH_TAILORING_AUTO_RESOLVE_CANDIDATE_LIMIT,
@@ -236,7 +237,7 @@ export async function generateInterviewPrep(
       return { kind: 'provider_error' as const, message: callResult.message, latencyMs };
     }
     if (callResult.status === 'refusal') {
-      return { kind: 'rejected' as const, reason: 'refusal' as const, latencyMs };
+      return { kind: 'rejected' as const, reason: 'refusal' as const, latencyMs, usage: callResult.usage };
     }
     const validated = validateInterviewPrepContract(callResult.rawText, {
       factIds: allowedFactIds,
@@ -245,9 +246,9 @@ export async function generateInterviewPrep(
       researchFindingIds: allowedResearchFindingIds,
     });
     if (validated.status === 'ok') {
-      return { kind: 'accepted' as const, prep: validated.prep, latencyMs };
+      return { kind: 'accepted' as const, prep: validated.prep, latencyMs, usage: callResult.usage };
     }
-    return { kind: 'rejected' as const, reason: validated.reason, latencyMs };
+    return { kind: 'rejected' as const, reason: validated.reason, latencyMs, usage: callResult.usage };
   };
 
   // Step 4 — attempt 1, then exactly one retry on rejection only.
@@ -266,7 +267,9 @@ export async function generateInterviewPrep(
     outcome = await runAttempt(retryReasonText);
   }
 
-  // Best-effort usage telemetry — never fails the user's actual request.
+  // Best-effort usage telemetry — never fails the user's actual request. No usage exists for a
+  // provider_error attempt (the provider was never meaningfully reached).
+  const claudeUsage: ClaudeCallUsage | null = outcome.kind === 'provider_error' ? null : outcome.usage;
   await recordAiUsageEvent(supabase, userId, {
     applicationId: application.id,
     generationRunId,
@@ -290,10 +293,10 @@ export async function generateInterviewPrep(
         ? mapRejectionReason(outcome.reason)
         : null,
     escalationReason: null,
-    inputTokens: 0,
+    inputTokens: claudeUsage?.inputTokens ?? 0,
     cachedInputTokens: 0,
-    outputTokens: 0,
-    estimatedCost: null,
+    outputTokens: claudeUsage?.outputTokens ?? 0,
+    estimatedCost: claudeUsage ? estimateCostUsd(claudeUsage) : null,
     latencyMs: outcome.latencyMs,
     promptVersion: INTERVIEW_PREP_PROMPT_VERSION,
   }).catch(() => {

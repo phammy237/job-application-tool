@@ -1,4 +1,4 @@
-import { containsPhrase } from './phrase-matcher';
+import { containsPhraseOutsideNegation } from './phrase-matcher';
 
 export type SponsorshipSignal = 'AVAILABLE' | 'NOT_AVAILABLE' | 'UNKNOWN';
 
@@ -47,8 +47,6 @@ const AVAILABLE_PHRASES = [
   'sponsorship is available',
   'sponsorship available',
   'visa sponsorship available',
-  'we sponsor',
-  'will sponsor',
   'sponsor visas',
   'sponsor h-1b',
   'sponsor h1b',
@@ -57,6 +55,15 @@ const AVAILABLE_PHRASES = [
   'opt candidates are welcome',
   'cpt candidates are welcome',
 ];
+
+/**
+ * "We sponsor"/"will sponsor" alone are too generic to trust on their own — real postings use
+ * them for hackathons, meetups, scholarships, and other non-immigration sponsorship entirely
+ * unrelated to this candidate's work authorization. Only counted as a real AVAILABLE signal when
+ * the same sentence also carries immigration/visa context.
+ */
+const GENERIC_SPONSOR_PHRASES = ['we sponsor', 'will sponsor'];
+const VISA_CONTEXT_PATTERN = /visa|immigration|h-?1b|work authorization|\bopt\b|\bcpt\b/i;
 
 function splitSentences(text: string): string[] {
   return text.split(/(?<=[.!?])\s+|\n+/).filter(Boolean);
@@ -69,12 +76,18 @@ function boundedEvidence(sentence: string): string {
 
 export function extractSponsorshipSignal(plainText: string): SponsorshipExtraction {
   for (const sentence of splitSentences(plainText)) {
-    if (NOT_AVAILABLE_PHRASES.some((phrase) => containsPhrase(sentence, phrase))) {
+    if (NOT_AVAILABLE_PHRASES.some((phrase) => containsPhraseOutsideNegation(sentence, phrase))) {
       return { signal: 'NOT_AVAILABLE', evidence: boundedEvidence(sentence) };
     }
   }
   for (const sentence of splitSentences(plainText)) {
-    if (AVAILABLE_PHRASES.some((phrase) => containsPhrase(sentence, phrase))) {
+    const matchesSpecificPhrase = AVAILABLE_PHRASES.some((phrase) =>
+      containsPhraseOutsideNegation(sentence, phrase),
+    );
+    const matchesGenericPhraseWithContext =
+      VISA_CONTEXT_PATTERN.test(sentence) &&
+      GENERIC_SPONSOR_PHRASES.some((phrase) => containsPhraseOutsideNegation(sentence, phrase));
+    if (matchesSpecificPhrase || matchesGenericPhraseWithContext) {
       return { signal: 'AVAILABLE', evidence: boundedEvidence(sentence) };
     }
   }

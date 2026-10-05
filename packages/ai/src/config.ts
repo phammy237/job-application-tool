@@ -5,6 +5,19 @@
  */
 export const MODEL_ID = 'claude-sonnet-5';
 
+/** Per-token pricing for MODEL_ID ($2/$10 per million input/output tokens) — update alongside
+ * MODEL_ID if it ever changes. Feeds only `ai_usage_events.estimated_cost` for cost visibility;
+ * never affects quota enforcement (`user_settings.ai_request_limit`) or any user-facing gate. */
+const INPUT_COST_PER_MILLION_TOKENS = 2;
+const OUTPUT_COST_PER_MILLION_TOKENS = 10;
+
+export function estimateCostUsd(usage: { inputTokens: number; outputTokens: number }): number {
+  return (
+    (usage.inputTokens / 1_000_000) * INPUT_COST_PER_MILLION_TOKENS +
+    (usage.outputTokens / 1_000_000) * OUTPUT_COST_PER_MILLION_TOKENS
+  );
+}
+
 /** Non-streaming call, short structured JSON output — well under the ~16k threshold that
  * would require streaming to avoid HTTP timeouts. */
 export const MAX_OUTPUT_TOKENS = 4096;
@@ -81,7 +94,7 @@ export const ANSWER_TEXT_CHAR_CAP = 2000;
  * The actual cost lever available today is a smaller `max_tokens` budget, applied here.
  */
 export const FOLLOW_UP_DRAFT_MAX_OUTPUT_TOKENS = 1024;
-export const FOLLOW_UP_DRAFT_PROMPT_VERSION = 'follow-up-draft-v1';
+export const FOLLOW_UP_DRAFT_PROMPT_VERSION = 'follow-up-draft-v2';
 
 /**
  * Phase 5C.3B explicit, user-triggered interview preparation
@@ -175,3 +188,13 @@ export const RESEARCH_TAILORING_AUTO_RESOLVE_CANDIDATE_LIMIT = 3;
 export const RESUME_EXTRACTION_MAX_OUTPUT_TOKENS = 8192;
 export const RESUME_EXTRACTION_PROMPT_VERSION = 'resume-extraction-v1';
 export const RESUME_EXTRACTION_TEXT_CHAR_CAP = 15_000;
+
+/**
+ * Auto Mode auto-tailoring (D9 Phase B) tuning constants — every bound
+ * `runAutoTailorDraftingForUser` and its cron route observe. Deliberately small relative to
+ * Phase A's discovery-queue constants: unlike auto-queueing, every draft generated here is a
+ * real, billed Claude call against the user's own `ai_request_limit`.
+ */
+export const MAX_AUTO_TAILOR_DRAFTS_PER_USER_PER_RUN = 3;
+export const MAX_USERS_PER_AUTO_TAILOR_RUN = 20;
+export const MAX_CONCURRENT_AUTO_TAILOR_USERS = 5;

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import {
   SaveReviewedTailoredResumeError,
+  deleteOwnPendingResumeTailoringDraft,
   getOwnApplication,
   getOwnCompanyResearchSnapshot,
   getOwnProfile,
@@ -238,6 +239,15 @@ export async function POST(
       versionDisplayName,
       snapshotPayload: contentCheck.data,
       companyResearchSnapshotId,
+    });
+
+    // D9 Phase B — a successful save consumes any pending Auto Mode-generated draft for this
+    // application (if one exists; a no-op otherwise, e.g. when the reviewed proposal came from a
+    // live "Tailor resume for this job" click instead). Best-effort: cleanup failing here must
+    // never fail an already-successful save — the stale-draft check on the next page load would
+    // catch and delete it anyway if this doesn't.
+    await deleteOwnPendingResumeTailoringDraft(supabase, user.id, applicationId).catch((error) => {
+      console.error('[career-os] failed to clean up a consumed Auto Mode draft', applicationId, error);
     });
 
     return NextResponse.json({

@@ -51,10 +51,12 @@ interface SyncSummary {
 export function GmailSection({
   connection,
   pendingSignals,
+  backgroundTrackingEnabled,
   applications,
 }: {
   connection: EmailConnection | null;
   pendingSignals: EmailSignal[];
+  backgroundTrackingEnabled: boolean;
   applications: ApplicationOption[];
 }) {
   if (!connection) {
@@ -86,6 +88,10 @@ export function GmailSection({
           <DisconnectGmailButton />
         </div>
       </div>
+
+      {!needsReconnect ? (
+        <BackgroundTrackingToggle initialEnabled={backgroundTrackingEnabled} />
+      ) : null}
 
       {pendingSignals.length > 0 ? (
         <div className="space-y-3">
@@ -226,6 +232,67 @@ function DisconnectGmailButton() {
     >
       {pending ? 'Disconnecting…' : 'Disconnect'}
     </Button>
+  );
+}
+
+/**
+ * The second, separate opt-in (migration 0046) — connecting Gmail above only ever enables
+ * manual "Sync Gmail" clicks; this is the one additional, explicit toggle that lets the
+ * scheduled background cron job scan this inbox with no app open at all. Deliberately not
+ * pre-checked by default and never implied by connecting Gmail — see
+ * docs/USER_FLOWS.md §7's updated background-tracking note.
+ */
+function BackgroundTrackingToggle({ initialEnabled }: { initialEnabled: boolean }) {
+  const router = useRouter();
+  const [enabled, setEnabled] = useState(initialEnabled);
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  const toggle = () => {
+    const next = !enabled;
+    setError(null);
+    startTransition(async () => {
+      try {
+        const response = await fetch('/api/gmail/background-tracking', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: next }),
+        });
+        if (!response.ok) {
+          const body = (await response.json().catch(() => ({}))) as { error?: string };
+          setError(body.error ?? 'Could not update this setting.');
+          return;
+        }
+        setEnabled(next);
+        router.refresh();
+      } catch {
+        setError('Could not update this setting.');
+      }
+    });
+  };
+
+  return (
+    <div className="border-border bg-card rounded-lg border p-3">
+      <label className="flex items-start gap-3">
+        <input
+          type="checkbox"
+          checked={enabled}
+          disabled={pending}
+          onChange={toggle}
+          className="mt-0.5"
+        />
+        <span>
+          <span className="block text-sm font-medium">Track applications automatically</span>
+          <span className="text-muted-foreground block text-xs">
+            Lets Career OS check this inbox on a schedule, even when you don&apos;t have the app
+            open, and create a tracked application from a clear &quot;application received&quot;
+            confirmation it can&apos;t match to anything you&apos;ve already added. Off by
+            default — manual &quot;Sync Gmail&quot; above still works either way.
+          </span>
+        </span>
+      </label>
+      {error ? <p className="text-destructive mt-2 text-sm">{error}</p> : null}
+    </div>
   );
 }
 

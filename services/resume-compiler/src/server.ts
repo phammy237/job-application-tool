@@ -15,7 +15,10 @@ import { join } from 'node:path';
  * Security posture (each one maps to a line in this file, not just a README claim):
  * - isolated execution: this process's only job is compiling LaTeX; it shares no filesystem,
  *   database, or credentials with the main app.
- * - no shell escape: `execFile` with an argv array (never a shell string / `exec`).
+ * - no shell escape: `execFile` with an argv array (never a shell string / `exec`), and tectonic
+ *   runs in untrusted mode so the document itself can't request `\write18`.
+ * - no secrets visible to the document: tectonic gets a minimal environment (TECTONIC_ENV) without
+ *   RESUME_COMPILER_TOKEN, which is also removed from this process's own env at startup.
  * - no network access from the compile process: `--only-cached` below means `tectonic` itself
  *   never makes a network call at request time — every resource file it needs is pre-cached
  *   into TECTONIC_CACHE_DIR at image build time (see Dockerfile).
@@ -44,6 +47,25 @@ if (!TOKEN) {
   console.error('RESUME_COMPILER_TOKEN is required — refusing to start unauthenticated.');
   process.exit(1);
 }
+// The compiled LaTeX is caller-authored and TeX can read files (`\input{/proc/self/environ}`
+// would embed the environment in the returned PDF), so the secret must not sit in any environment
+// tectonic can see. Drop it from ours and give tectonic its own minimal env (TECTONIC_ENV below).
+// Residual risk: /proc/<parent pid>/environ still holds the value this process was started with,
+// and runs as the same user — the token only authorizes this service itself, so if that matters
+// for a deployment, restrict inbound traffic to the Career OS app and rotate the token.
+delete process.env.RESUME_COMPILER_TOKEN;
+
+/**
+ * The only environment tectonic gets: enough to find itself and its pre-warmed cache, plus
+ * untrusted mode (disables shell-escape and other known-insecure engine features regardless of
+ * what the document asks for). Deliberately *not* `process.env`.
+ */
+const TECTONIC_ENV: NodeJS.ProcessEnv = {
+  PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin',
+  HOME: process.env.HOME ?? tmpdir(),
+  TECTONIC_UNTRUSTED_MODE: '1',
+  ...(process.env.TECTONIC_CACHE_DIR ? { TECTONIC_CACHE_DIR: process.env.TECTONIC_CACHE_DIR } : {}),
+};
 
 // ---- rate limiting: in-process sliding window, one bucket (see doc comment above) ----------
 const requestTimestamps: number[] = [];
@@ -196,7 +218,7 @@ function runTectonic(
     execFile(
       'tectonic',
       [inputPath, '--outdir', outDir, '--only-cached'],
-      { timeout: COMPILE_TIMEOUT_MS, maxBuffer: 10 * 1024 * 1024 },
+      { timeout: COMPILE_TIMEOUT_MS, maxBuffer: 10 * 1024 * 1024, env: TECTONIC_ENV },
       (error, _stdout, stderr) => {
         if (error?.killed) {
           reject(new Error('ETIMEDOUT'));

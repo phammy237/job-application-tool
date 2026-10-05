@@ -38,10 +38,16 @@ vi.mock('./consistency', async (importOriginal) => {
 const {
   changeOwnApplicationStatus,
   clearOwnApplicationWorkingResumeVersion,
+  createAutoTrackedApplicationFromEmail,
   createOwnApplication,
   getOwnApplicationByCatalogJobId,
   getOwnApplicationByJobId,
+  listOwnApplicationsEligibleForAutoTailorDraft,
+  listOwnApplicationsPendingAutoQueueReview,
+  listOwnTrackedJobCatalogIds,
   markOwnApplicationApplied,
+  markOwnApplicationAutoQueued,
+  resolveOwnAutoQueuedApplication,
   setOwnApplicationWorkingResumeVersion,
   startApplicationFromCatalogJob,
   upsertApplicationFromExtension,
@@ -999,6 +1005,81 @@ describe('createOwnApplication', () => {
   });
 });
 
+describe('createAutoTrackedApplicationFromEmail', () => {
+  const EMAIL_SIGNAL_ID = '77777777-7777-4777-8777-777777777777';
+
+  it('inserts directly at status APPLIED with auto_tracked true and the given appliedAt', async () => {
+    const { supabase, appChain } = mockApplicationsAndEvents({
+      currentRow: null,
+      updatedRow: {
+        ...BASE_ROW,
+        status: 'APPLIED',
+        applied_at: '2026-02-01T00:00:00.000Z',
+        auto_tracked: true,
+      },
+    });
+
+    await createAutoTrackedApplicationFromEmail(supabase, USER_ID, {
+      company: 'Acme',
+      title: 'Backend Engineer',
+      appliedAt: '2026-02-01T00:00:00.000Z',
+      emailSignalId: EMAIL_SIGNAL_ID,
+    });
+
+    expect(appChain.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        user_id: USER_ID,
+        company: 'Acme',
+        title: 'Backend Engineer',
+        status: 'APPLIED',
+        applied_at: '2026-02-01T00:00:00.000Z',
+        auto_tracked: true,
+      }),
+    );
+  });
+
+  it('records a STATUS_CHANGE event sourced from GMAIL_SYNC, linked to the triggering email signal', async () => {
+    const { supabase, eventChain } = mockApplicationsAndEvents({
+      currentRow: null,
+      updatedRow: { ...BASE_ROW, status: 'APPLIED', applied_at: null, auto_tracked: true },
+    });
+
+    await createAutoTrackedApplicationFromEmail(supabase, USER_ID, {
+      company: 'Acme',
+      title: 'Backend Engineer',
+      appliedAt: null,
+      emailSignalId: EMAIL_SIGNAL_ID,
+    });
+
+    expect(eventChain.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        from_status: null,
+        to_status: 'APPLIED',
+        source: 'GMAIL_SYNC',
+        email_signal_id: EMAIL_SIGNAL_ID,
+      }),
+    );
+  });
+
+  it('accepts a null appliedAt — never fabricates a date Career OS does not actually know', async () => {
+    const { supabase, appChain } = mockApplicationsAndEvents({
+      currentRow: null,
+      updatedRow: { ...BASE_ROW, status: 'APPLIED', applied_at: null, auto_tracked: true },
+    });
+
+    await createAutoTrackedApplicationFromEmail(supabase, USER_ID, {
+      company: 'Acme',
+      title: 'Backend Engineer',
+      appliedAt: null,
+      emailSignalId: EMAIL_SIGNAL_ID,
+    });
+
+    expect(appChain.insert).toHaveBeenCalledWith(
+      expect.objectContaining({ applied_at: null }),
+    );
+  });
+});
+
 describe('setOwnApplicationWorkingResumeVersion / clearOwnApplicationWorkingResumeVersion', () => {
   const VERSION_ID = '12121212-1212-4212-8212-121212121212';
 
@@ -1056,5 +1137,129 @@ describe('setOwnApplicationWorkingResumeVersion / clearOwnApplicationWorkingResu
 
     expect(appChain.update).toHaveBeenCalledWith({ working_resume_version_id: null });
     expect(result.workingResumeVersionId).toBeNull();
+  });
+});
+
+describe('listOwnApplicationsEligibleForAutoTailorDraft', () => {
+  it('filters on user_id, auto_queued, auto_queue_status KEPT, and a non-null working résumé', async () => {
+    const chain: Record<string, unknown> = {};
+    chain.select = vi.fn(() => chain);
+    chain.eq = vi.fn(() => chain);
+    chain.not = vi.fn().mockResolvedValue({ data: [BASE_ROW], error: null });
+    const supabase = { from: vi.fn(() => chain) } as unknown as CareerOsSupabaseClient;
+
+    const result = await listOwnApplicationsEligibleForAutoTailorDraft(supabase, USER_ID);
+
+    expect(result).toHaveLength(1);
+    expect(chain.eq).toHaveBeenCalledWith('user_id', USER_ID);
+    expect(chain.eq).toHaveBeenCalledWith('auto_queued', true);
+    expect(chain.eq).toHaveBeenCalledWith('auto_queue_status', 'KEPT');
+    expect(chain.not).toHaveBeenCalledWith('working_resume_version_id', 'is', null);
+  });
+});
+
+describe('listOwnTrackedJobCatalogIds', () => {
+  it('returns an empty set without a network call for an empty input', async () => {
+    const supabase = { from: vi.fn() } as unknown as CareerOsSupabaseClient;
+    const result = await listOwnTrackedJobCatalogIds(supabase, USER_ID, []);
+    expect(result.size).toBe(0);
+    expect(supabase.from).not.toHaveBeenCalled();
+  });
+
+  it('scopes by user_id and the given job_catalog_id list', async () => {
+    const chain: Record<string, unknown> = {};
+    chain.select = vi.fn(() => chain);
+    chain.eq = vi.fn(() => chain);
+    chain.in = vi.fn().mockResolvedValue({
+      data: [{ job_catalog_id: 'cat-1' }, { job_catalog_id: 'cat-2' }],
+      error: null,
+    });
+    const supabase = { from: vi.fn(() => chain) } as unknown as CareerOsSupabaseClient;
+
+    const result = await listOwnTrackedJobCatalogIds(supabase, USER_ID, ['cat-1', 'cat-2', 'cat-3']);
+
+    expect(result).toEqual(new Set(['cat-1', 'cat-2']));
+    expect(chain.eq).toHaveBeenCalledWith('user_id', USER_ID);
+    expect(chain.in).toHaveBeenCalledWith('job_catalog_id', ['cat-1', 'cat-2', 'cat-3']);
+  });
+});
+
+describe('markOwnApplicationAutoQueued', () => {
+  it('sets auto_queued and auto_queue_status, scoped by id and user_id', async () => {
+    const chain: Record<string, unknown> = {};
+    chain.update = vi.fn(() => chain);
+    const eqMock = vi.fn(() => chain);
+    chain.eq = eqMock;
+    eqMock.mockImplementationOnce(() => chain).mockImplementationOnce(() => ({ error: null }));
+    const supabase = { from: vi.fn(() => chain) } as unknown as CareerOsSupabaseClient;
+
+    await markOwnApplicationAutoQueued(supabase, USER_ID, APPLICATION_ID);
+
+    expect(chain.update).toHaveBeenCalledWith({
+      auto_queued: true,
+      auto_queue_status: 'PENDING_REVIEW',
+    });
+  });
+});
+
+describe('listOwnApplicationsPendingAutoQueueReview', () => {
+  it('filters by user_id and auto_queue_status PENDING_REVIEW', async () => {
+    const chain: Record<string, unknown> = {};
+    chain.select = vi.fn(() => chain);
+    chain.eq = vi.fn(() => chain);
+    chain.order = vi.fn().mockResolvedValue({ data: [BASE_ROW], error: null });
+    const supabase = { from: vi.fn(() => chain) } as unknown as CareerOsSupabaseClient;
+
+    const result = await listOwnApplicationsPendingAutoQueueReview(supabase, USER_ID);
+
+    expect(result).toHaveLength(1);
+    expect(chain.eq).toHaveBeenCalledWith('user_id', USER_ID);
+    expect(chain.eq).toHaveBeenCalledWith('auto_queue_status', 'PENDING_REVIEW');
+  });
+});
+
+describe('resolveOwnAutoQueuedApplication', () => {
+  it('refuses to act on an application that is not currently PENDING_REVIEW', async () => {
+    const { supabase, from } = mockApplicationsAndEvents({
+      currentRow: { ...BASE_ROW, auto_queued: true, auto_queue_status: 'KEPT' },
+    });
+
+    await expect(
+      resolveOwnAutoQueuedApplication(supabase, USER_ID, APPLICATION_ID, 'KEEP'),
+    ).rejects.toThrow(/not found or not owned/);
+    // getOwnApplication itself does call .from('applications') to check — but nothing beyond
+    // that single read should happen once the guard rejects.
+    expect(from).toHaveBeenCalledTimes(1);
+  });
+
+  it('KEEP only flips auto_queue_status to KEPT — status stays SAVED, no application_events row', async () => {
+    const { supabase, appChain, eventChain } = mockApplicationsAndEvents({
+      currentRow: { ...BASE_ROW, status: 'SAVED', auto_queued: true, auto_queue_status: 'PENDING_REVIEW' },
+      updatedRow: { ...BASE_ROW, status: 'SAVED', auto_queued: true, auto_queue_status: 'KEPT' },
+    });
+
+    const result = await resolveOwnAutoQueuedApplication(supabase, USER_ID, APPLICATION_ID, 'KEEP');
+
+    expect(result.autoQueueStatus).toBe('KEPT');
+    expect(result.status).toBe('SAVED');
+    expect(appChain.update).toHaveBeenCalledWith({ auto_queue_status: 'KEPT' });
+    expect(eventChain.insert).not.toHaveBeenCalled();
+  });
+
+  it('DISMISS routes through changeOwnApplicationStatus (WITHDRAWN, source USER) and sets auto_queue_status DISMISSED', async () => {
+    const { supabase, appChain, eventChain } = mockApplicationsAndEvents({
+      currentRow: { ...BASE_ROW, status: 'SAVED', auto_queued: true, auto_queue_status: 'PENDING_REVIEW' },
+      updatedRow: { ...BASE_ROW, status: 'WITHDRAWN', auto_queued: true, auto_queue_status: 'DISMISSED' },
+    });
+
+    const result = await resolveOwnAutoQueuedApplication(supabase, USER_ID, APPLICATION_ID, 'DISMISS');
+
+    expect(result.autoQueueStatus).toBe('DISMISSED');
+    expect(result.status).toBe('WITHDRAWN');
+    expect(appChain.update).toHaveBeenCalledWith({ status: 'WITHDRAWN' });
+    expect(appChain.update).toHaveBeenCalledWith({ auto_queue_status: 'DISMISSED' });
+    expect(eventChain.insert).toHaveBeenCalledWith(
+      expect.objectContaining({ to_status: 'WITHDRAWN', source: 'USER' }),
+    );
   });
 });

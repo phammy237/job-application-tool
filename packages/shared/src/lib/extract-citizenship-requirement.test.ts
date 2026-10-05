@@ -19,4 +19,9 @@ describe('extractCitizenshipRequirement', () => {
     expect(result.requirement).toBe('UNKNOWN');
     expect(result.evidence).toBeNull();
   });
+
+  it('does not report US_CITIZEN_ONLY when the posting explicitly negates it — the bug this guards against', () => {
+    const result = extractCitizenshipRequirement('No US citizenship required to apply.');
+    expect(result.requirement).toBe('UNKNOWN');
+  });
 });
