@@ -1,5 +1,7 @@
 import { Input, Label, Select, Textarea } from '@career-os/ui';
 import { ActionForm } from '../_components/action-form';
+import { Collapsible } from '../_components/collapsible';
+import { Mutation } from '../_components/page-header';
 import {
   addAchievementEvidenceAction,
   linkAchievementEvidenceAction,
@@ -21,19 +23,31 @@ export function AchievementSupport({
   evidenceCount,
   verified,
   options,
+  readOnly,
 }: {
   achievementId: string;
   evidenceCount: number;
   verified: boolean;
   /** Evidence not yet linked to this achievement. */
   options: EvidenceOption[];
+  readOnly?: boolean;
 }) {
   return (
-    <details className="border-border mt-2 rounded-md border">
-      <summary className="cursor-pointer px-3 py-2.5 text-xs font-medium">
-        Supporting evidence ({evidenceCount})
-      </summary>
-      <div className="space-y-3 border-t p-3">
+    <Collapsible
+      title="Supporting evidence"
+      count={evidenceCount}
+      headingLevel={null}
+      variant="row"
+      className="bg-background"
+      summary={
+        verified
+          ? 'Marked verified'
+          : evidenceCount === 0
+            ? 'Needs evidence before it can be marked verified'
+            : undefined
+      }
+    >
+      <Mutation readOnly={readOnly} className="space-y-3">
         <p className="text-muted-foreground text-xs">
           Link a note, article, or document that backs this achievement. Verifying records
           your confirmation that the linked evidence supports it; it is not checked
@@ -127,7 +141,7 @@ export function AchievementSupport({
             ) : null}
           </ActionForm>
         )}
-      </div>
-    </details>
+      </Mutation>
+    </Collapsible>
   );
 }

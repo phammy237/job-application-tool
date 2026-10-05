@@ -21,6 +21,7 @@ import {
   type VizNode,
 } from '@career-os/shared';
 import { VerificationBadge, VisibilityBadge } from '../_components/badges';
+import { TONE_PANEL } from '../_components/tones';
 import {
   filterGraph,
   groupNodes,
@@ -703,10 +704,7 @@ export function GraphView({ viz }: { viz: VizGraph }) {
   return (
     <div className="space-y-4">
       {viz.truncated && (
-        <p
-          role="note"
-          className="rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm"
-        >
+        <p role="note" className={`rounded-md border p-3 text-sm ${TONE_PANEL.warning}`}>
           Showing the {viz.nodes.length} most-connected of {viz.totalNodes} nodes to keep
           the graph readable. Use search or filters on a smaller part of your evidence to
           see the rest.

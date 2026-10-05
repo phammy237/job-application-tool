@@ -261,7 +261,7 @@ export function GithubPanel({
               Last sync: {day(connection.lastSyncedAt)}.
             </p>
             {!connection.hasToken ? (
-              <p className="text-sm text-amber-900 dark:text-amber-200" role="note">
+              <p className="text-foreground text-sm font-medium" role="note">
                 Username-only connection: repositories are imported as unverified because
                 ownership of this GitHub account cannot be confirmed. Add a read-only
                 token to verify.
@@ -330,7 +330,7 @@ export function GithubPanel({
             <p className="font-medium">Result: {syncResult.status.toLowerCase()}</p>
             <p className="text-muted-foreground">{summarizeSync(syncResult.stats)}</p>
             {syncLimit ? (
-              <p role="alert" className="text-amber-900 dark:text-amber-200">
+              <p role="alert" className="text-foreground font-medium">
                 {syncLimit}
               </p>
             ) : null}
@@ -502,7 +502,7 @@ export function GithubPanel({
                   <p className="text-destructive text-xs">{run.error}</p>
                 ) : null}
                 {limit ? (
-                  <p className="text-xs text-amber-900 dark:text-amber-200">{limit}</p>
+                  <p className="text-foreground text-xs font-medium">{limit}</p>
                 ) : null}
               </li>
             ))}

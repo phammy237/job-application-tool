@@ -10,12 +10,19 @@ import {
 import Link from 'next/link';
 import type { RequirementSource } from '../../../../lib/myos/application-requirements';
 import { entityHref, ProvenanceBadge } from '../../../../lib/myos/provenance-badge';
+import { TONE_PANEL, type Tone } from '../../my/_components/tones';
+import { TonePill } from '../../my/_components/badges';
+import {
+  Collapsible,
+  CollapsibleGroup,
+  CollapsibleGroupControls,
+} from '../../my/_components/collapsible';
 
-const LEVEL_CLASS: Record<RequirementLevel, string> = {
-  STRONG: 'border-emerald-500/50 text-emerald-700 dark:text-emerald-400',
-  MODERATE: 'border-sky-500/50 text-sky-700 dark:text-sky-400',
-  LIMITED: 'border-amber-500/50 text-amber-700 dark:text-amber-400',
-  NONE: 'border-destructive/50 text-destructive',
+const LEVEL: Record<RequirementLevel, { tone: Tone; label: string }> = {
+  STRONG: { tone: 'success', label: 'Strong' },
+  MODERATE: { tone: 'primary', label: 'Moderate' },
+  LIMITED: { tone: 'warning', label: 'Limited' },
+  NONE: { tone: 'danger', label: 'No evidence' },
 };
 
 const SOURCE_NOTE: Record<RequirementSource, string> = {
@@ -88,7 +95,7 @@ export function MyosEvidenceMatch({
       </div>
 
       {graphEmpty ? (
-        <div className="border-border rounded-lg border p-3 text-sm">
+        <div className={`rounded-lg border p-3 text-sm ${TONE_PANEL.muted}`}>
           <p>Your evidence graph is empty, so nothing can be matched yet.</p>
           <Link href="/my" className="text-primary underline underline-offset-2">
             Set up myOS
@@ -135,117 +142,137 @@ function MatchBody({
       <div
         role="status"
         className={`rounded-lg border p-3 text-sm ${
-          s.overallVerdict === 'WEAK_FIT' ? 'border-destructive/50' : 'border-border'
+          s.overallVerdict === 'WEAK_FIT' ? TONE_PANEL.danger : TONE_PANEL.neutral
         }`}
       >
         <p className="font-medium">{verdict.title}</p>
         <p className="text-muted-foreground mt-1 text-xs">{verdict.body}</p>
-        <p className="text-muted-foreground mt-2 text-xs">
-          {s.strong} strong, {s.moderate} moderate, {s.limited} limited, {s.none} with no
-          evidence. {SOURCE_NOTE[source]}
+        <p className="mt-2 flex flex-wrap gap-1.5 text-xs">
+          <TonePill tone="success">{s.strong} strong</TonePill>
+          <TonePill tone="primary">{s.moderate} moderate</TonePill>
+          <TonePill tone="warning">{s.limited} limited</TonePill>
+          <TonePill tone="danger">{s.none} with no evidence</TonePill>
         </p>
+        {SOURCE_NOTE[source] ? (
+          <p className="text-muted-foreground mt-2 text-xs">{SOURCE_NOTE[source]}</p>
+        ) : null}
       </div>
 
-      <ul className="space-y-3">
-        {result.matches.map((m) => (
-          <li
-            key={m.requirementId}
-            className="border-border space-y-2 rounded-lg border p-3 text-sm"
-          >
-            <div className="flex items-start justify-between gap-3">
-              <p>
-                {m.requirementText}
-                <span className="text-muted-foreground ml-2 text-xs">
-                  {m.category === 'REQUIRED' ? 'required' : 'preferred'}
-                </span>
-              </p>
-              <span
-                className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium ${LEVEL_CLASS[m.level]}`}
+      <CollapsibleGroup>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-medium">Requirements ({result.matches.length})</h3>
+          <CollapsibleGroupControls label="requirements" />
+        </div>
+        <ul className="mt-2 space-y-2">
+          {result.matches.map((m) => (
+            <li key={m.requirementId}>
+              <Collapsible
+                variant="row"
+                headingLevel={4}
+                title={m.requirementText}
+                meta={
+                  <TonePill tone={LEVEL[m.level].tone} dot>
+                    {LEVEL[m.level].label}
+                  </TonePill>
+                }
+                summary={
+                  m.gap
+                    ? `${m.category === 'REQUIRED' ? 'Required' : 'Preferred'} · gap`
+                    : `${m.category === 'REQUIRED' ? 'Required' : 'Preferred'} · ${m.supports.length} supporting item${m.supports.length === 1 ? '' : 's'}`
+                }
+                defaultOpen={m.gap && m.category === 'REQUIRED'}
+                contentClassName="space-y-2 text-sm"
               >
-                {m.level}
-              </span>
-            </div>
-
-            {m.gap ? (
-              <p className="text-destructive text-xs">
-                No meaningful evidence found.{' '}
-                <Link href="/my/projects" className="underline underline-offset-2">
-                  Add evidence
-                </Link>
-              </p>
-            ) : (
-              <>
-                <p className="text-muted-foreground text-xs">{m.explanation}</p>
-                <ul className="space-y-2">
-                  {m.supports.map((sup) => (
-                    <li
-                      key={`${sup.entityType}:${sup.entityId}`}
-                      className="space-y-1 text-xs"
-                    >
-                      <p>
+                {m.gap ? (
+                  <p className="text-destructive text-xs">
+                    No meaningful evidence found.{' '}
+                    <Link href="/my/projects" className="underline underline-offset-2">
+                      Add evidence
+                    </Link>
+                  </p>
+                ) : (
+                  <>
+                    <p className="text-muted-foreground text-xs">{m.explanation}</p>
+                    <ul className="space-y-2">
+                      {m.supports.map((sup) => (
+                        <li
+                          key={`${sup.entityType}:${sup.entityId}`}
+                          className="space-y-1 text-xs"
+                        >
+                          <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <Link
+                              href={entityHref(sup.entityType, sup.entityId)}
+                              className="text-primary font-medium underline underline-offset-2"
+                            >
+                              {sup.name}
+                            </Link>
+                            <span className="text-muted-foreground">
+                              {sup.entityType.toLowerCase()} · matched by{' '}
+                              {sup.via === 'skill-edge' ? 'linked skill' : 'text overlap'}
+                            </span>
+                            {sup.unconfirmed ? (
+                              <TonePill tone="warning">unconfirmed</TonePill>
+                            ) : null}
+                          </p>
+                          {sup.evidence.length > 0 ? (
+                            <ul className="flex flex-wrap gap-1.5 pl-3">
+                              {sup.evidence.map((ev) => {
+                                const href = safeHttpHref(ev.sourceUrl);
+                                return (
+                                  <li
+                                    key={ev.evidenceId}
+                                    className="flex items-center gap-1"
+                                  >
+                                    {href ? (
+                                      <a
+                                        href={href}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="hover:text-primary underline"
+                                      >
+                                        {ev.title}
+                                        <span className="sr-only">
+                                          {' '}
+                                          (opens in a new tab)
+                                        </span>
+                                      </a>
+                                    ) : (
+                                      <span>{ev.title}</span>
+                                    )}
+                                    <ProvenanceBadge
+                                      sourceType={ev.sourceType}
+                                      verificationState={ev.verificationState}
+                                    />
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          ) : (
+                            <p className="text-muted-foreground pl-3">
+                              No linked evidence yet.
+                            </p>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                    {m.level === 'LIMITED' ? (
+                      <p className="text-xs">
                         <Link
-                          href={entityHref(sup.entityType, sup.entityId)}
+                          href="/my/projects"
                           className="text-primary underline underline-offset-2"
                         >
-                          {sup.name}
-                        </Link>
-                        <span className="text-muted-foreground ml-2">
-                          {sup.entityType.toLowerCase()} · matched by{' '}
-                          {sup.via === 'skill-edge' ? 'linked skill' : 'text overlap'}
-                        </span>
-                        {sup.unconfirmed ? (
-                          <span className="ml-2 rounded-full border border-amber-500/50 px-2 py-0.5 text-[11px] text-amber-700 dark:text-amber-400">
-                            unconfirmed
-                          </span>
-                        ) : null}
+                          Add evidence
+                        </Link>{' '}
+                        to strengthen this.
                       </p>
-                      {sup.evidence.length > 0 ? (
-                        <ul className="flex flex-wrap gap-1 pl-3">
-                          {sup.evidence.map((ev) => (
-                            <li key={ev.evidenceId} className="flex items-center gap-1">
-                              {ev.sourceUrl ? (
-                                <a
-                                  href={safeHttpHref(ev.sourceUrl) ?? undefined}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="hover:text-primary underline"
-                                >
-                                  {ev.title}
-                                </a>
-                              ) : (
-                                <span>{ev.title}</span>
-                              )}
-                              <ProvenanceBadge
-                                sourceType={ev.sourceType}
-                                verificationState={ev.verificationState}
-                              />
-                            </li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p className="text-muted-foreground pl-3">
-                          No linked evidence yet.
-                        </p>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-                {m.level === 'LIMITED' ? (
-                  <p className="text-xs">
-                    <Link
-                      href="/my/projects"
-                      className="text-primary underline underline-offset-2"
-                    >
-                      Add evidence
-                    </Link>{' '}
-                    to strengthen this.
-                  </p>
-                ) : null}
-              </>
-            )}
-          </li>
-        ))}
-      </ul>
+                    ) : null}
+                  </>
+                )}
+              </Collapsible>
+            </li>
+          ))}
+        </ul>
+      </CollapsibleGroup>
     </>
   );
 }

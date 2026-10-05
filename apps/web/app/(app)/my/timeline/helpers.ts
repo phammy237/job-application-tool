@@ -116,23 +116,31 @@ export function groupByYear(entries: readonly TimelineEntry[], now: Date): YearG
   return groups;
 }
 
+/** Calendar years (ascending) one entry's date range overlaps; [] when it has no dates. */
+export function entryYears(
+  e: Pick<TimelineEntry, 'start' | 'end' | 'isOngoing'>,
+  now: Date,
+): number[] {
+  const startM = /^(\d{4})/.exec(e.start ?? '');
+  const endM = /^(\d{4})/.exec(e.end ?? '');
+  const lo = startM ? Number.parseInt(startM[1]!, 10) : null;
+  const hi = e.isOngoing
+    ? now.getUTCFullYear()
+    : endM
+      ? Number.parseInt(endM[1]!, 10)
+      : lo;
+  const from = lo ?? hi;
+  if (from === null || hi === null) return [];
+  const low = Math.min(from, hi);
+  const high = Math.max(from, hi);
+  const out: number[] = [];
+  for (let y = low; y <= high && y - low < 60; y++) out.push(y);
+  return out;
+}
+
 /** Years (newest first) any entry's range overlaps, for the year filter chips. */
 export function availableYears(entries: readonly TimelineEntry[], now: Date): number[] {
   const years = new Set<number>();
-  for (const e of entries) {
-    const startM = /^(\d{4})/.exec(e.start ?? '');
-    const endM = /^(\d{4})/.exec(e.end ?? '');
-    const lo = startM ? Number.parseInt(startM[1]!, 10) : null;
-    const hi = e.isOngoing
-      ? now.getUTCFullYear()
-      : endM
-        ? Number.parseInt(endM[1]!, 10)
-        : lo;
-    const from = lo ?? hi;
-    if (from === null || hi === null) continue;
-    const low = Math.min(from, hi);
-    const high = Math.max(from, hi);
-    for (let y = low; y <= high && y - low < 60; y++) years.add(y);
-  }
+  for (const e of entries) for (const y of entryYears(e, now)) years.add(y);
   return [...years].sort((a, b) => b - a);
 }

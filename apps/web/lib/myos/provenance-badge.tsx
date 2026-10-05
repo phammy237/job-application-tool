@@ -1,4 +1,5 @@
 import type { EvidenceSourceType, VerificationState } from '@career-os/shared';
+import { PILL_BASE, TONE_PILL, type Tone } from '../../app/(app)/my/_components/tones';
 
 const SOURCE_LABEL: Record<EvidenceSourceType, string> = {
   GITHUB_REPO: 'GitHub repo',
@@ -20,11 +21,11 @@ const STATE_LABEL: Record<VerificationState, string> = {
   AI_GENERATED: 'AI-generated',
 };
 
-const STATE_CLASS: Record<VerificationState, string> = {
-  VERIFIED: 'border-emerald-500/40 text-emerald-700 dark:text-emerald-400',
-  USER_PROVIDED: 'border-sky-500/40 text-sky-700 dark:text-sky-400',
-  INFERRED: 'border-amber-500/50 text-amber-700 dark:text-amber-400',
-  AI_GENERATED: 'border-amber-500/50 text-amber-700 dark:text-amber-400',
+const STATE_TONE: Record<VerificationState, Tone> = {
+  VERIFIED: 'success',
+  USER_PROVIDED: 'primary',
+  INFERRED: 'warning',
+  AI_GENERATED: 'muted',
 };
 
 /** Source type + verification state of one evidence row. Inferred / AI states are visibly weaker. */
@@ -37,7 +38,7 @@ export function ProvenanceBadge({
 }) {
   return (
     <span
-      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] ${STATE_CLASS[verificationState]}`}
+      className={`${PILL_BASE} font-normal ${TONE_PILL[STATE_TONE[verificationState]]}`}
       title={`Source: ${SOURCE_LABEL[sourceType]}; state: ${STATE_LABEL[verificationState]}`}
     >
       {SOURCE_LABEL[sourceType]} · {STATE_LABEL[verificationState]}

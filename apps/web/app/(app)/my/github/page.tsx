@@ -5,6 +5,7 @@ import {
 } from '@career-os/database';
 import { requireUser } from '../../../../lib/auth';
 import { createClient } from '../../../../lib/supabase/server';
+import { PageHeader } from '../_components/page-header';
 import {
   GithubPanel,
   type ConnectionView,
@@ -55,14 +56,11 @@ export default async function MyGithubPage() {
   }));
 
   return (
-    <div className="space-y-4">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">GitHub</h1>
-        <p className="text-muted-foreground mt-1 text-sm">
-          Import repositories as projects. Everything imported starts private and
-          unapproved, and detected skills are suggestions until you confirm them.
-        </p>
-      </header>
+    <div className="space-y-6">
+      <PageHeader
+        title="GitHub"
+        description="Import repositories as projects. Everything imported starts private and unapproved, and detected skills are suggestions until you confirm them."
+      />
       <GithubPanel connection={connectionView} repos={repos} runs={runViews} />
     </div>
   );

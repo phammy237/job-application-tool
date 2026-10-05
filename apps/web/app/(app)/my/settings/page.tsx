@@ -4,6 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@care
 import { requireUser } from '../../../../lib/auth';
 import { loadEvidenceGraphForRequest } from '../../../../lib/myos/load-graph';
 import { createClient } from '../../../../lib/supabase/server';
+import { PageHeader } from '../_components/page-header';
 import { ApiKeyPanel, PortfolioSettingsForm } from './settings-forms';
 import { countByVisibility } from './visibility-counts';
 
@@ -28,12 +29,10 @@ export default async function PortfolioSettingsPage() {
 
   return (
     <div className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Portfolio export</h1>
-        <p className="text-muted-foreground mt-1 text-sm">
-          Optionally let your own website read a small, public slice of your evidence.
-        </p>
-      </header>
+      <PageHeader
+        title="Portfolio export"
+        description="Optionally let your own website read a small, public slice of your evidence."
+      />
 
       <Card>
         <CardHeader>

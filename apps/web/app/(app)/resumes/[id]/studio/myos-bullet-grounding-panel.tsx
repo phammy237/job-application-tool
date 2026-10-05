@@ -10,6 +10,12 @@ import {
   type BulletGroundingMap,
 } from '../../../../../lib/myos/bullet-grounding';
 import { entityHref, ProvenanceBadge } from '../../../../../lib/myos/provenance-badge';
+import { TonePill } from '../../../my/_components/badges';
+import {
+  Collapsible,
+  CollapsibleGroup,
+  CollapsibleGroupControls,
+} from '../../../my/_components/collapsible';
 
 /**
  * Advisory "Why this bullet?" check. Each bullet is compared with the user's own myOS evidence
@@ -48,76 +54,80 @@ export function MyosBulletGroundingPanel({
   if (rows.length === 0) return null;
 
   return (
-    <details
-      className="border-border rounded-lg border p-3"
-      data-testid="myos-grounding-panel"
-    >
-      <summary className="cursor-pointer text-sm font-semibold">
-        Evidence check (myOS)
-        <span className="text-muted-foreground ml-2 text-xs font-normal">
-          {warningCount} bullet{warningCount === 1 ? '' : 's'} with warnings
-          {unchecked > 0 ? `, ${unchecked} not checked (new or edited)` : ''}
-        </span>
-      </summary>
-      <p className="text-muted-foreground mt-2 text-xs">
-        Advisory only: compares each bullet with the evidence you recorded in myOS.
-        Nothing here changes your bullets. Save and reload to re-check edited text.
-      </p>
-      <ul className="mt-3 space-y-3">
-        {rows.map(({ bullet, g, state }) => (
-          <li key={bullet.id} className="space-y-1 text-sm">
-            <p>
-              <span className="text-muted-foreground text-xs">
-                {bullet.sectionLabel}:{' '}
-              </span>
-              {bullet.text}
-            </p>
-            {state === 'unchecked' ? (
-              <p className="text-muted-foreground text-xs">
-                Not checked yet (added after this page loaded).
-              </p>
-            ) : state === 'stale' ? (
-              <p className="text-xs text-amber-700 dark:text-amber-400">
-                Edited since the last check, so any earlier result no longer applies. Save
-                and reload to re-check.
-              </p>
-            ) : (
-              <BulletDetails g={g!} />
-            )}
-          </li>
-        ))}
-      </ul>
-    </details>
+    <div data-testid="myos-grounding-panel">
+      <CollapsibleGroup>
+        <Collapsible
+          title="Evidence check (myOS)"
+          headingLevel={null}
+          summary={`${warningCount} bullet${warningCount === 1 ? '' : 's'} with warnings${
+            unchecked > 0 ? `, ${unchecked} not checked (new or edited)` : ''
+          }`}
+          meta={<CollapsibleGroupControls label="bullet checks" />}
+          storageKey="studio:grounding"
+          contentClassName="space-y-3"
+        >
+          <p className="text-muted-foreground text-xs">
+            Advisory only: compares each bullet with the evidence you recorded in myOS.
+            Nothing here changes your bullets. Save and reload to re-check edited text.
+          </p>
+          <ul className="divide-border divide-y">
+            {rows.map(({ bullet, g, state }) => (
+              <li key={bullet.id} className="space-y-1 py-2.5 text-sm">
+                <p>
+                  <span className="text-muted-foreground text-xs">
+                    {bullet.sectionLabel}:{' '}
+                  </span>
+                  {bullet.text}
+                </p>
+                {state === 'unchecked' ? (
+                  <p className="text-muted-foreground text-xs">
+                    Not checked yet (added after this page loaded).
+                  </p>
+                ) : state === 'stale' ? (
+                  <p className="text-xs">
+                    <TonePill tone="warning">stale</TonePill> Edited since the last check,
+                    so any earlier result no longer applies. Save and reload to re-check.
+                  </p>
+                ) : (
+                  <BulletDetails g={g!} />
+                )}
+              </li>
+            ))}
+          </ul>
+        </Collapsible>
+      </CollapsibleGroup>
+    </div>
   );
 }
 
 function BulletDetails({ g }: { g: BulletGrounding }) {
   return (
-    <details>
-      <summary className="cursor-pointer text-xs">
-        <span className="text-primary underline underline-offset-2">
-          Why this bullet?
-        </span>
-        <span className="text-muted-foreground ml-2">
-          support: {g.supportLevel.toLowerCase()}
-        </span>
-        {g.unsupportedNumbers.length > 0 ? (
-          <span className="ml-2 rounded-full border border-amber-500/50 px-2 py-0.5 text-[11px] text-amber-700 dark:text-amber-400">
-            number not backed: {g.unsupportedNumbers.join(', ')}
-          </span>
-        ) : null}
-        {g.unsupportedTechnologies.length > 0 ? (
-          <span className="ml-2 rounded-full border border-amber-500/50 px-2 py-0.5 text-[11px] text-amber-700 dark:text-amber-400">
-            technology not backed: {g.unsupportedTechnologies.join(', ')}
-          </span>
-        ) : null}
-        {g.supportLevel === 'NONE' ? (
-          <span className="border-destructive/50 text-destructive ml-2 rounded-full border px-2 py-0.5 text-[11px]">
-            no supporting evidence
-          </span>
-        ) : null}
-      </summary>
-      <div className="mt-1 space-y-2 pl-3 text-xs">
+    <Collapsible
+      variant="plain"
+      headingLevel={null}
+      title="Why this bullet?"
+      meta={
+        <>
+          <TonePill tone={g.supportLevel === 'NONE' ? 'danger' : 'neutral'}>
+            support: {g.supportLevel.toLowerCase()}
+          </TonePill>
+          {g.unsupportedNumbers.length > 0 ? (
+            <TonePill tone="warning">
+              number not backed: {g.unsupportedNumbers.join(', ')}
+            </TonePill>
+          ) : null}
+          {g.unsupportedTechnologies.length > 0 ? (
+            <TonePill tone="warning">
+              technology not backed: {g.unsupportedTechnologies.join(', ')}
+            </TonePill>
+          ) : null}
+          {g.supportLevel === 'NONE' ? (
+            <TonePill tone="danger">no supporting evidence</TonePill>
+          ) : null}
+        </>
+      }
+    >
+      <div className="space-y-2 pl-6 text-xs">
         <p className="text-muted-foreground">{g.whyThisBullet}</p>
         {g.evidence.length > 0 ? (
           <ul className="space-y-2">
@@ -134,13 +144,13 @@ function BulletDetails({ g }: { g: BulletGrounding }) {
                     {m.entityType.toLowerCase()} · overlap: {m.matchedTerms.join(', ')}
                   </span>
                   {m.unconfirmed ? (
-                    <span className="ml-2 text-amber-700 dark:text-amber-400">
+                    <TonePill tone="warning" className="ml-2">
                       unconfirmed
-                    </span>
+                    </TonePill>
                   ) : !m.grounding ? (
-                    <span className="ml-2 text-amber-700 dark:text-amber-400">
+                    <TonePill tone="warning" className="ml-2">
                       not approved for applications
-                    </span>
+                    </TonePill>
                   ) : null}
                 </p>
                 {m.evidence.length > 0 ? (
@@ -172,6 +182,6 @@ function BulletDetails({ g }: { g: BulletGrounding }) {
           </ul>
         ) : null}
       </div>
-    </details>
+    </Collapsible>
   );
 }

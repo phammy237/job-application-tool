@@ -6,6 +6,12 @@ import {
   type SupportIndex,
 } from '@career-os/shared';
 import Link from 'next/link';
+import { TonePill } from '../../my/_components/badges';
+import {
+  Collapsible,
+  CollapsibleGroup,
+  CollapsibleGroupControls,
+} from '../../my/_components/collapsible';
 
 /**
  * "From your evidence": interview preparation built deterministically from the user's own myOS
@@ -28,20 +34,23 @@ export function MyosInterviewPrep({
     prep.competencyAreas.length === 0 &&
     prep.relevantProjects.length === 0 &&
     prep.questionsToPrepare.length === 0;
+  const gapAreas = prep.competencyAreas.filter((a) => a.gap).length;
 
   return (
     <section className="space-y-3" aria-labelledby="myos-interview-prep-heading">
-      <div>
-        <h2
-          id="myos-interview-prep-heading"
-          className="text-muted-foreground text-sm font-medium"
-        >
-          From your evidence
-        </h2>
-        <p className="text-muted-foreground text-xs">
-          Interview prep from your own stories, projects and talking points. No AI is
-          used; this is separate from the AI interview-prep panel.
-        </p>
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <h2
+            id="myos-interview-prep-heading"
+            className="text-muted-foreground text-sm font-medium"
+          >
+            From your evidence
+          </h2>
+          <p className="text-muted-foreground text-xs">
+            Interview prep from your own stories, projects and talking points. No AI is
+            used; this is separate from the AI interview-prep panel.
+          </p>
+        </div>
       </div>
 
       {empty ? (
@@ -51,109 +60,134 @@ export function MyosInterviewPrep({
             Add stories and projects
           </Link>
         </p>
-      ) : null}
-
-      {prep.competencyAreas.length > 0 ? (
-        <div className="space-y-2">
-          <h3 className="text-sm font-medium">Competency areas</h3>
-          <ul className="space-y-2">
-            {prep.competencyAreas.map((area) => (
-              <li
-                key={area.competency}
-                className="border-border space-y-1 rounded-lg border p-3 text-sm"
+      ) : (
+        <CollapsibleGroup>
+          <div className="flex justify-end">
+            <CollapsibleGroupControls label="interview prep sections" />
+          </div>
+          <div className="space-y-2">
+            {prep.competencyAreas.length > 0 ? (
+              <Collapsible
+                variant="row"
+                title="Competency areas"
+                count={prep.competencyAreas.length}
+                summary={
+                  gapAreas > 0
+                    ? `${gapAreas} without a story yet`
+                    : 'Every area has at least one story'
+                }
+                defaultOpen
               >
-                <p className="font-medium">
-                  {competencyLabel(area.competency)}
-                  {area.gap ? (
-                    <span className="text-destructive ml-2 text-xs font-normal">gap</span>
-                  ) : null}
-                </p>
-                <p className="text-muted-foreground text-xs">{area.rationale}</p>
-                {area.stories.length > 0 ? (
-                  <ul className="space-y-1 text-xs">
-                    {area.stories.map((s) => (
-                      <li key={s.storyId}>
-                        <Link
-                          href={`/my/stories/${s.storyId}`}
-                          className="text-primary underline underline-offset-2"
-                        >
-                          {s.title}
-                        </Link>
-                        <span className="text-muted-foreground ml-2">
-                          {s.strength.toLowerCase()}
-                        </span>
-                        {s.unapproved ? (
-                          <span className="ml-2 rounded-full border border-amber-500/50 px-2 py-0.5 text-[11px] text-amber-700 dark:text-amber-400">
-                            not approved yet
-                          </span>
-                        ) : null}
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="text-destructive text-xs">No story covers this yet.</p>
-                )}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
+                <ul className="divide-border -my-2 divide-y">
+                  {prep.competencyAreas.map((area) => (
+                    <li key={area.competency} className="space-y-1 py-2.5 text-sm">
+                      <p className="flex flex-wrap items-center gap-2 font-medium">
+                        {competencyLabel(area.competency)}
+                        {area.gap ? <TonePill tone="danger">gap</TonePill> : null}
+                      </p>
+                      <p className="text-muted-foreground text-xs">{area.rationale}</p>
+                      {area.stories.length > 0 ? (
+                        <ul className="space-y-1 text-xs">
+                          {area.stories.map((s) => (
+                            <li
+                              key={s.storyId}
+                              className="flex flex-wrap items-center gap-2"
+                            >
+                              <Link
+                                href={`/my/stories/${s.storyId}`}
+                                className="text-primary underline underline-offset-2"
+                              >
+                                {s.title}
+                              </Link>
+                              <span className="text-muted-foreground">
+                                {s.strength.toLowerCase()}
+                              </span>
+                              {s.unapproved ? (
+                                <TonePill tone="warning">not approved yet</TonePill>
+                              ) : null}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="text-destructive text-xs">
+                          No story covers this yet.
+                        </p>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </Collapsible>
+            ) : null}
 
-      {prep.relevantProjects.length > 0 ? (
-        <div className="space-y-2">
-          <h3 className="text-sm font-medium">Relevant projects</h3>
-          <ul className="space-y-1 text-sm">
-            {prep.relevantProjects.map((p) => (
-              <li key={p.projectId}>
-                <Link
-                  href={`/my/projects/${p.projectId}`}
-                  className="text-primary underline underline-offset-2"
-                >
-                  {p.name}
-                </Link>
-                <span className="text-muted-foreground ml-2 text-xs">
-                  {p.level.toLowerCase()} support for {p.requirementIds.length}{' '}
-                  requirement
-                  {p.requirementIds.length === 1 ? '' : 's'}
-                </span>
-                {p.unconfirmed ? (
-                  <span className="ml-2 rounded-full border border-amber-500/50 px-2 py-0.5 text-[11px] text-amber-700 dark:text-amber-400">
-                    unconfirmed
-                  </span>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
+            {prep.relevantProjects.length > 0 ? (
+              <Collapsible
+                variant="row"
+                title="Relevant projects"
+                count={prep.relevantProjects.length}
+                defaultOpen
+              >
+                <ul className="space-y-1.5 text-sm">
+                  {prep.relevantProjects.map((p) => (
+                    <li key={p.projectId} className="flex flex-wrap items-center gap-2">
+                      <Link
+                        href={`/my/projects/${p.projectId}`}
+                        className="text-primary underline underline-offset-2"
+                      >
+                        {p.name}
+                      </Link>
+                      <span className="text-muted-foreground text-xs">
+                        {p.level.toLowerCase()} support for {p.requirementIds.length}{' '}
+                        requirement
+                        {p.requirementIds.length === 1 ? '' : 's'}
+                      </span>
+                      {p.unconfirmed ? (
+                        <TonePill tone="warning">unconfirmed</TonePill>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              </Collapsible>
+            ) : null}
 
-      <TalkingPoints
-        title="Technical talking points"
-        points={prep.technicalTalkingPoints}
-      />
-      <TalkingPoints title="Product talking points" points={prep.productTalkingPoints} />
+            <TalkingPoints
+              title="Technical talking points"
+              points={prep.technicalTalkingPoints}
+            />
+            <TalkingPoints
+              title="Product talking points"
+              points={prep.productTalkingPoints}
+            />
 
-      {prep.gaps.length > 0 ? (
-        <div className="space-y-2">
-          <h3 className="text-sm font-medium">Gaps to be ready for</h3>
-          <ul className="text-muted-foreground list-disc space-y-1 pl-5 text-xs">
-            {prep.gaps.map((g) => (
-              <li key={g}>{g}</li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
+            {prep.gaps.length > 0 ? (
+              <Collapsible
+                variant="row"
+                title="Gaps to be ready for"
+                count={prep.gaps.length}
+              >
+                <ul className="text-muted-foreground list-disc space-y-1 pl-5 text-xs">
+                  {prep.gaps.map((g) => (
+                    <li key={g}>{g}</li>
+                  ))}
+                </ul>
+              </Collapsible>
+            ) : null}
 
-      {prep.questionsToPrepare.length > 0 ? (
-        <div className="space-y-2">
-          <h3 className="text-sm font-medium">Questions to prepare</h3>
-          <ul className="list-disc space-y-1 pl-5 text-xs">
-            {prep.questionsToPrepare.map((q) => (
-              <li key={q}>{q}</li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
+            {prep.questionsToPrepare.length > 0 ? (
+              <Collapsible
+                variant="row"
+                title="Questions to prepare"
+                count={prep.questionsToPrepare.length}
+              >
+                <ul className="list-disc space-y-1 pl-5 text-xs">
+                  {prep.questionsToPrepare.map((q) => (
+                    <li key={q}>{q}</li>
+                  ))}
+                </ul>
+              </Collapsible>
+            ) : null}
+          </div>
+        </CollapsibleGroup>
+      )}
     </section>
   );
 }
@@ -167,16 +201,17 @@ function TalkingPoints({
 }) {
   if (points.length === 0) return null;
   return (
-    <div className="space-y-2">
-      <h3 className="text-sm font-medium">{title}</h3>
-      <p className="text-muted-foreground text-xs">
-        Your own stored talking points, quoted as written.
-      </p>
+    <Collapsible
+      variant="row"
+      title={title}
+      count={points.length}
+      summary="Your own stored talking points, quoted as written."
+    >
       <ul className="list-disc space-y-1 pl-5 text-xs">
         {points.map((p) => (
           <li key={`${p.projectId}:${p.text}`}>{p.text}</li>
         ))}
       </ul>
-    </div>
+    </Collapsible>
   );
 }

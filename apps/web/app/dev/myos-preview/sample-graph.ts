@@ -1,7 +1,11 @@
 import type {
   EdgeRelation,
   EvidenceGraphData,
+  GithubConnection,
+  GithubRepository,
+  GithubSyncRun,
   MyosAchievement,
+  MyosCandidate,
   MyosEdge,
   MyosEvidence,
   MyosStory,
@@ -74,14 +78,18 @@ const routing = {
   origin: 'GITHUB' as const,
   url: 'https://github.com/sample-user/transit-routing',
   collaborators: ['Two classmates'],
-  talkingPoints: ['Chose PostgreSQL for geospatial queries', 'Added caching for route lookups'],
+  talkingPoints: [
+    'Chose PostgreSQL for geospatial queries',
+    'Added caching for route lookups',
+  ],
   visibility: 'PUBLIC' as const,
 };
 const marketplace = {
   ...base,
   id: id(),
   name: 'Campus Marketplace App',
-  description: 'Student-to-student marketplace; led user interviews and roadmap (sample).',
+  description:
+    'Student-to-student marketplace; led user interviews and roadmap (sample).',
   role: 'Product + frontend',
   startDate: '2024-09-01',
   endDate: '2025-05-01',
@@ -119,7 +127,8 @@ const pmIntern = {
   title: 'Product Management Intern',
   startDate: '2025-06-01',
   endDate: '2025-08-31',
-  description: 'Ran customer interviews and wrote specs with engineering and design (sample).',
+  description:
+    'Ran customer interviews and wrote specs with engineering and design (sample).',
   tags: [],
   visibility: 'CAREER_OS_ONLY' as const,
   userApproved: true,
@@ -131,7 +140,8 @@ const labAssistant = {
   title: 'Data Analyst Assistant',
   startDate: '2024-01-15',
   endDate: '2024-12-15',
-  description: 'Cleaned survey data with Python and SQL; built weekly dashboards (sample).',
+  description:
+    'Cleaned survey data with Python and SQL; built weekly dashboards (sample).',
   tags: [],
   visibility: 'PRIVATE' as const,
   userApproved: true,
@@ -152,7 +162,8 @@ const education = [
 
 // ---- evidence ------------------------------------------------------------------------------
 function ev(
-  over: Partial<MyosEvidence> & Pick<MyosEvidence, 'sourceType' | 'title' | 'verificationState'>,
+  over: Partial<MyosEvidence> &
+    Pick<MyosEvidence, 'sourceType' | 'title' | 'verificationState'>,
 ): MyosEvidence {
   return {
     id: id(),
@@ -177,7 +188,10 @@ const repoEv = ev({
   excerpt: 'Python FastAPI service backed by PostgreSQL.',
   occurredAt: '2026-08-20T00:00:00.000Z',
   verificationState: 'VERIFIED',
-  metadata: { languages: { Python: 81000, SQL: 9000 }, topics: ['fastapi', 'postgresql'] },
+  metadata: {
+    languages: { Python: 81000, SQL: 9000 },
+    topics: ['fastapi', 'postgresql'],
+  },
 });
 const prEv = ev({
   sourceType: 'GITHUB_PR',
@@ -199,7 +213,8 @@ const hackEv = ev({
   sourceType: 'LINK',
   title: 'Hackathon submission page',
   sourceUrl: 'https://example.com/sample-hackathon/health-tracker',
-  excerpt: 'Python prototype with a small machine learning model for step-count anomalies.',
+  excerpt:
+    'Python prototype with a small machine learning model for step-count anomalies.',
   occurredAt: '2025-02-16T00:00:00.000Z',
   verificationState: 'USER_PROVIDED',
 });
@@ -213,7 +228,9 @@ const awardEv = ev({
 const evidence = [repoEv, prEv, interviewsEv, hackEv, awardEv];
 
 // ---- achievements / stories ----------------------------------------------------------------
-function ach(over: Partial<MyosAchievement> & Pick<MyosAchievement, 'title'>): MyosAchievement {
+function ach(
+  over: Partial<MyosAchievement> & Pick<MyosAchievement, 'title'>,
+): MyosAchievement {
   return {
     id: id(),
     userId: USER,
@@ -269,7 +286,8 @@ const roadmapStory = story({
   title: 'Reprioritizing the marketplace roadmap after user interviews',
   situation: 'Our marketplace roadmap was driven by guesses about what students wanted.',
   task: 'Find out what actually blocked trades and re-plan the next sprint.',
-  action: 'Ran 12 interviews, synthesized themes, and walked the team through the trade-offs.',
+  action:
+    'Ran 12 interviews, synthesized themes, and walked the team through the trade-offs.',
   result: 'We cut two planned features and shipped in-app pickup scheduling first.',
   competencies: ['USER_RESEARCH', 'PRIORITIZATION', 'CROSS_FUNCTIONAL_COLLABORATION'],
 });
@@ -354,14 +372,110 @@ export const SAMPLE_GRAPH: EvidenceGraphData = {
   edges,
 };
 
+// ---- non-graph fixtures (pending suggestions, GitHub) --------------------------------------
+function candidate(
+  projectId: string,
+  payload: MyosCandidate['payload'],
+  rationale: string,
+): MyosCandidate {
+  return {
+    id: id(),
+    userId: USER,
+    kind: payload.kind,
+    projectId,
+    payload,
+    evidenceIds: [repoEv.id],
+    rationale,
+    dedupeKey: `${projectId}:${JSON.stringify(payload)}`,
+    status: 'PENDING',
+    createdAt: TS,
+    decidedAt: null,
+  };
+}
+
+export const SAMPLE_PENDING: MyosCandidate[] = [
+  candidate(
+    portfolio.id,
+    { kind: 'SKILL', skill: 'Tailwind CSS', category: 'FRAMEWORK' },
+    'the repository package.json dependencies',
+  ),
+  candidate(
+    portfolio.id,
+    { kind: 'PROJECT_SUMMARY', text: 'Personal portfolio site built with Next.js.' },
+    'the repository README',
+  ),
+  candidate(
+    routing.id,
+    { kind: 'TALKING_POINT', text: 'Designed an event-aware cache for route lookups.' },
+    'pull request #42',
+  ),
+];
+
+export const SAMPLE_CONNECTION: GithubConnection = {
+  userId: USER,
+  githubLogin: 'sample-user',
+  githubUserId: null,
+  hasToken: false,
+  status: 'CONNECTED',
+  lastError: null,
+  lastSyncedAt: '2026-09-28T00:00:00.000Z',
+  createdAt: TS,
+  updatedAt: TS,
+};
+
+export const SAMPLE_REPOS: Pick<
+  GithubRepository,
+  'fullName' | 'htmlUrl' | 'projectId' | 'selected'
+>[] = [
+  {
+    fullName: 'sample-user/transit-routing',
+    htmlUrl: 'https://github.com/sample-user/transit-routing',
+    projectId: routing.id,
+    selected: true,
+  },
+  {
+    fullName: 'sample-user/portfolio-site',
+    htmlUrl: 'https://github.com/sample-user/portfolio-site',
+    projectId: portfolio.id,
+    selected: true,
+  },
+  {
+    fullName: 'sample-user/dotfiles',
+    htmlUrl: 'https://github.com/sample-user/dotfiles',
+    projectId: null,
+    selected: false,
+  },
+];
+
+export const SAMPLE_LAST_RUN: GithubSyncRun = {
+  id: id(),
+  userId: USER,
+  status: 'SUCCEEDED',
+  stats: {},
+  error: null,
+  startedAt: '2026-09-28T00:00:00.000Z',
+  finishedAt: '2026-09-28T00:01:00.000Z',
+};
+
+export const SAMPLE_PROJECT_ID = routing.id;
+export const SAMPLE_STORY_ID = roadmapStory.id;
+
 export const SAMPLE_JOB = {
   title: 'Associate Product Manager',
   company: 'Example Corp',
   description:
     'Work with engineering and design to ship features. Run user research and use data to prioritize.',
   requirements: [
-    { id: 'r1', text: 'Experience conducting user research', category: 'REQUIRED' as const },
-    { id: 'r2', text: 'Cross-functional collaboration with engineering', category: 'REQUIRED' as const },
+    {
+      id: 'r1',
+      text: 'Experience conducting user research',
+      category: 'REQUIRED' as const,
+    },
+    {
+      id: 'r2',
+      text: 'Cross-functional collaboration with engineering',
+      category: 'REQUIRED' as const,
+    },
     { id: 'r3', text: 'Data analysis with SQL', category: 'REQUIRED' as const },
     { id: 'r4', text: 'Python scripting', category: 'PREFERRED' as const },
     { id: 'r5', text: 'B2B SaaS experience', category: 'PREFERRED' as const },

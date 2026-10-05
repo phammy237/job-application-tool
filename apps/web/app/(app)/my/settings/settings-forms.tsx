@@ -2,6 +2,7 @@
 
 import { useActionState, useState } from 'react';
 import { Button, Input } from '@career-os/ui';
+import { TONE_PANEL } from '../_components/tones';
 import {
   rotatePortfolioApiKey,
   savePortfolioSettings,
@@ -100,7 +101,7 @@ export function ApiKeyPanel({ hasKey }: { hasKey: boolean }) {
       {state.key ? (
         <div
           role="alert"
-          className="space-y-2 rounded-md border border-amber-500/60 bg-amber-500/10 p-3"
+          className={`space-y-2 rounded-md border p-3 ${TONE_PANEL.warning}`}
         >
           <p className="text-sm font-medium">
             Copy your API key now. It will not be shown again.

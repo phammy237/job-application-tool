@@ -2,6 +2,7 @@ import type { TimelineEntry } from '@career-os/shared';
 import { describe, expect, it } from 'vitest';
 import {
   availableYears,
+  entryYears,
   formatRange,
   groupByYear,
   parseTimelineParams,
@@ -106,5 +107,17 @@ describe('availableYears', () => {
       NOW,
     );
     expect(years).toEqual([2026, 2025, 2024, 2023]);
+  });
+});
+
+describe('entryYears', () => {
+  it('lists the years a range overlaps and nothing for undated entries', () => {
+    expect(entryYears(entry({ start: '2023-11-01', end: '2025-02-01' }), NOW)).toEqual([
+      2023, 2024, 2025,
+    ]);
+    expect(entryYears(entry({ start: '2025-01-01', isOngoing: true }), NOW)).toEqual([
+      2025, 2026,
+    ]);
+    expect(entryYears(entry({ start: null, end: null }), NOW)).toEqual([]);
   });
 });

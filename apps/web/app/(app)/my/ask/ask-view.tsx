@@ -4,7 +4,13 @@ import { memo, useRef, useState, useTransition, type FormEvent } from 'react';
 import Link from 'next/link';
 import { Button, Input } from '@career-os/ui';
 import type { AskAnswer, AskClaim, AskSupport } from '@career-os/shared';
+import { TONE_PANEL } from '../_components/tones';
 import { VerificationBadge } from '../_components/badges';
+import {
+  Collapsible,
+  CollapsibleGroup,
+  CollapsibleGroupControls,
+} from '../_components/collapsible';
 import { nodeHref, safeExternalUrl } from '../graph/node-links';
 import { askMyEvidence, type AskResult } from './actions';
 import { EXAMPLE_QUESTIONS, MAX_QUESTION_LENGTH, askQuestionSchema } from './ask-schema';
@@ -133,7 +139,7 @@ const AnswerCard = memo(function AnswerCard({
         {answer.insufficientEvidence ? (
           <div
             role="status"
-            className="mt-1 rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm"
+            className={`mt-1 rounded-md border p-3 text-sm ${TONE_PANEL.warning}`}
           >
             <p className="font-medium">Career OS has no evidence for this.</p>
             <p className="mt-1 whitespace-pre-line">{answer.answer}</p>
@@ -159,14 +165,19 @@ const AnswerCard = memo(function AnswerCard({
       </section>
       {answer.claims.length > 0 && (
         <section aria-label="Supporting claims, evidence and sources">
-          <Sub className="text-sm font-semibold">
-            Supporting claims → Evidence → Source
-          </Sub>
-          <ol className="mt-2 space-y-4">
-            {answer.claims.map((c, i) => (
-              <ClaimBlock key={`${i}-${c.text}`} claim={c} index={i} />
-            ))}
-          </ol>
+          <Collapsible
+            title="Supporting claims → Evidence → Source"
+            count={answer.claims.length}
+            headingLevel={heading === 'h2' ? 3 : 4}
+            variant="plain"
+            defaultOpen
+          >
+            <ol className="space-y-4">
+              {answer.claims.map((c, i) => (
+                <ClaimBlock key={`${i}-${c.text}`} claim={c} index={i} />
+              ))}
+            </ol>
+          </Collapsible>
         </section>
       )}
       {answer.notes.length > 0 && (
@@ -223,7 +234,7 @@ export function AskView({
 
   return (
     <div className="space-y-6">
-      <p className="bg-accent/40 rounded-md border p-3 text-sm">
+      <p className={`rounded-md border p-3 text-sm ${TONE_PANEL.primary}`}>
         Answers come only from evidence you stored. Nothing is generated or guessed.
       </p>
 
@@ -266,7 +277,7 @@ export function AskView({
                     setQuestion(q);
                     submit(q);
                   }}
-                  className="hover:bg-accent focus-visible:ring-ring min-h-[36px] rounded-full border px-3 py-1 text-left text-xs focus-visible:outline-none focus-visible:ring-2 disabled:opacity-50"
+                  className="hover:bg-accent focus-visible:ring-ring min-h-10 rounded-full border px-3 py-1 text-left text-xs focus-visible:outline-none focus-visible:ring-2 disabled:opacity-50"
                 >
                   {q}
                 </button>
@@ -289,22 +300,34 @@ export function AskView({
       </div>
 
       {older.length > 0 && (
-        <section aria-label="Earlier answers" className="space-y-3">
-          <h2 className="text-sm font-semibold">Earlier in this session</h2>
-          {older.map((item) => (
-            <details key={item.id} className="rounded-lg border">
-              <summary className="min-h-[44px] cursor-pointer px-4 py-3 text-sm font-medium">
-                {item.answer.question}
-              </summary>
-              <div className="p-3">
+        <CollapsibleGroup>
+          <section aria-labelledby="ask-earlier" className="space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 id="ask-earlier" className="text-sm font-semibold">
+                Earlier in this session ({older.length})
+              </h2>
+              <CollapsibleGroupControls label="earlier answers" />
+            </div>
+            {older.map((item) => (
+              <Collapsible
+                key={item.id}
+                variant="row"
+                headingLevel={3}
+                title={item.answer.question}
+                summary={
+                  item.answer.insufficientEvidence
+                    ? 'No evidence found'
+                    : `${item.answer.claims.length} supporting claim${item.answer.claims.length === 1 ? '' : 's'}`
+                }
+              >
                 <AnswerCard item={item} heading="h3" />
-              </div>
-            </details>
-          ))}
-          <p className="text-muted-foreground text-xs">
-            History is kept only in this browser tab and is not saved.
-          </p>
-        </section>
+              </Collapsible>
+            ))}
+            <p className="text-muted-foreground text-xs">
+              History is kept only in this browser tab and is not saved.
+            </p>
+          </section>
+        </CollapsibleGroup>
       )}
     </div>
   );

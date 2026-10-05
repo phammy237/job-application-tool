@@ -1,7 +1,10 @@
 import { DEFAULT_MAX_NODES, buildEvidenceGraph } from '@career-os/shared';
+import { buttonVariants } from '@career-os/ui';
 import Link from 'next/link';
 import { requireUser } from '../../../../lib/auth';
 import { loadEvidenceGraphForRequest } from '../../../../lib/myos/load-graph';
+import { EmptyState } from '../_components/badges';
+import { PageHeader } from '../_components/page-header';
 import { GraphView } from './graph-view';
 
 export const metadata = { title: 'Evidence graph' };
@@ -13,29 +16,21 @@ export default async function GraphPage() {
   const viz = buildEvidenceGraph(graph, { maxNodes: DEFAULT_MAX_NODES });
 
   return (
-    <div className="space-y-4">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Evidence graph</h1>
-        <p className="text-muted-foreground mt-1 text-sm">
-          How your projects, skills, experience, achievements, stories and evidence
-          connect. Everything here comes from what you stored; relations marked
-          unconfirmed are suggestions waiting for your review.
-        </p>
-      </header>
+    <div className="space-y-6">
+      <PageHeader
+        title="Evidence graph"
+        description="How your projects, skills, experience, achievements, stories and evidence connect. Everything here comes from what you stored; relations marked unconfirmed are suggestions waiting for your review."
+      />
       {viz.nodes.length === 0 ? (
-        <div className="rounded-lg border border-dashed p-8 text-center">
-          <h2 className="text-lg font-medium">Nothing to show yet</h2>
-          <p className="text-muted-foreground mx-auto mt-1 max-w-md text-sm">
-            Add a project or import your GitHub repositories and the graph will build
-            itself from your evidence.
-          </p>
-          <Link
-            href="/my/projects"
-            className="bg-primary text-primary-foreground mt-4 inline-flex h-10 items-center rounded-md px-4 text-sm font-medium"
-          >
-            Go to projects
-          </Link>
-        </div>
+        <EmptyState
+          title="Nothing to show yet"
+          description="Add a project or import your GitHub repositories and the graph will build itself from your evidence."
+          action={
+            <Link href="/my/projects" className={buttonVariants({ size: 'sm' })}>
+              Go to projects
+            </Link>
+          }
+        />
       ) : (
         <GraphView viz={viz} />
       )}

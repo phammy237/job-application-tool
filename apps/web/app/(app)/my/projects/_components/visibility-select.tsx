@@ -15,7 +15,7 @@ export function VisibilitySelect({
   return (
     <>
       <Select
-        id="visibility"
+        id="visibility-select"
         name="visibility"
         value={value}
         onChange={(e) => setValue(e.target.value)}
@@ -28,11 +28,7 @@ export function VisibilitySelect({
           </option>
         ))}
       </Select>
-      <p
-        id="vis-public-warning"
-        role="status"
-        className="text-xs text-amber-900 dark:text-amber-200"
-      >
+      <p id="vis-public-warning" role="status" className="text-xs font-medium">
         {value === 'PUBLIC'
           ? 'Not exported until the project is approved and the portfolio is enabled'
           : ''}
